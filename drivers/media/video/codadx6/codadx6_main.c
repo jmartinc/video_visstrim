@@ -11,6 +11,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/firmware.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
@@ -28,6 +29,16 @@
 #define CODADX6_NAME		"codadx6"
 #define CODADX6_ENC_NAME	"codadx6-enc"
 
+#define CODADX6_FMO_BUF_SIZE	32
+#define CODADX6_CODE_BUF_SIZE	(64 * 1024)
+#define CODADX6_WORK_BUF_SIZE	(288 * 1024 + CODADX6_FMO_BUF_SIZE * 8 * 1024)
+#define CODADX6_PARA_BUF_SIZE	(10 * 1024)
+
+struct codadx6_aux_buf {
+	void			*vaddr;
+	dma_addr_t		paddr;
+};
+
 struct codadx6_dev {
 	struct v4l2_device	v4l2_dev;
 	struct video_device	*vfd_enc;
@@ -36,6 +47,10 @@ struct codadx6_dev {
 	void __iomem		*regs_base;
 	struct clk		*clk;
 	int			irq;
+
+	struct codadx6_aux_buf	enc_codebuf;
+	struct codadx6_aux_buf	enc_workbuf;
+	struct codadx6_aux_buf	enc_parabuf;
 
 	spinlock_t		irqlock;
 	struct mutex		dev_mutex;
@@ -88,6 +103,7 @@ static int codadx6_probe(struct platform_device *pdev)
 	struct video_device *vfd;
 	struct codadx6_dev *dev;
 	struct resource *res;
+	unsigned int bufsize;
 	int ret;
 
 	dev = kzalloc(sizeof *dev, GFP_KERNEL);
@@ -155,12 +171,29 @@ static int codadx6_probe(struct platform_device *pdev)
 
 	mutex_init(&dev->dev_mutex);
 
-	/* encoder */
+	/* Encoder */
+	/* allocate auxiliary buffers for the BIT processor */
+	bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE +
+		CODADX6_PARA_BUF_SIZE;
+	dev->enc_codebuf.vaddr = dma_alloc_coherent(&pdev->dev, bufsize,
+						    &dev->enc_codebuf.paddr,
+						    GFP_KERNEL);
+	if (!dev->enc_codebuf.vaddr) {
+		dev_err(&pdev->dev, "failed to allocate aux buffers\n");
+		ret = -ENOMEM;
+		goto free_clk;
+	}
+
+	dev->enc_workbuf.vaddr = dev->enc_codebuf.vaddr + CODADX6_CODE_BUF_SIZE;
+	dev->enc_workbuf.paddr = dev->enc_codebuf.paddr + CODADX6_CODE_BUF_SIZE;
+	dev->enc_parabuf.vaddr = dev->enc_workbuf.vaddr + CODADX6_WORK_BUF_SIZE;
+	dev->enc_parabuf.paddr = dev->enc_workbuf.paddr + CODADX6_WORK_BUF_SIZE;
+
 	vfd = video_device_alloc();
 	if (!vfd) {
 		v4l2_err(&dev->v4l2_dev, "Failed to allocate video device\n");
 		ret = -ENOMEM;
-		goto free_clk;
+		goto free_buf;
 	}
 	vfd->fops	= &codadx6_fops,
 	vfd->ioctl_ops	= get_enc_v4l2_ioctl_ops();
@@ -200,6 +233,9 @@ rel_ctx:
 	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
 rel_vdev:
 	video_device_release(vfd);
+free_buf:
+	dma_free_coherent(&pdev->dev, bufsize, &dev->enc_codebuf.vaddr,
+			  dev->enc_codebuf.paddr);
 free_clk:
 	clk_put(dev->clk);
 free_dev:
@@ -210,11 +246,15 @@ free_dev:
 static int codadx6_remove(struct platform_device *pdev)
 {
 	struct codadx6_dev *dev = platform_get_drvdata(pdev);
+	unsigned int bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE +
+				CODADX6_PARA_BUF_SIZE;
 
 	video_unregister_device(dev->vfd_enc);
 	v4l2_m2m_release(dev->m2m_enc_dev);
 	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
 	video_device_release(dev->vfd_enc);
+	dma_free_coherent(&pdev->dev, bufsize, &dev->enc_codebuf.vaddr,
+			  dev->enc_codebuf.paddr);
 	clk_put(dev->clk);
 	kfree(dev);
 
