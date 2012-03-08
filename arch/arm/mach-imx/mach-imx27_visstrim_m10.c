@@ -260,6 +260,7 @@ static void __init visstrim_m10_board_init(void)
 	imx27_add_imx_i2c(1, &visstrim_m10_i2c_data);
 	imx27_add_mxc_mmc(0, &visstrim_m10_sdhc_pdata);
 	imx27_add_mxc_ehci_otg(&visstrim_m10_usbotg_pdata);
+	imx27_add_codadx6(NULL);
 	imx27_add_fec(NULL);
 	imx_add_gpio_keys(&visstrim_gpio_keys_platform_data);
 	platform_add_devices(platform_devices, ARRAY_SIZE(platform_devices));
