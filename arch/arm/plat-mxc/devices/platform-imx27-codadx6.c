@@ -32,5 +32,6 @@ struct platform_device *__init imx_add_imx27_codadx6(
 			.flags = IORESOURCE_IRQ,
 		},
 	};
-	return imx_add_platform_device("codadx6", 0, res, 2, NULL, 0);
+	return imx_add_platform_device_dmamask("codadx6", 0, res, 2, NULL, 0,
+					       DMA_BIT_MASK(32));
 }
