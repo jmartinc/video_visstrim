@@ -84,11 +84,31 @@ static irqreturn_t codadx6_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int codadx6_enc_hw_init(struct codadx6_dev *dev)
+static int codadx6_hw_init(struct codadx6_dev *dev, const struct firmware *fw)
 {
-	u32 data;
 	u16 product, major, minor, release;
-  
+	u32 data;
+	u16 *p;
+	int i;
+
+	clk_enable(dev->clk);
+
+	/* Copy the whole firmware image to the code buffer */
+	memcpy(dev->enc_codebuf.vaddr, fw->data, fw->size);
+	/*
+	 * Copy the first CODADX6_ISRAM_SIZE in the internal SRAM.
+	 * This memory seems to be big-endian here, which is weird, since
+	 * the internal ARM processor of the codadx6 is little endian.
+	 * Data in this SRAM survives a reboot.
+	 */
+	p = (u16 *)fw->data;
+	for (i = 0; i < (CODADX6_ISRAM_SIZE / 2); i++)  {
+		data = CODADX6_DOWN_ADDRESS_SET(i) |
+			CODADX6_DOWN_DATA_SET(p[i ^ 1]);
+		codadx6_write(dev, data, CODADX6_REG_BIT_CODE_DOWN);
+	}
+	release_firmware(fw);
+
 	/* Tell the BIT where to find everything it needs */
 	codadx6_write(dev, dev->enc_workbuf.paddr,
 		      CODADX6_REG_BIT_WORK_BUF_ADDR);
@@ -147,6 +167,8 @@ static int codadx6_enc_hw_init(struct codadx6_dev *dev)
 		return -EINVAL;
 	}
 
+	clk_disable(dev->clk);
+
 	v4l2_info(&dev->v4l2_dev, "Initialized");
 
 	return 0;
@@ -158,9 +180,7 @@ static void codadx6_fw_callback(const struct firmware *fw, void *context)
 	struct platform_device *pdev = dev->plat_dev;
 	struct codadx6_platform_data *pdata = pdev->dev.platform_data;
 	struct video_device *vfd;
-	int ret, i;
-	u32 data;
-	u16 *p;
+	int ret;
 
 	if (!fw) {
 		v4l2_err(&dev->v4l2_dev, "firmware request '%s' failed\n",
@@ -168,23 +188,7 @@ static void codadx6_fw_callback(const struct firmware *fw, void *context)
 		return;
 	}
 
-	/* Copy the whole firmware image to the code buffer */
-	memcpy(dev->enc_codebuf.vaddr, fw->data, fw->size);
-	/*
-	 * Copy the first CODADX6_ISRAM_SIZE in the internal SRAM.
-	 * This memory seems to be big-endian here, which is weird, since
-	 * the internal ARM processor of the codadx6 is little endian.
-	 * Data in this SRAM survives a reboot.
-	 */
-	p = (u16 *)fw->data;
-	for (i = 0; i < (CODADX6_ISRAM_SIZE / 2); i++)  {
-		data = CODADX6_DOWN_ADDRESS_SET(i) |
-			CODADX6_DOWN_DATA_SET(p[i ^ 1]);
-		codadx6_write(dev, data, CODADX6_REG_BIT_CODE_DOWN);
-	}
-	release_firmware(fw);
-
-	ret = codadx6_enc_hw_init(dev);
+	ret = codadx6_hw_init(dev, fw);
 	if (ret) {
 		v4l2_err(&dev->v4l2_dev, "HW initialization failed\n");
 		return;
@@ -271,7 +275,6 @@ static int __devinit codadx6_probe(struct platform_device *pdev)
 		ret = PTR_ERR(dev->clk);
 		goto free_dev;
 	}
-	clk_enable(dev->clk); /* TODO: more dynamic */
 
 	/* Get  memory for physical registers */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
