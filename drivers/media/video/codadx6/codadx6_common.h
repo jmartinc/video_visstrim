@@ -1,0 +1,73 @@
+
+#ifndef _CODADX6_COMMON_H
+#define _CODADX6_COMMON_H
+
+#include <asm/io.h>
+#include "regs-codadx6.h"
+
+#define codadx6_write(dev, data, reg) \
+	writel(data, dev->regs_base + reg)
+
+#define codadx6_read(dev, reg) \
+	readl(dev->regs_base + reg)
+
+#define codadx6_isbusy(dev) \
+	codadx6_read(dev, CODADX6_REG_BIT_BUSY)
+
+struct codadx6_aux_buf {
+	void			*vaddr;
+	dma_addr_t		paddr;
+};
+
+struct codadx6_dev {
+	struct v4l2_device	v4l2_dev;
+	struct video_device	*vfd_enc;
+	struct platform_device	*plat_dev;
+
+	void __iomem		*regs_base;
+	struct clk		*clk;
+	int			irq;
+
+	struct codadx6_aux_buf	enc_codebuf;
+	struct codadx6_aux_buf	enc_workbuf;
+	struct codadx6_aux_buf	enc_parabuf;
+
+	spinlock_t		irqlock;
+	struct mutex		dev_mutex;
+	struct v4l2_m2m_dev	*m2m_enc_dev;
+	struct vb2_alloc_ctx	*alloc_ctx;
+
+	u8			h264_intra_qp;
+	u8			h264_inter_qp;
+	u8			mpeg4_intra_qp;
+	u8			mpeg4_inter_qp;
+	int			codec_mode;
+	enum v4l2_mpeg_video_multi_slice_mode slice_mode;
+	u8			slice_max_mb;
+};
+
+static void codadx6_command_async(struct codadx6_dev *dev, int codec_mode,
+				  int cmd)
+{
+	codadx6_write(dev, CODADX6_REG_BIT_BUSY_FLAG, CODADX6_REG_BIT_BUSY);
+	/* TODO: 0 for the first instance of (encoder-decoder), 1 for the second one
+	 *(except firmware which is always 0) */
+	codadx6_write(dev, 0, CODADX6_REG_BIT_RUN_INDEX);
+	codadx6_write(dev, codec_mode, CODADX6_REG_BIT_RUN_COD_STD);
+	codadx6_write(dev, cmd, CODADX6_REG_BIT_RUN_COMMAND);
+}
+
+static int codadx6_command_sync(struct codadx6_dev *dev, int codec_mode,
+				int cmd)
+{
+	unsigned int timeout = 100000;
+
+	codadx6_command_async(dev, codec_mode, cmd);
+	while (codadx6_isbusy(dev)) {
+	if (timeout-- == 0)
+		return -ETIMEDOUT;
+	};
+	return 0;
+}
+
+#endif

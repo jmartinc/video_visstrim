@@ -11,6 +11,8 @@
  */
 
 #include <linux/clk.h>
+#include <linux/codadx6.h>
+#include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -24,6 +26,8 @@
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-dma-contig.h>
 
+#include "codadx6_common.h"
+#include "regs-codadx6.h"
 #include "codadx6_enc.h"
 
 #define CODADX6_NAME		"codadx6"
@@ -33,30 +37,12 @@
 #define CODADX6_CODE_BUF_SIZE	(64 * 1024)
 #define CODADX6_WORK_BUF_SIZE	(288 * 1024 + CODADX6_FMO_BUF_SIZE * 8 * 1024)
 #define CODADX6_PARA_BUF_SIZE	(10 * 1024)
+#define CODADX6_ISRAM_SIZE	(2048 * 2)
 
-struct codadx6_aux_buf {
-	void			*vaddr;
-	dma_addr_t		paddr;
-};
-
-struct codadx6_dev {
-	struct v4l2_device	v4l2_dev;
-	struct video_device	*vfd_enc;
-	struct platform_device	*plat_dev;
-
-	void __iomem		*regs_base;
-	struct clk		*clk;
-	int			irq;
-
-	struct codadx6_aux_buf	enc_codebuf;
-	struct codadx6_aux_buf	enc_workbuf;
-	struct codadx6_aux_buf	enc_parabuf;
-
-	spinlock_t		irqlock;
-	struct mutex		dev_mutex;
-	struct v4l2_m2m_dev	*m2m_enc_dev;
-	struct vb2_alloc_ctx	*alloc_ctx;
-};
+#define CODADX6_SUPPORTED_PRODUCT_ID	0xf001
+#define CODADX6_SUPPORTED_MAJOR		2
+#define CODADX6_SUPPORTED_MINOR		2
+#define CODADX6_SUPPORTED_RELEASE	5
 
 static int codadx6_open(struct file *file)
 {
@@ -98,13 +84,171 @@ static irqreturn_t codadx6_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int codadx6_probe(struct platform_device *pdev)
+static int codadx6_enc_hw_init(struct codadx6_dev *dev)
 {
+	u32 data;
+	u16 product, major, minor, release;
+  
+	/* Tell the BIT where to find everything it needs */
+	codadx6_write(dev, dev->enc_workbuf.paddr,
+		      CODADX6_REG_BIT_WORK_BUF_ADDR);
+	codadx6_write(dev, dev->enc_parabuf.paddr,
+		      CODADX6_REG_BIT_PARA_BUF_ADDR);
+	codadx6_write(dev, dev->enc_codebuf.paddr,
+		      CODADX6_REG_BIT_CODE_BUF_ADDR);
+	codadx6_write(dev, 0, CODADX6_REG_BIT_CODE_RUN);
+
+	/* Set default values */
+	codadx6_write(dev, CODADX6_STREAM_UNDOCUMENTED,
+		      CODADX6_REG_BIT_STREAM_CTRL);
+	codadx6_write(dev, 0, CODADX6_REG_BIT_FRAME_MEM_CTRL);
+	codadx6_write(dev, CODADX6_INT_INTERRUPT_ENABLE,
+		      CODADX6_REG_BIT_INT_ENABLE);
+
+	/* Reset VPU and start processor */
+	data = codadx6_read(dev, CODADX6_REG_BIT_CODE_RESET);
+	data |= CODADX6_REG_RESET_ENABLE;
+	codadx6_write(dev, data, CODADX6_REG_BIT_CODE_RESET);
+	udelay(10);
+	data &= ~CODADX6_REG_RESET_ENABLE;
+	codadx6_write(dev, data, CODADX6_REG_BIT_CODE_RESET);
+	codadx6_write(dev, CODADX6_REG_RUN_ENABLE, CODADX6_REG_BIT_CODE_RUN);
+
+	/* TODO: move to context? ENC ONLY PARAMS!! */
+	dev->h264_intra_qp = 1;
+	dev->h264_inter_qp = 1;
+	dev->mpeg4_intra_qp = 1;
+	dev->mpeg4_inter_qp = 1;
+	dev->codec_mode = CODADX6_MODE_INVALID;
+	dev->slice_mode = 1;
+	dev->slice_max_mb = 1;
+
+	/* Load firmware */
+	codadx6_write(dev, 0, CODADX6_CMD_FIRMWARE_VERNUM);
+	if (codadx6_command_sync(dev, 0, CODADX6_COMMAND_FIRMWARE_GET)) {
+		v4l2_err(&dev->v4l2_dev, "firmware get command error\n");
+		return -EIO;
+	}
+
+	/* Check we are compatible with the loaded firmware */
+	data = codadx6_read(dev, CODADX6_CMD_FIRMWARE_VERNUM);
+	product = CODADX6_FIRMWARE_PRODUCT(data);
+	major = CODADX6_FIRMWARE_MAJOR(data);
+	minor = CODADX6_FIRMWARE_MINOR(data);
+	release = CODADX6_FIRMWARE_RELEASE(data);
+
+	if ((product != CODADX6_SUPPORTED_PRODUCT_ID) ||
+	    (major != CODADX6_SUPPORTED_MAJOR) ||
+	    (minor != CODADX6_SUPPORTED_MINOR) ||
+	    (release != CODADX6_SUPPORTED_RELEASE)) {
+		v4l2_err(&dev->v4l2_dev, "Wrong firmware:\n product = 0x%04X\n"
+			" major = %d\n minor = %d\n release = %d\n",
+			product, major, minor, release);
+		return -EINVAL;
+	}
+
+	v4l2_info(&dev->v4l2_dev, "Initialized");
+
+	return 0;
+}
+
+static void codadx6_fw_callback(const struct firmware *fw, void *context)
+{
+	struct codadx6_dev *dev = context;
+	struct platform_device *pdev = dev->plat_dev;
+	struct codadx6_platform_data *pdata = pdev->dev.platform_data;
 	struct video_device *vfd;
+	int ret, i;
+	u32 data;
+	u16 *p;
+
+	if (!fw) {
+		v4l2_err(&dev->v4l2_dev, "firmware request '%s' failed\n",
+			 pdata->firmware);
+		return;
+	}
+
+	/* Copy the whole firmware image to the code buffer */
+	memcpy(dev->enc_codebuf.vaddr, fw->data, fw->size);
+	/*
+	 * Copy the first CODADX6_ISRAM_SIZE in the internal SRAM.
+	 * This memory seems to be big-endian here, which is weird, since
+	 * the internal ARM processor of the codadx6 is little endian.
+	 * Data in this SRAM survives a reboot.
+	 */
+	p = (u16 *)fw->data;
+	for (i = 0; i < (CODADX6_ISRAM_SIZE / 2); i++)  {
+		data = CODADX6_DOWN_ADDRESS_SET(i) |
+			CODADX6_DOWN_DATA_SET(p[i ^ 1]);
+		codadx6_write(dev, data, CODADX6_REG_BIT_CODE_DOWN);
+	}
+	release_firmware(fw);
+
+	ret = codadx6_enc_hw_init(dev);
+	if (ret) {
+		v4l2_err(&dev->v4l2_dev, "HW initialization failed\n");
+		return;
+	}
+
+	vfd = video_device_alloc();
+	if (!vfd) {
+		v4l2_err(&dev->v4l2_dev, "Failed to allocate video device\n");
+		return;
+	}
+
+	vfd->fops	= &codadx6_fops,
+	vfd->ioctl_ops	= get_enc_v4l2_ioctl_ops();
+	vfd->release	= video_device_release,
+	vfd->lock	= &dev->dev_mutex;
+	vfd->v4l2_dev	= &dev->v4l2_dev;
+	snprintf(vfd->name, sizeof(vfd->name), "%s", CODADX6_ENC_NAME);
+	dev->vfd_enc = vfd;
+	video_set_drvdata(vfd, dev);
+
+	dev->alloc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
+	if (IS_ERR(dev->alloc_ctx)) {
+		v4l2_err(&dev->v4l2_dev, "Failed to alloc vb2 context\n");
+		goto rel_vdev;
+	}
+
+	dev->m2m_enc_dev = v4l2_m2m_init(get_enc_m2m_ops());
+	if (IS_ERR(dev->m2m_enc_dev)) {
+		v4l2_err(&dev->v4l2_dev, "Failed to init mem2mem device\n");
+		goto rel_ctx;
+	}
+
+	ret = video_register_device(vfd, VFL_TYPE_GRABBER, 0);
+	if (ret) {
+		v4l2_err(&dev->v4l2_dev, "Failed to register video device\n");
+		goto rel_m2m_enc;
+	}
+	v4l2_info(&dev->v4l2_dev, "encoder registered as /dev/video%d\n", vfd->num);
+
+	return;
+
+rel_m2m_enc:
+	v4l2_m2m_release(dev->m2m_enc_dev);
+rel_ctx:
+	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
+rel_vdev:
+	video_device_release(vfd);
+
+	return;
+}
+
+static int __devinit codadx6_probe(struct platform_device *pdev)
+{
+	struct codadx6_platform_data *pdata;
 	struct codadx6_dev *dev;
 	struct resource *res;
 	unsigned int bufsize;
 	int ret;
+
+	pdata = pdev->dev.platform_data;
+	if (!pdata) {
+		dev_err(&pdev->dev, "Invalid platform data\n");
+		return -EINVAL;
+	}
 
 	dev = kzalloc(sizeof *dev, GFP_KERNEL);
 	if (!dev) {
@@ -127,6 +271,7 @@ static int codadx6_probe(struct platform_device *pdev)
 		ret = PTR_ERR(dev->clk);
 		goto free_dev;
 	}
+	clk_enable(dev->clk); /* TODO: more dynamic */
 
 	/* Get  memory for physical registers */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -189,53 +334,10 @@ static int codadx6_probe(struct platform_device *pdev)
 	dev->enc_parabuf.vaddr = dev->enc_workbuf.vaddr + CODADX6_WORK_BUF_SIZE;
 	dev->enc_parabuf.paddr = dev->enc_workbuf.paddr + CODADX6_WORK_BUF_SIZE;
 
-	vfd = video_device_alloc();
-	if (!vfd) {
-		v4l2_err(&dev->v4l2_dev, "Failed to allocate video device\n");
-		ret = -ENOMEM;
-		goto free_buf;
-	}
-	vfd->fops	= &codadx6_fops,
-	vfd->ioctl_ops	= get_enc_v4l2_ioctl_ops();
-	vfd->release	= video_device_release,
-	vfd->lock	= &dev->dev_mutex;
-	vfd->v4l2_dev	= &dev->v4l2_dev;
-	snprintf(vfd->name, sizeof(vfd->name), "%s", CODADX6_ENC_NAME);
-	dev->vfd_enc = vfd;
-	video_set_drvdata(vfd, dev);
 
-	dev->alloc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
-	if (IS_ERR(dev->alloc_ctx)) {
-		v4l2_err(&dev->v4l2_dev, "Failed to alloc vb2 context\n");
-		ret = PTR_ERR(dev->alloc_ctx);
-		goto rel_vdev;
-	}
+	return request_firmware_nowait(THIS_MODULE, true, pdata->firmware,
+			&pdev->dev, GFP_KERNEL, dev, codadx6_fw_callback);
 
-	dev->m2m_enc_dev = v4l2_m2m_init(get_enc_m2m_ops());
-	if (IS_ERR(dev->m2m_enc_dev)) {
-		v4l2_err(&dev->v4l2_dev, "Failed to init mem2mem device\n");
-		ret = PTR_ERR(dev->m2m_enc_dev);
-		goto rel_ctx;
-	}
-
-	ret = video_register_device(vfd, VFL_TYPE_GRABBER, 0);
-	if (ret) {
-		v4l2_err(&dev->v4l2_dev, "Failed to register video device\n");
-		goto rel_m2m_enc;
-	}
-	v4l2_info(&dev->v4l2_dev, "encoder registered as /dev/video%d\n", vfd->num);
-
-	return 0;
-
-rel_m2m_enc:
-	v4l2_m2m_release(dev->m2m_enc_dev);
-rel_ctx:
-	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
-rel_vdev:
-	video_device_release(vfd);
-free_buf:
-	dma_free_coherent(&pdev->dev, bufsize, &dev->enc_codebuf.vaddr,
-			  dev->enc_codebuf.paddr);
 free_clk:
 	clk_put(dev->clk);
 free_dev:
@@ -249,10 +351,10 @@ static int codadx6_remove(struct platform_device *pdev)
 	unsigned int bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE +
 				CODADX6_PARA_BUF_SIZE;
 
-	video_unregister_device(dev->vfd_enc);
-	v4l2_m2m_release(dev->m2m_enc_dev);
-	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
-	video_device_release(dev->vfd_enc);
+// 	video_unregister_device(dev->vfd_enc);
+// 	v4l2_m2m_release(dev->m2m_enc_dev);
+// 	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
+// 	video_device_release(dev->vfd_enc);
 	dma_free_coherent(&pdev->dev, bufsize, &dev->enc_codebuf.vaddr,
 			  dev->enc_codebuf.paddr);
 	clk_put(dev->clk);

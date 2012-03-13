@@ -9,6 +9,7 @@
 
 #include <mach/hardware.h>
 #include <mach/devices-common.h>
+#include <linux/codadx6.h>
 
 #ifdef CONFIG_SOC_IMX27
 const struct imx_imx27_codadx6_data imx27_codadx6_data __initconst = {
@@ -19,7 +20,8 @@ const struct imx_imx27_codadx6_data imx27_codadx6_data __initconst = {
 #endif
 
 struct platform_device *__init imx_add_imx27_codadx6(
-		const struct imx_imx27_codadx6_data *data)
+		const struct imx_imx27_codadx6_data *data,
+		const struct codadx6_platform_data *pdata)
 {
 	struct resource res[] = {
 		{
@@ -32,6 +34,6 @@ struct platform_device *__init imx_add_imx27_codadx6(
 			.flags = IORESOURCE_IRQ,
 		},
 	};
-	return imx_add_platform_device_dmamask("codadx6", 0, res, 2, NULL, 0,
-					       DMA_BIT_MASK(32));
+	return imx_add_platform_device_dmamask("codadx6", 0, res, 2, pdata,
+					sizeof(*pdata), DMA_BIT_MASK(32));
 }
