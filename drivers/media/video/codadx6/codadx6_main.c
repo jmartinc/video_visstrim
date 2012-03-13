@@ -354,10 +354,10 @@ static int codadx6_remove(struct platform_device *pdev)
 	unsigned int bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE +
 				CODADX6_PARA_BUF_SIZE;
 
-// 	video_unregister_device(dev->vfd_enc);
-// 	v4l2_m2m_release(dev->m2m_enc_dev);
-// 	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
-// 	video_device_release(dev->vfd_enc);
+	video_unregister_device(dev->vfd_enc);
+	v4l2_m2m_release(dev->m2m_enc_dev);
+	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
+	video_device_release(dev->vfd_enc);
 	dma_free_coherent(&pdev->dev, bufsize, &dev->enc_codebuf.vaddr,
 			  dev->enc_codebuf.paddr);
 	clk_put(dev->clk);
