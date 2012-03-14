@@ -1,13 +1,14 @@
 /*
- * Register definition file for Chips & Media Corporation and 
- * Freescale Semiconductor Inc. CodaDx6 Video Codec IP.
+ * linux/drivers/media/video/codadx6/codadx6_regs.h
  *
- * Copyright (c) 2012 Vista Silicon S.L.
- *		http://www.vista-silicon.com/
+ * Copyright (C) 2012 Vista Silicon SL
+ *    Javier Martin <javier.martin@vista-silicon.com>
+ *    Xavier Duret <xavier@vista-silicon.com>
  *
  * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #ifndef _REGS_CODADX6_H_
