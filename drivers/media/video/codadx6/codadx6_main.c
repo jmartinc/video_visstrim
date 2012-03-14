@@ -27,7 +27,7 @@
 #include <media/videobuf2-dma-contig.h>
 
 #include "codadx6_common.h"
-#include "regs-codadx6.h"
+#include "codadx6_regs.h"
 #include "codadx6_enc.h"
 
 #define CODADX6_NAME		"codadx6"

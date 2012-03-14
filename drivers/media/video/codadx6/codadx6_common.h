@@ -16,7 +16,7 @@
 
 #include <media/v4l2-device.h>
 #include <asm/io.h>
-#include "regs-codadx6.h"
+#include "codadx6_regs.h"
 
 #define codadx6_write(dev, data, reg) \
 	writel(data, dev->regs_base + reg)
