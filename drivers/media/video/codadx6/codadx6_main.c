@@ -44,9 +44,94 @@
 #define CODADX6_SUPPORTED_MINOR		2
 #define CODADX6_SUPPORTED_RELEASE	5
 
+int codadx6_debug;
+module_param(codadx6_debug, int, 0);
+MODULE_PARM_DESC(codadx6_debug, "Debug level (0-1)");
+
+static enum codadx6_node_type codadx6_get_node_type(struct file *file)
+{
+	struct video_device *vfd = video_devdata(file);
+
+	if (vfd->index == 0)
+		return CODADX6_NODE_ENCODER;
+	else /* decoder not supported */
+		return CODADX6_NODE_INVALID;
+}
+
+static int codadx6_queue_init(void *priv, struct vb2_queue *src_vq,
+		      struct vb2_queue *dst_vq)
+{
+	struct codadx6_ctx *ctx = priv;
+	int ret;
+
+	memset(src_vq, 0, sizeof(*src_vq));
+	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+	src_vq->io_modes = VB2_MMAP;
+	src_vq->drv_priv = ctx;
+	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+	if (ctx->inst_type == CODADX6_INST_ENCODER) {
+		src_vq->ops = get_enc_qops();
+	} else {
+		v4l2_err(&ctx->dev->v4l2_dev, "Instance not supported\n");
+		return -EINVAL;
+	}
+	src_vq->mem_ops = &vb2_dma_contig_memops;
+
+	ret = vb2_queue_init(src_vq);
+	if (ret)
+		return ret;
+
+	memset(dst_vq, 0, sizeof(*dst_vq));
+	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	dst_vq->io_modes = VB2_MMAP;
+	dst_vq->drv_priv = ctx;
+	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
+	if (ctx->inst_type == CODADX6_INST_ENCODER) {
+		dst_vq->ops = get_enc_qops();
+	} else {
+		v4l2_err(&ctx->dev->v4l2_dev, "Instance not supported\n");
+		return -EINVAL;
+	}
+	dst_vq->mem_ops = &vb2_dma_contig_memops;
+
+	return vb2_queue_init(dst_vq);
+}
+
 static int codadx6_open(struct file *file)
 {
-	/* TODO */
+	struct codadx6_dev *dev = video_drvdata(file);
+	struct codadx6_ctx *ctx = NULL;
+
+	ctx = kzalloc(sizeof *ctx, GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	file->private_data = ctx;
+	ctx->dev = dev;
+
+	if (codadx6_get_node_type(file) == CODADX6_NODE_ENCODER) {
+		ctx->inst_type = CODADX6_INST_ENCODER;
+		set_enc_default_params(ctx);
+		ctx->m2m_ctx = v4l2_m2m_ctx_init(dev->m2m_enc_dev, ctx,
+						 &codadx6_queue_init);
+		if (IS_ERR(ctx->m2m_ctx)) {
+			int ret = PTR_ERR(ctx->m2m_ctx);
+
+			kfree(ctx);
+			printk("%s return error (%d)\n", __func__, ret);
+			return ret;
+		}
+	} else {
+		v4l2_err(&dev->v4l2_dev, "node type not supported\n");
+		return -EINVAL;
+	}
+
+	clk_enable(dev->clk);
+	/* TODO: set q_data ??*/
+
+	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev, "Created instance %p\n",
+		 ctx);
+
 	return 0;
 }
 
@@ -134,15 +219,6 @@ static int codadx6_hw_init(struct codadx6_dev *dev, const struct firmware *fw)
 	codadx6_write(dev, data, CODADX6_REG_BIT_CODE_RESET);
 	codadx6_write(dev, CODADX6_REG_RUN_ENABLE, CODADX6_REG_BIT_CODE_RUN);
 
-	/* TODO: move to context? ENC ONLY PARAMS!! */
-	dev->h264_intra_qp = 1;
-	dev->h264_inter_qp = 1;
-	dev->mpeg4_intra_qp = 1;
-	dev->mpeg4_inter_qp = 1;
-	dev->codec_mode = CODADX6_MODE_INVALID;
-	dev->slice_mode = 1;
-	dev->slice_max_mb = 1;
-
 	/* Load firmware */
 	codadx6_write(dev, 0, CODADX6_CMD_FIRMWARE_VERNUM);
 	if (codadx6_command_sync(dev, 0, CODADX6_COMMAND_FIRMWARE_GET)) {
@@ -194,6 +270,7 @@ static void codadx6_fw_callback(const struct firmware *fw, void *context)
 		return;
 	}
 
+	/* Encoder device */
 	vfd = video_device_alloc();
 	if (!vfd) {
 		v4l2_err(&dev->v4l2_dev, "Failed to allocate video device\n");

@@ -2,6 +2,7 @@
 #ifndef _CODADX6_COMMON_H
 #define _CODADX6_COMMON_H
 
+#include <media/v4l2-device.h>
 #include <asm/io.h>
 #include "regs-codadx6.h"
 
@@ -13,6 +14,18 @@
 
 #define codadx6_isbusy(dev) \
 	codadx6_read(dev, CODADX6_REG_BIT_BUSY)
+
+extern int codadx6_debug;
+
+enum codadx6_inst_type {
+	CODADX6_INST_INVALID,
+	CODADX6_INST_ENCODER,
+};
+
+enum codadx6_node_type {
+	CODADX6_NODE_INVALID = -1,
+	CODADX6_NODE_ENCODER = 0,
+};
 
 struct codadx6_aux_buf {
 	void			*vaddr;
@@ -36,7 +49,9 @@ struct codadx6_dev {
 	struct mutex		dev_mutex;
 	struct v4l2_m2m_dev	*m2m_enc_dev;
 	struct vb2_alloc_ctx	*alloc_ctx;
+};
 
+struct codadx6_enc_params {
 	u8			h264_intra_qp;
 	u8			h264_inter_qp;
 	u8			mpeg4_intra_qp;
@@ -44,6 +59,15 @@ struct codadx6_dev {
 	int			codec_mode;
 	enum v4l2_mpeg_video_multi_slice_mode slice_mode;
 	u8			slice_max_mb;
+};
+
+struct codadx6_ctx {
+	struct codadx6_dev		*dev;
+// 	int			aborting;
+// 	struct codadx6_q_data	q_data[2];
+	enum codadx6_inst_type		inst_type;
+	struct codadx6_enc_params	enc_params;
+	struct v4l2_m2m_ctx		*m2m_ctx;
 };
 
 static void codadx6_command_async(struct codadx6_dev *dev, int codec_mode,
