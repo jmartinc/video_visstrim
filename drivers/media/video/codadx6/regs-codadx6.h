@@ -10,8 +10,8 @@
  * published by the Free Software Foundation.
  */
 
-#ifndef _REGS_CODADX6_H
-#define _REGS_CODADX6_H
+#ifndef _REGS_CODADX6_H_
+#define _REGS_CODADX6_H_
 
 /* HW registers */
 #define CODADX6_REG_BIT_CODE_RUN		0x000

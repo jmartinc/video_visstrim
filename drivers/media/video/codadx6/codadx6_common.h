@@ -1,6 +1,6 @@
 
-#ifndef _CODADX6_COMMON_H
-#define _CODADX6_COMMON_H
+#ifndef _CODADX6_COMMON_H_
+#define _CODADX6_COMMON_H_
 
 #include <media/v4l2-device.h>
 #include <asm/io.h>
