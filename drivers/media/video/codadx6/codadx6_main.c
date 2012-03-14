@@ -286,8 +286,8 @@ static void codadx6_fw_callback(const struct firmware *fw, void *context)
 	dev->vfd_enc = vfd;
 	video_set_drvdata(vfd, dev);
 
-	dev->alloc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
-	if (IS_ERR(dev->alloc_ctx)) {
+	dev->alloc_enc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
+	if (IS_ERR(dev->alloc_enc_ctx)) {
 		v4l2_err(&dev->v4l2_dev, "Failed to alloc vb2 context\n");
 		goto rel_vdev;
 	}
@@ -310,7 +310,7 @@ static void codadx6_fw_callback(const struct firmware *fw, void *context)
 rel_m2m_enc:
 	v4l2_m2m_release(dev->m2m_enc_dev);
 rel_ctx:
-	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
+	vb2_dma_contig_cleanup_ctx(dev->alloc_enc_ctx);
 rel_vdev:
 	video_device_release(vfd);
 
@@ -433,7 +433,7 @@ static int codadx6_remove(struct platform_device *pdev)
 
 	video_unregister_device(dev->vfd_enc);
 	v4l2_m2m_release(dev->m2m_enc_dev);
-	vb2_dma_contig_cleanup_ctx(dev->alloc_ctx);
+	vb2_dma_contig_cleanup_ctx(dev->alloc_enc_ctx);
 	video_device_release(dev->vfd_enc);
 	dma_free_coherent(&pdev->dev, bufsize, &dev->enc_codebuf.vaddr,
 			  dev->enc_codebuf.paddr);

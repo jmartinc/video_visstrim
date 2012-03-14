@@ -235,7 +235,7 @@ static int codadx6_enc_queue_setup(struct vb2_queue *vq,
 	*nplanes = 1;
 	sizes[0] = size;
 
-	alloc_ctxs[0] = ctx->dev->alloc_ctx;
+	alloc_ctxs[0] = ctx->dev->alloc_enc_ctx;
 
 	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
 		 "get %d buffer(s) of size %d each.\n", *nbuffers, size);

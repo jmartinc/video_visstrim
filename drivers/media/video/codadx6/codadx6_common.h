@@ -48,7 +48,7 @@ struct codadx6_dev {
 	spinlock_t		irqlock;
 	struct mutex		dev_mutex;
 	struct v4l2_m2m_dev	*m2m_enc_dev;
-	struct vb2_alloc_ctx	*alloc_ctx;
+	struct vb2_alloc_ctx	*alloc_enc_ctx;
 };
 
 struct codadx6_enc_params {
