@@ -137,7 +137,16 @@ static int codadx6_open(struct file *file)
 
 static int codadx6_release(struct file *file)
 {
-	/* TODO */
+	struct codadx6_dev *dev = video_drvdata(file);
+	struct codadx6_ctx *ctx = file->private_data;
+
+	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev, "Releasing instance %p\n",
+		 ctx);
+
+	clk_disable(dev->clk);
+	v4l2_m2m_ctx_release(ctx->m2m_ctx);
+	kfree(ctx);
+
 	return 0;
 }
 
