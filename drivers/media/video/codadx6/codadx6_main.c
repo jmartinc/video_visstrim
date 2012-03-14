@@ -144,14 +144,16 @@ static int codadx6_release(struct file *file)
 static unsigned int codadx6_poll(struct file *file,
 				 struct poll_table_struct *wait)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = file->private_data;
+
+	return v4l2_m2m_poll(file, ctx->m2m_ctx, wait);
 }
 
 static int codadx6_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = file->private_data;
+
+	return v4l2_m2m_mmap(file, ctx->m2m_ctx, vma);
 }
 
 static const struct v4l2_file_operations codadx6_fops = {
