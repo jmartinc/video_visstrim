@@ -191,10 +191,12 @@ static int vidioc_try_fmt(struct v4l2_format *f)
 				      W_ALIGN, &f->fmt.pix.height,
 				      MIN_H, MAX_H, H_ALIGN, S_ALIGN);
 		f->fmt.pix.bytesperline = f->fmt.pix.width * 3 / 2;
+		f->fmt.pix.sizeimage = f->fmt.pix.height *
+					f->fmt.pix.bytesperline;
 	} else { /*encoded formats h.264/mpeg4 */
 		f->fmt.pix.bytesperline = CODADX6_ENC_MAX_FRAME_SIZE;
+		f->fmt.pix.sizeimage = CODADX6_ENC_MAX_FRAME_SIZE;
 	}
-	f->fmt.pix.sizeimage = f->fmt.pix.height * f->fmt.pix.bytesperline;
 
 	return 0;
 }
