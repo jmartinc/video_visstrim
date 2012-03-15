@@ -29,6 +29,16 @@
 
 extern int codadx6_debug;
 
+enum {
+	V4L2_M2M_SRC = 0,
+	V4L2_M2M_DST = 1,
+};
+
+enum codadx6_fmt_type {
+	CODADX6_FMT_ENC,
+	CODADX6_FMT_RAW,
+};
+
 enum codadx6_inst_type {
 	CODADX6_INST_INVALID,
 	CODADX6_INST_ENCODER,
@@ -37,6 +47,21 @@ enum codadx6_inst_type {
 enum codadx6_node_type {
 	CODADX6_NODE_INVALID = -1,
 	CODADX6_NODE_ENCODER = 0,
+};
+
+struct codadx6_fmt {
+	char *name;
+	u32 fourcc;
+// 	u32 codec_mode;
+	enum codadx6_fmt_type type;
+};
+
+/* Per-queue, driver-specific private data */
+struct codadx6_q_data {
+	unsigned int		width;
+	unsigned int		height;
+	unsigned int		sizeimage;
+	struct codadx6_fmt	*fmt;
 };
 
 struct codadx6_aux_buf {
@@ -76,7 +101,7 @@ struct codadx6_enc_params {
 struct codadx6_ctx {
 	struct codadx6_dev		*dev;
 // 	int			aborting;
-// 	struct codadx6_q_data	q_data[2];
+	struct codadx6_q_data		q_data[2];
 	enum codadx6_inst_type		inst_type;
 	struct codadx6_enc_params	enc_params;
 	struct v4l2_m2m_ctx		*m2m_ctx;
@@ -105,5 +130,8 @@ static int codadx6_command_sync(struct codadx6_dev *dev, int codec_mode,
 	};
 	return 0;
 }
+
+struct codadx6_q_data *get_q_data(struct codadx6_ctx *ctx,
+					 enum v4l2_buf_type type);
 
 #endif

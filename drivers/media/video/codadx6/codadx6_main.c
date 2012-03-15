@@ -31,7 +31,6 @@
 #include "codadx6_enc.h"
 
 #define CODADX6_NAME		"codadx6"
-#define CODADX6_ENC_NAME	"codadx6-enc"
 
 #define CODADX6_FMO_BUF_SIZE	32
 #define CODADX6_CODE_BUF_SIZE	(64 * 1024)
@@ -47,6 +46,20 @@
 int codadx6_debug;
 module_param(codadx6_debug, int, 0);
 MODULE_PARM_DESC(codadx6_debug, "Debug level (0-1)");
+
+struct codadx6_q_data *get_q_data(struct codadx6_ctx *ctx,
+					 enum v4l2_buf_type type)
+{
+	switch (type) {
+	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
+		return &(ctx->q_data[V4L2_M2M_SRC]);
+	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
+		return &(ctx->q_data[V4L2_M2M_DST]);
+	default:
+		BUG();
+	}
+	return NULL;
+}
 
 static enum codadx6_node_type codadx6_get_node_type(struct file *file)
 {
