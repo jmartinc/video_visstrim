@@ -136,6 +136,11 @@ static int vidioc_g_fmt(struct codadx6_ctx *ctx, struct v4l2_format *f)
 
 	q_data = get_q_data(ctx, f->type);
 
+	if (!q_data->fmt) {
+		v4l2_warn(&ctx->dev->v4l2_dev, "format not set\n");
+		return -EINVAL;
+	}
+
 	f->fmt.pix.field	= V4L2_FIELD_NONE;
 	f->fmt.pix.pixelformat	= q_data->fmt->fourcc;
 	if (f->fmt.pix.pixelformat == V4L2_PIX_FMT_YUV420) {
