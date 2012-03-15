@@ -451,13 +451,30 @@ static int codadx6_enc_queue_setup(struct vb2_queue *vq,
 
 static int codadx6_enc_buf_prepare(struct vb2_buffer *vb)
 {
-	/* TODO */
+	struct codadx6_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
+	struct codadx6_q_data *q_data;
+
+	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "type: %d\n",
+		 vb->vb2_queue->type);
+
+	q_data = get_q_data(ctx, vb->vb2_queue->type);
+
+	if (vb2_plane_size(vb, 0) < q_data->sizeimage) {
+		v4l2_warn(&ctx->dev->v4l2_dev, "%s data will not fit into"
+			"plane (%lu < %lu)\n", __func__, vb2_plane_size(vb, 0),
+			(long)q_data->sizeimage);
+		return -EINVAL;
+	}
+
+	vb2_set_plane_payload(vb, 0, q_data->sizeimage);
+
 	return 0;
 }
 
 static void codadx6_enc_buf_queue(struct vb2_buffer *vb)
 {
-	/* TODO */
+	struct codadx6_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
+	v4l2_m2m_buf_queue(ctx->m2m_ctx, vb);
 }
 
 static struct vb2_ops codadx6_enc_qops = {
