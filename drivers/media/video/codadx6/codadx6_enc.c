@@ -294,41 +294,47 @@ static int vidioc_s_fmt_vid_out(struct file *file, void *priv,
 static int vidioc_reqbufs(struct file *file, void *priv,
 			  struct v4l2_requestbuffers *reqbufs)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = priv;
+
+	return v4l2_m2m_reqbufs(file, ctx->m2m_ctx, reqbufs);
 }
 
 static int vidioc_querybuf(struct file *file, void *priv,
 			   struct v4l2_buffer *buf)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = priv;
+
+	return v4l2_m2m_querybuf(file, ctx->m2m_ctx, buf);
 }
 
 static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = priv;
+
+	return v4l2_m2m_qbuf(file, ctx->m2m_ctx, buf);
 }
 
 static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = priv;
+
+	return v4l2_m2m_dqbuf(file, ctx->m2m_ctx, buf);
 }
 
 static int vidioc_streamon(struct file *file, void *priv,
 			   enum v4l2_buf_type type)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = priv;
+
+	return v4l2_m2m_streamon(file, ctx->m2m_ctx, type);
 }
 
 static int vidioc_streamoff(struct file *file, void *priv,
 			    enum v4l2_buf_type type)
 {
-	/* TODO */
-	return 0;
+	struct codadx6_ctx *ctx = priv;
+
+	return v4l2_m2m_streamoff(file, ctx->m2m_ctx, type);
 }
 
 static const struct v4l2_ioctl_ops codadx6_enc_ioctl_ops = {
