@@ -136,11 +136,6 @@ static int vidioc_g_fmt(struct codadx6_ctx *ctx, struct v4l2_format *f)
 
 	q_data = get_q_data(ctx, f->type);
 
-	if (!q_data->fmt) {
-		v4l2_warn(&ctx->dev->v4l2_dev, "format not set\n");
-		return -EINVAL;
-	}
-
 	f->fmt.pix.field	= V4L2_FIELD_NONE;
 	f->fmt.pix.pixelformat	= q_data->fmt->fourcc;
 	if (f->fmt.pix.pixelformat == V4L2_PIX_FMT_YUV420) {
@@ -419,6 +414,10 @@ void set_enc_default_params(struct codadx6_ctx *ctx) {
 	ctx->enc_params.codec_mode = CODADX6_MODE_INVALID;
 	ctx->enc_params.slice_mode = 1;
 	ctx->enc_params.slice_max_mb = 1;
+
+	/* Default formats for output and input queues */
+	ctx->q_data[V4L2_M2M_SRC].fmt = &formats[0];
+	ctx->q_data[V4L2_M2M_DST].fmt = &formats[1];
 }
 
 /*
