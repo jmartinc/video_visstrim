@@ -93,9 +93,10 @@ struct codadx6_enc_params {
 	u8			h264_inter_qp;
 	u8			mpeg4_intra_qp;
 	u8			mpeg4_inter_qp;
+	u8			gop_size;
 	int			codec_mode;
 	enum v4l2_mpeg_video_multi_slice_mode slice_mode;
-	u8			slice_max_mb;
+	u32			slice_max_mb;
 };
 
 struct codadx6_ctx {
@@ -105,6 +106,9 @@ struct codadx6_ctx {
 	enum codadx6_inst_type		inst_type;
 	struct codadx6_enc_params	enc_params;
 	struct v4l2_m2m_ctx		*m2m_ctx;
+	struct v4l2_ctrl_handler	ctrls;
+	u16				bitrate;
+	struct v4l2_fh			fh;
 };
 
 static void codadx6_command_async(struct codadx6_dev *dev, int codec_mode,
@@ -133,5 +137,7 @@ static int codadx6_command_sync(struct codadx6_dev *dev, int codec_mode,
 
 struct codadx6_q_data *get_q_data(struct codadx6_ctx *ctx,
 					 enum v4l2_buf_type type);
+
+#define fh_to_ctx(__fh) container_of(__fh, struct codadx6_ctx, fh)
 
 #endif

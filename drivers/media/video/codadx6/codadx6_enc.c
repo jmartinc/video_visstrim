@@ -155,13 +155,13 @@ static int vidioc_g_fmt(struct codadx6_ctx *ctx, struct v4l2_format *f)
 static int vidioc_g_fmt_vid_out(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
-	return vidioc_g_fmt(priv, f);
+	return vidioc_g_fmt(fh_to_ctx(priv), f);
 }
 
 static int vidioc_g_fmt_vid_cap(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
-	return vidioc_g_fmt(priv, f);
+	return vidioc_g_fmt(fh_to_ctx(priv), f);
 }
 
 static int vidioc_try_fmt(struct v4l2_format *f)
@@ -200,7 +200,7 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 				  struct v4l2_format *f)
 {
 	struct codadx6_fmt *fmt;
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	fmt = find_format(f);
 	if (!fmt || !(fmt->type == CODADX6_FMT_ENC)) {
@@ -217,7 +217,7 @@ static int vidioc_try_fmt_vid_out(struct file *file, void *priv,
 				  struct v4l2_format *f)
 {
 	struct codadx6_fmt *fmt;
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	fmt = find_format(f);
 	if (!fmt || !(fmt->type == CODADX6_FMT_RAW)) {
@@ -274,11 +274,11 @@ static int vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 {
 	int ret;
 
-	ret = vidioc_try_fmt_vid_cap(file, priv, f);
+	ret = vidioc_try_fmt_vid_cap(file, fh_to_ctx(priv), f);
 	if (ret)
 		return ret;
 
-	return vidioc_s_fmt(priv, f);
+	return vidioc_s_fmt(fh_to_ctx(priv), f);
 }
 
 static int vidioc_s_fmt_vid_out(struct file *file, void *priv,
@@ -286,17 +286,17 @@ static int vidioc_s_fmt_vid_out(struct file *file, void *priv,
 {
 	int ret;
 
-	ret = vidioc_try_fmt_vid_out(file, priv, f);
+	ret = vidioc_try_fmt_vid_out(file, fh_to_ctx(priv), f);
 	if (ret)
 		return ret;
 
-	return vidioc_s_fmt(priv, f);
+	return vidioc_s_fmt(fh_to_ctx(priv), f);
 }
 
 static int vidioc_reqbufs(struct file *file, void *priv,
 			  struct v4l2_requestbuffers *reqbufs)
 {
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	return v4l2_m2m_reqbufs(file, ctx->m2m_ctx, reqbufs);
 }
@@ -304,21 +304,21 @@ static int vidioc_reqbufs(struct file *file, void *priv,
 static int vidioc_querybuf(struct file *file, void *priv,
 			   struct v4l2_buffer *buf)
 {
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	return v4l2_m2m_querybuf(file, ctx->m2m_ctx, buf);
 }
 
 static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	return v4l2_m2m_qbuf(file, ctx->m2m_ctx, buf);
 }
 
 static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	return v4l2_m2m_dqbuf(file, ctx->m2m_ctx, buf);
 }
@@ -326,7 +326,7 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 static int vidioc_streamon(struct file *file, void *priv,
 			   enum v4l2_buf_type type)
 {
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	return v4l2_m2m_streamon(file, ctx->m2m_ctx, type);
 }
@@ -334,7 +334,7 @@ static int vidioc_streamon(struct file *file, void *priv,
 static int vidioc_streamoff(struct file *file, void *priv,
 			    enum v4l2_buf_type type)
 {
-	struct codadx6_ctx *ctx = priv;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
 	return v4l2_m2m_streamoff(file, ctx->m2m_ctx, type);
 }
@@ -407,13 +407,7 @@ struct v4l2_m2m_ops *get_enc_m2m_ops(void)
 }
 
 void set_enc_default_params(struct codadx6_ctx *ctx) {
-	ctx->enc_params.h264_intra_qp = 1;
-	ctx->enc_params.h264_inter_qp = 1;
-	ctx->enc_params.mpeg4_intra_qp = 1;
-	ctx->enc_params.mpeg4_inter_qp = 1;
 	ctx->enc_params.codec_mode = CODADX6_MODE_INVALID;
-	ctx->enc_params.slice_mode = 1;
-	ctx->enc_params.slice_max_mb = 1;
 
 	/* Default formats for output and input queues */
 	ctx->q_data[V4L2_M2M_SRC].fmt = &formats[0];
@@ -492,4 +486,84 @@ static struct vb2_ops codadx6_enc_qops = {
 struct vb2_ops *get_enc_qops(void)
 {
 	return &codadx6_enc_qops;
+}
+
+static int codadx6_enc_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct codadx6_ctx *ctx =
+			container_of(ctrl->handler, struct codadx6_ctx, ctrls);
+	
+	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+		 "s_ctrl: id = %d, val = %d\n", ctrl->id, ctrl->val);
+
+	switch (ctrl->id) {
+	case V4L2_CID_MPEG_VIDEO_BITRATE:
+		ctx->bitrate = ctrl->val / 1000;
+		break;
+	case V4L2_CID_MPEG_VIDEO_GOP_SIZE:
+		ctx->enc_params.gop_size = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP:
+		ctx->enc_params.h264_intra_qp = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP:
+		ctx->enc_params.h264_inter_qp = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_MPEG4_I_FRAME_QP:
+		ctx->enc_params.mpeg4_intra_qp = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_MPEG4_P_FRAME_QP:
+		ctx->enc_params.mpeg4_inter_qp = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE:
+		ctx->enc_params.slice_mode = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB:
+		ctx->enc_params.slice_max_mb = ctrl->val;
+		break;
+	case V4L2_CID_MPEG_VIDEO_HEADER_MODE:
+		break;
+	default:
+		v4l2_err(&ctx->dev->v4l2_dev,
+			"Invalid control, id=%d, val=%d\n",
+			ctrl->id, ctrl->val);
+		return -EINVAL;
+	}
+	
+	return 0;
+}
+
+static struct v4l2_ctrl_ops codadx6_enc_ctrl_ops = {
+	.s_ctrl = codadx6_enc_s_ctrl,
+};
+
+int codadx6_enc_ctrls_setup(struct codadx6_ctx *ctx)
+{
+	v4l2_ctrl_handler_init(&ctx->ctrls, 9);
+
+	v4l2_ctrl_new_std(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_BITRATE, 0, 32767000, 1, 0);
+	v4l2_ctrl_new_std(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_GOP_SIZE, 1, 60, 1, 16);
+	v4l2_ctrl_new_std(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP, 1, 51, 1, 25);
+	v4l2_ctrl_new_std(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP, 1, 51, 1, 25);
+	v4l2_ctrl_new_std(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_MPEG4_I_FRAME_QP, 1, 31, 1, 2);
+	v4l2_ctrl_new_std(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_MPEG4_P_FRAME_QP, 1, 31, 1, 2);
+	v4l2_ctrl_new_std_menu(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE,
+		V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB, 0,
+		V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB);
+	v4l2_ctrl_new_std(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB, 1, 0x3fffffff, 1, 1);
+	v4l2_ctrl_new_std_menu(&ctx->ctrls, &codadx6_enc_ctrl_ops,
+		V4L2_CID_MPEG_VIDEO_HEADER_MODE,
+		V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME,
+		(1 << V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE),
+		V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME);
+
+	return v4l2_ctrl_handler_setup(&ctx->ctrls);
 }

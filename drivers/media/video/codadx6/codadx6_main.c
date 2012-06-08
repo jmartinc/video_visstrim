@@ -44,7 +44,7 @@
 #define CODADX6_SUPPORTED_MINOR		2
 #define CODADX6_SUPPORTED_RELEASE	5
 
-int codadx6_debug;
+int codadx6_debug = 3;
 module_param(codadx6_debug, int, 0);
 MODULE_PARM_DESC(codadx6_debug, "Debug level (0-1)");
 
@@ -115,12 +115,15 @@ static int codadx6_open(struct file *file)
 {
 	struct codadx6_dev *dev = video_drvdata(file);
 	struct codadx6_ctx *ctx = NULL;
+	int ret = 0;
 
 	ctx = kzalloc(sizeof *ctx, GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
-	file->private_data = ctx;
+	v4l2_fh_init(&ctx->fh, video_devdata(file));
+	file->private_data = &ctx->fh;
+	v4l2_fh_add(&ctx->fh);
 	ctx->dev = dev;
 
 	if (codadx6_get_node_type(file) == CODADX6_NODE_ENCODER) {
@@ -130,35 +133,51 @@ static int codadx6_open(struct file *file)
 						 &codadx6_queue_init);
 		if (IS_ERR(ctx->m2m_ctx)) {
 			int ret = PTR_ERR(ctx->m2m_ctx);
-
-			kfree(ctx);
+			
 			printk("%s return error (%d)\n", __func__, ret);
-			return ret;
+			goto err;
+		}
+		ret = codadx6_enc_ctrls_setup(ctx);
+		if (ret) {
+			v4l2_err(&dev->v4l2_dev, "failed to setup codadx6 controls\n");
+
+			goto err;
 		}
 	} else {
 		v4l2_err(&dev->v4l2_dev, "node type not supported\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err;
 	}
 
+	ctx->fh.ctrl_handler = &ctx->ctrls;
+
 	clk_enable(dev->clk);
-	/* TODO: set q_data ??*/
 
 	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev, "Created instance %p\n",
 		 ctx);
 
 	return 0;
+
+err:
+	v4l2_fh_del(&ctx->fh);
+	v4l2_fh_exit(&ctx->fh);
+	kfree(ctx);
+	return ret;
 }
 
 static int codadx6_release(struct file *file)
 {
 	struct codadx6_dev *dev = video_drvdata(file);
-	struct codadx6_ctx *ctx = file->private_data;
+	struct codadx6_ctx *ctx = fh_to_ctx(file->private_data);
 
 	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev, "Releasing instance %p\n",
 		 ctx);
 
+	v4l2_ctrl_handler_free(&ctx->ctrls);
 	clk_disable(dev->clk);
 	v4l2_m2m_ctx_release(ctx->m2m_ctx);
+	v4l2_fh_del(&ctx->fh);
+	v4l2_fh_exit(&ctx->fh);
 	kfree(ctx);
 
 	return 0;
@@ -167,14 +186,14 @@ static int codadx6_release(struct file *file)
 static unsigned int codadx6_poll(struct file *file,
 				 struct poll_table_struct *wait)
 {
-	struct codadx6_ctx *ctx = file->private_data;
+	struct codadx6_ctx *ctx = fh_to_ctx(file->private_data);
 
 	return v4l2_m2m_poll(file, ctx->m2m_ctx, wait);
 }
 
 static int codadx6_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	struct codadx6_ctx *ctx = file->private_data;
+	struct codadx6_ctx *ctx = fh_to_ctx(file->private_data);
 
 	return v4l2_m2m_mmap(file, ctx->m2m_ctx, vma);
 }
