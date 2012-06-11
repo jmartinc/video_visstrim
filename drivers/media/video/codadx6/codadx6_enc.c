@@ -426,34 +426,44 @@ const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void)
 /*
  * Mem-to-mem operations.
  */
-static void codadx6_device_run(void *priv)
+static void codadx6_device_run(void *m2m_priv)
 {
 	/* TODO */
 	return;
 }
 
-static void codadx6_job_abort(void *priv)
+static int codadx6_job_ready(void *m2m_priv)
+{
+	struct codadx6_ctx *ctx = m2m_priv;
+
+	/* TODO */
+	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "job not ready.\n");
+	return 0;
+}
+
+static void codadx6_job_abort(void *m2m_priv)
 {
 	/* TODO */
 	return;
 }
 
-static void codadx6_lock(void *priv)
+static void codadx6_lock(void *m2m_priv)
 {
-	struct codadx6_ctx *ctx = fh_to_ctx(priv);
+	struct codadx6_ctx *ctx = m2m_priv;
 	struct codadx6_dev *pcdev = ctx->dev;
 	mutex_lock(&pcdev->dev_mutex);
 }
 
-static void codadx6_unlock(void *priv)
+static void codadx6_unlock(void *m2m_priv)
 {
-	struct codadx6_ctx *ctx = fh_to_ctx(priv);
+	struct codadx6_ctx *ctx = m2m_priv;
 	struct codadx6_dev *pcdev = ctx->dev;
 	mutex_unlock(&pcdev->dev_mutex);
 }
 
 static struct v4l2_m2m_ops codadx6_enc_m2m_ops = {
 	.device_run	= codadx6_device_run,
+	.job_ready	= codadx6_job_ready,
 	.job_abort	= codadx6_job_abort,
 	.lock		= codadx6_lock,
 	.unlock		= codadx6_unlock,
@@ -536,10 +546,24 @@ static void codadx6_enc_buf_queue(struct vb2_buffer *vb)
 	v4l2_m2m_buf_queue(ctx->m2m_ctx, vb);
 }
 
+static void codadx6_wait_prepare(struct vb2_queue *q)
+{
+	struct m2mtest_ctx *ctx = vb2_get_drv_priv(q);
+	codadx6_unlock(ctx);
+}
+
+static void codadx6_wait_finish(struct vb2_queue *q)
+{
+	struct m2mtest_ctx *ctx = vb2_get_drv_priv(q);
+	codadx6_lock(ctx);
+}
+
 static struct vb2_ops codadx6_enc_qops = {
 	.queue_setup	 = codadx6_enc_queue_setup,
 	.buf_prepare	 = codadx6_enc_buf_prepare,
 	.buf_queue	 = codadx6_enc_buf_queue,
+	.wait_prepare	 = codadx6_wait_prepare,
+	.wait_finish	 = codadx6_wait_finish,
 };
 
 struct vb2_ops *get_enc_qops(void)
