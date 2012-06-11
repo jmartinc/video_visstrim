@@ -311,9 +311,26 @@ static int vidioc_querybuf(struct file *file, void *priv,
 
 static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
+	int ret;
 	struct codadx6_ctx *ctx = fh_to_ctx(priv);
+	
+	ret = v4l2_m2m_qbuf(file, ctx->m2m_ctx, buf);
 
-	return v4l2_m2m_qbuf(file, ctx->m2m_ctx, buf);
+	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+		buf->sequence = ctx->isequence++;
+
+		/* 
+		 * Workaround codadx6 firmware BUG that only marks the first
+		 * frame as IDR. This is a problem for some decoders when a
+		 * frame is lost.
+		 */
+		if (buf->sequence % ctx->enc_params.gop_size)
+			buf->flags |= V4L2_BUF_FLAG_PFRAME;
+		else
+			buf->flags |= V4L2_BUF_FLAG_KEYFRAME;
+	}
+
+	return ret;
 }
 
 static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *buf)

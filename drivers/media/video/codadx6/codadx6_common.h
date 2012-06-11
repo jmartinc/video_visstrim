@@ -103,6 +103,7 @@ struct codadx6_enc_params {
 struct codadx6_ctx {
 	struct codadx6_dev		*dev;
 // 	int			aborting;
+	u32				isequence;
 	struct codadx6_q_data		q_data[2];
 	enum codadx6_inst_type		inst_type;
 	struct codadx6_enc_params	enc_params;
