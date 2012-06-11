@@ -96,6 +96,7 @@ struct codadx6_enc_params {
 	u8			gop_size;
 	int			codec_mode;
 	enum v4l2_mpeg_video_multi_slice_mode slice_mode;
+	u32			framerate;
 	u32			slice_max_mb;
 };
 

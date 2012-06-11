@@ -339,6 +339,42 @@ static int vidioc_streamoff(struct file *file, void *priv,
 	return v4l2_m2m_streamoff(file, ctx->m2m_ctx, type);
 }
 
+int vidioc_s_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
+{
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
+
+	if (a->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+		if (a->parm.output.timeperframe.numerator != 1) {
+			v4l2_err(&ctx->dev->v4l2_dev,
+				 "FPS numerator must be 1\n");
+			return -EINVAL;
+		}
+		ctx->enc_params.framerate =
+					a->parm.output.timeperframe.denominator;
+	} else {
+		v4l2_err(&ctx->dev->v4l2_dev,
+			 "Setting FPS is only possible for the output queue\n");
+		return -EINVAL;
+	}
+	return 0;
+}
+
+int vidioc_g_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
+{
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
+
+	if (a->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+		a->parm.output.timeperframe.denominator =
+					ctx->enc_params.framerate;
+		a->parm.output.timeperframe.numerator = 1;
+	} else {
+		v4l2_err(&ctx->dev->v4l2_dev,
+			 "Getting FPS is only possible for the output queue\n");
+		return -EINVAL;
+	}
+	return 0;
+}
+
 static const struct v4l2_ioctl_ops codadx6_enc_ioctl_ops = {
 	.vidioc_querycap	= vidioc_querycap,
 
@@ -360,6 +396,9 @@ static const struct v4l2_ioctl_ops codadx6_enc_ioctl_ops = {
 
 	.vidioc_streamon	= vidioc_streamon,
 	.vidioc_streamoff	= vidioc_streamoff,
+
+	.vidioc_s_parm		= vidioc_s_parm,
+	.vidioc_g_parm		= vidioc_g_parm,
 };
 
 const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void)
