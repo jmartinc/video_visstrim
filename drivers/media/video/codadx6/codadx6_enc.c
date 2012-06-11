@@ -423,14 +423,16 @@ static void codadx6_job_abort(void *priv)
 
 static void codadx6_lock(void *priv)
 {
-	/* TODO */
-	return;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
+	struct codadx6_dev *pcdev = ctx->dev;
+	mutex_lock(&pcdev->dev_mutex);
 }
 
 static void codadx6_unlock(void *priv)
 {
-	/* TODO */
-	return;
+	struct codadx6_ctx *ctx = fh_to_ctx(priv);
+	struct codadx6_dev *pcdev = ctx->dev;
+	mutex_unlock(&pcdev->dev_mutex);
 }
 
 static struct v4l2_m2m_ops codadx6_enc_m2m_ops = {
