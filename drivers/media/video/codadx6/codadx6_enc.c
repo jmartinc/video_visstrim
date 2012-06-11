@@ -466,6 +466,7 @@ struct v4l2_m2m_ops *get_enc_m2m_ops(void)
 
 void set_enc_default_params(struct codadx6_ctx *ctx) {
 	ctx->enc_params.codec_mode = CODADX6_MODE_INVALID;
+	ctx->enc_params.framerate = 30;
 
 	/* Default formats for output and input queues */
 	ctx->q_data[V4L2_M2M_SRC].fmt = &formats[0];
