@@ -581,7 +581,7 @@ static int codadx6_enc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	switch (ctrl->id) {
 	case V4L2_CID_MPEG_VIDEO_BITRATE:
-		ctx->bitrate = ctrl->val / 1000;
+		ctx->enc_params.bitrate = ctrl->val / 1000;
 		break;
 	case V4L2_CID_MPEG_VIDEO_GOP_SIZE:
 		ctx->enc_params.gop_size = ctrl->val;

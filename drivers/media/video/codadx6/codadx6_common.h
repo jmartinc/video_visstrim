@@ -97,6 +97,7 @@ struct codadx6_enc_params {
 	int			codec_mode;
 	enum v4l2_mpeg_video_multi_slice_mode slice_mode;
 	u32			framerate;
+	u16			bitrate;
 	u32			slice_max_mb;
 };
 
@@ -109,7 +110,6 @@ struct codadx6_ctx {
 	struct codadx6_enc_params	enc_params;
 	struct v4l2_m2m_ctx		*m2m_ctx;
 	struct v4l2_ctrl_handler	ctrls;
-	u16				bitrate;
 	struct v4l2_fh			fh;
 };
 
