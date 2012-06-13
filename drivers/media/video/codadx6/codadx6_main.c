@@ -289,7 +289,7 @@ static int codadx6_hw_init(struct codadx6_dev *dev, const struct firmware *fw)
 
 	clk_disable(dev->clk);
 
-	v4l2_info(&dev->v4l2_dev, "Initialized");
+	v4l2_info(&dev->v4l2_dev, "Initialized. Fw version: %u.%u.%u.%u", product, major, minor, release);
 
 	return 0;
 }

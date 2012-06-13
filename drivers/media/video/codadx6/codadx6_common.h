@@ -18,15 +18,6 @@
 #include <asm/io.h>
 #include "codadx6_regs.h"
 
-#define codadx6_write(dev, data, reg) \
-	writel(data, dev->regs_base + reg)
-
-#define codadx6_read(dev, reg) \
-	readl(dev->regs_base + reg)
-
-#define codadx6_isbusy(dev) \
-	codadx6_read(dev, CODADX6_REG_BIT_BUSY)
-
 extern int codadx6_debug;
 
 enum {
@@ -101,17 +92,77 @@ struct codadx6_enc_params {
 	u32			slice_max_mb;
 };
 
+struct framebuffer {
+	u32	y;
+	u32	cb;
+	u32	cr;
+};
+
+#define CODADX6_ENC_OUTPUT_BUFS	4
+#define CODADX6_ENC_CAPTURE_BUFS	2
+
+/* TODO: some data of this structure can be removed */
+struct codadx6_enc_runtime {
+	/* old EncOpenParam vpuParams */
+	unsigned int	pic_width;
+	unsigned int	pic_height;
+	u32		bitstream_buf;	/* Seems to be pointer to compressed buffer */
+	u32		bitstream_buf_size;
+	u32		bitstream_format; /* This is probably redundant (q_data->fmt->fourcc) */
+	int		initial_delay;	/* This is fixed to 0 */
+	int		vbv_buffer_size; /* This is fixed to 0 */
+	int		enable_autoskip; /* This is fixed to 1 */
+	int		intra_refresh; /* This is fixed to 0 */
+	int		gamma; /* This is fixed to 4096 */
+	int		maxqp; /* This is fixed to 0 */
+	/* old EncInfo structure inside dev->encInfo (pEncInfo->openParam = *pop) */
+	u32		stream_rd_ptr; /* This can be safely removed (use bitstream_buf instead) */
+	u32		stream_buf_start_addr; /* This can be removed (use bitstream_buf instead) */
+	u32		stream_buf_size; /* This can be removed (use bitstream_buf_size) instead */
+	u32		stream_buf_end_addr; /* This can be just dropped */
+	struct framebuffer frame_buf_pool[CODADX6_ENC_OUTPUT_BUFS]; /* Can be removed if we write to parabuf directly */
+	int		initial_info_obtained; /* This probably can be removed (framework protects) */
+	int		num_frame_buffers; /* This can be removed */
+	int		stride; /* This can be removed later */
+	/* headers */
+	char		vpu_header[3][64];
+	int		vpu_header_size[3];
+};
+
 struct codadx6_ctx {
 	struct codadx6_dev		*dev;
 // 	int			aborting;
+	int				rawstreamon;
+	int				compstreamon;
 	u32				isequence;
 	struct codadx6_q_data		q_data[2];
 	enum codadx6_inst_type		inst_type;
 	struct codadx6_enc_params	enc_params;
+	struct codadx6_enc_runtime	runtime;
 	struct v4l2_m2m_ctx		*m2m_ctx;
 	struct v4l2_ctrl_handler	ctrls;
 	struct v4l2_fh			fh;
 };
+
+static inline void codadx6_write(struct codadx6_dev *dev, u32 data, u32 reg)
+{
+	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev,
+		 "%s: data=0x%x, reg=0x%x\n", __func__, data, reg);
+	writel(data, dev->regs_base + reg);
+}
+
+static inline unsigned int codadx6_read(struct codadx6_dev *dev, u32 reg)
+{
+	u32 data;
+	data = readl(dev->regs_base + reg);
+	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev,
+		 "%s: data=0x%x, reg=0x%x\n", __func__, data, reg);
+	return data;
+}
+
+static inline unsigned long codadx6_isbusy(struct codadx6_dev *dev) {
+	return readl(dev->regs_base + CODADX6_REG_BIT_BUSY);
+}
 
 static void codadx6_command_async(struct codadx6_dev *dev, int codec_mode,
 				  int cmd)

@@ -15,16 +15,15 @@
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-core.h>
+#include <media/videobuf2-dma-contig.h>
 
 #include "codadx6_common.h"
 #include "codadx6_enc.h"
 
-#define CODADX6_ENC_OUTPUT_BUFS		4
-#define CODADX6_ENC_CAPTURE_BUFS	2
-
 #define CODADX6_ENC_MAX_WIDTH		720
 #define CODADX6_ENC_MAX_HEIGHT		576
 #define CODADX6_ENC_MAX_FRAME_SIZE	0x90000
+#define FMO_SLICE_SAVE_BUF_SIZE         (32)
 
 #define MIN_W 176
 #define MIN_H 144
@@ -39,19 +38,18 @@ static struct codadx6_fmt formats[] = {
         {
                 .name = "YUV 4:2:0 Planar",
                 .fourcc = V4L2_PIX_FMT_YUV420,
-//                 .codec_mode = S5P_FIMV_CODEC_NONE,
                 .type = CODADX6_FMT_RAW,
         },
         {
                 .name = "H264 Encoded Stream",
                 .fourcc = V4L2_PIX_FMT_H264,
-//                 .codec_mode = S5P_FIMV_CODEC_H264_ENC,
+//                 .codec_mode = CODADX6_MODE_ENCODE_H264,
                 .type = CODADX6_FMT_ENC,
         },
         {
                 .name = "MPEG4 Encoded Stream",
                 .fourcc = V4L2_PIX_FMT_MPEG4,
-//                 .codec_mode = S5P_FIMV_CODEC_MPEG4_ENC,
+//                 .codec_mode = CODADX6_MODE_ENCODE_M4S2,
                 .type = CODADX6_FMT_ENC,
         },
 };
@@ -353,6 +351,12 @@ static int vidioc_streamoff(struct file *file, void *priv,
 {
 	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
+	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+		ctx->rawstreamon = 0;
+	} else {
+		ctx->compstreamon = 0;
+	}
+
 	return v4l2_m2m_streamoff(file, ctx->m2m_ctx, type);
 }
 
@@ -428,7 +432,6 @@ const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void)
  */
 static void codadx6_device_run(void *m2m_priv)
 {
-	/* TODO */
 	return;
 }
 
@@ -548,22 +551,283 @@ static void codadx6_enc_buf_queue(struct vb2_buffer *vb)
 
 static void codadx6_wait_prepare(struct vb2_queue *q)
 {
-	struct m2mtest_ctx *ctx = vb2_get_drv_priv(q);
+	struct codadx6_ctx *ctx = vb2_get_drv_priv(q);
 	codadx6_unlock(ctx);
 }
 
 static void codadx6_wait_finish(struct vb2_queue *q)
 {
-	struct m2mtest_ctx *ctx = vb2_get_drv_priv(q);
+	struct codadx6_ctx *ctx = vb2_get_drv_priv(q);
 	codadx6_lock(ctx);
 }
 
+static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
+{
+	struct codadx6_ctx *ctx = vb2_get_drv_priv(q);
+	struct codadx6_dev *dev = ctx->dev;
+	/* 
+	 * codadx6 requires all buffers to be pre-queued before streamon
+	 * so that they can be safely registered with the hardware.
+	 */
+	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+		if (count < 1)
+			return -EINVAL;
+		ctx->rawstreamon = 1;
+	} else {
+		if (count < CODADX6_ENC_CAPTURE_BUFS)
+			return -EINVAL;
+		ctx->compstreamon = 1;
+	}
+
+	if (ctx->rawstreamon & ctx->compstreamon) {
+		struct codadx6_q_data *q_data_src, *q_data_dst;
+		struct vb2_buffer *buf;
+		struct vb2_queue *vq;
+		u32 value;
+		int i = 0;
+
+		q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+		ctx->runtime.pic_width = q_data_src->width;
+		ctx->runtime.pic_height = q_data_src->height;
+		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
+		ctx->runtime.bitstream_buf = vb2_dma_contig_plane_dma_addr(buf, 0);
+		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+		ctx->runtime.bitstream_buf_size = q_data_dst->sizeimage;
+		ctx->runtime.bitstream_format = q_data_dst->fmt->fourcc;
+		ctx->runtime.initial_delay = 0;
+		ctx->runtime.vbv_buffer_size = 0;
+		ctx->runtime.enable_autoskip = 1;
+		ctx->runtime.intra_refresh = 0;
+		ctx->runtime.gamma = 4096;
+		ctx->runtime.maxqp = 0;
+		
+		/* codadx6_encoder_init */
+		{
+		
+		if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) {
+			ctx->enc_params.codec_mode = CODADX6_MODE_ENCODE_H264;
+		} else if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_MPEG4) {
+			ctx->enc_params.codec_mode = CODADX6_MODE_ENCODE_M4S2;
+		}
+
+		ctx->runtime.stream_rd_ptr = ctx->runtime.bitstream_buf;
+		ctx->runtime.stream_buf_start_addr = ctx->runtime.bitstream_buf;
+		ctx->runtime.stream_buf_size = ctx->runtime.bitstream_buf_size;
+		ctx->runtime.stream_buf_end_addr = ctx->runtime.bitstream_buf +
+						ctx->runtime.bitstream_buf_size;
+		ctx->runtime.initial_info_obtained = 0;
+
+		codadx6_write(dev, ctx->runtime.stream_rd_ptr, CODADX6_REG_BIT_RD_PTR_0);
+		codadx6_write(dev, ctx->runtime.stream_buf_start_addr, CODADX6_REG_BIT_WR_PTR_0);
+		value = codadx6_read(dev, CODADX6_REG_BIT_STREAM_CTRL);
+		value &= 0xffe7;
+		value |= 3 << 3;
+		codadx6_write(dev, value, CODADX6_REG_BIT_STREAM_CTRL);
+		}
+
+		/* walk the src ready list and store buffer phys addresses  */
+		vq = v4l2_m2m_get_vq(ctx->m2m_ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+		for (i = 0; i < vq->num_buffers; i++) {
+			buf = vq->bufs[i];
+			ctx->runtime.frame_buf_pool[i].y = vb2_dma_contig_plane_dma_addr(buf, 0);
+			ctx->runtime.frame_buf_pool[i].cb = ctx->runtime.frame_buf_pool[i].y +
+				q_data_src->width * q_data_src->height;
+			ctx->runtime.frame_buf_pool[i].cr = ctx->runtime.frame_buf_pool[i].cb +
+				q_data_src->width / 2 * q_data_src->height / 2;
+			i++;
+		}
+		ctx->runtime.num_frame_buffers = vq->num_buffers;
+		ctx->runtime.stride = q_data_src->width;
+		
+		/* codadx6_encoder_configure */
+		{
+		u32 data;
+
+		codadx6_write(dev, 0xFFFF4C00, CODADX6_REG_BIT_SEARCH_RAM_BASE_ADDR);
+
+		/* Could set rotation here if needed */
+		data = (ctx->runtime.pic_width & CODADX6_PICWIDTH_MASK) << CODADX6_PICWIDTH_OFFSET;
+		data |= (ctx->runtime.pic_height & CODADX6_PICHEIGHT_MASK) << CODADX6_PICHEIGHT_OFFSET;
+		codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_SRC_SIZE);
+		codadx6_write(dev, ctx->enc_params.framerate, CODADX6_CMD_ENC_SEQ_SRC_F_RATE);
+
+		if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_MPEG4) {
+			codadx6_write(dev, CODADX6_ENCODE_MPEG4, CODADX6_CMD_ENC_SEQ_COD_STD);
+			data  = (0 & CODADX6_MP4PARAM_VERID_MASK) << CODADX6_MP4PARAM_VERID_OFFSET;
+			data |= (0 & CODADX6_MP4PARAM_INTRADCVLCTHR_MASK) << CODADX6_MP4PARAM_INTRADCVLCTHR_OFFSET;
+			data |= (0 & CODADX6_MP4PARAM_REVERSIBLEVLCENABLE_MASK) << CODADX6_MP4PARAM_REVERSIBLEVLCENABLE_OFFSET;
+			data |=  0 & CODADX6_MP4PARAM_DATAPARTITIONENABLE_MASK;
+			codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_MP4_PARA);
+		} else if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) {
+			codadx6_write(dev, CODADX6_ENCODE_H264, CODADX6_CMD_ENC_SEQ_COD_STD);
+			data  = (0 & CODADX6_264PARAM_DEBLKFILTEROFFSETBETA_MASK) << CODADX6_264PARAM_DEBLKFILTEROFFSETBETA_OFFSET;
+			data |= (0 & CODADX6_264PARAM_DEBLKFILTEROFFSETALPHA_MASK) << CODADX6_264PARAM_DEBLKFILTEROFFSETALPHA_OFFSET;
+			data |= (0 & CODADX6_264PARAM_DISABLEDEBLK_MASK) << CODADX6_264PARAM_DISABLEDEBLK_OFFSET;
+			data |= (0 & CODADX6_264PARAM_CONSTRAINEDINTRAPREDFLAG_MASK) << CODADX6_264PARAM_CONSTRAINEDINTRAPREDFLAG_OFFSET;
+			data |=  0 & CODADX6_264PARAM_CHROMAQPOFFSET_MASK;
+			codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_264_PARA);
+		}
+
+		data  = (ctx->enc_params.slice_max_mb & CODADX6_SLICING_SIZE_MASK) << CODADX6_SLICING_SIZE_OFFSET;
+		data |= (1 & CODADX6_SLICING_UNIT_MASK) << CODADX6_SLICING_UNIT_OFFSET;
+		if (ctx->enc_params.slice_mode == V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB)
+			data |=  1 & CODADX6_SLICING_MODE_MASK;
+		codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_SLICE_MODE);
+		data  =  ctx->enc_params.gop_size & CODADX6_GOP_SIZE_MASK;
+		codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_GOP_SIZE);
+		
+		if (ctx->enc_params.bitrate) {
+			/* Rate control enabled */
+			data  = ((!ctx->runtime.enable_autoskip) & CODADX6_RATECONTROL_AUTOSKIP_MASK) << CODADX6_RATECONTROL_AUTOSKIP_OFFSET;
+			data |= (ctx->runtime.initial_delay & CODADX6_RATECONTROL_INITIALDELAY_MASK) << CODADX6_RATECONTROL_INITIALDELAY_OFFSET;
+			data |= (ctx->enc_params.bitrate & CODADX6_RATECONTROL_BITRATE_MASK) << CODADX6_RATECONTROL_BITRATE_OFFSET;
+			data |=  1 & CODADX6_RATECONTROL_ENABLE_MASK;
+		} else {
+			data = 0;
+		}
+		codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_RC_PARA);
+
+		codadx6_write(dev, ctx->runtime.vbv_buffer_size, CODADX6_CMD_ENC_SEQ_RC_BUF_SIZE);
+		codadx6_write(dev, ctx->runtime.intra_refresh, CODADX6_CMD_ENC_SEQ_INTRA_REFRESH);
+
+		codadx6_write(dev, ctx->runtime.stream_buf_start_addr, CODADX6_CMD_ENC_SEQ_BB_START);
+		codadx6_write(dev, ctx->runtime.stream_buf_size / 1024, CODADX6_CMD_ENC_SEQ_BB_SIZE);
+
+		if (ctx->runtime.maxqp) {
+			// adjust qp if they are above the maximum
+			if ((ctx->runtime.bitstream_format == V4L2_PIX_FMT_MPEG4) && (ctx->runtime.maxqp > 31)) ctx->runtime.maxqp = 31;  
+			if ((ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) && (ctx->runtime.maxqp > 51)) ctx->runtime.maxqp = 51;
+			data = (ctx->runtime.maxqp & CODADX6_QPMAX_MASK) << CODADX6_QPMAX_OFFSET;
+			codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_RC_QP_MAX);
+		}
+    
+		if (ctx->runtime.gamma) {
+			// set default gamma if not set
+			if (ctx->runtime.gamma > 32768) ctx->runtime.gamma = 32768;
+			data = (ctx->runtime.gamma & CODADX6_GAMMA_MASK) << CODADX6_GAMMA_OFFSET;
+			codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_RC_GAMMA);
+		}
+
+		data  = (ctx->runtime.gamma > 0) << CODADX6_OPTION_GAMMA_OFFSET;
+		data |= (ctx->runtime.maxqp > 0) << CODADX6_OPTION_LIMITQP_OFFSET;
+		data |= (0 & CODADX6_OPTION_SLICEREPORT_MASK) << CODADX6_OPTION_SLICEREPORT_OFFSET;
+		codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_OPTION);
+
+		if (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264) {
+			data  = (FMO_SLICE_SAVE_BUF_SIZE << 7);
+			data |= (0 & CODADX6_FMOPARAM_TYPE_MASK) << CODADX6_FMOPARAM_TYPE_OFFSET;
+			data |=  0 & CODADX6_FMOPARAM_SLICENUM_MASK;
+			codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_FMO);
+		}
+
+		if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_SEQ_INIT)) {
+			v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_SEQ_INIT timeout\n");
+			return -ETIMEDOUT;
+		}
+
+		if (codadx6_read(dev, CODADX6_RET_ENC_SEQ_SUCCESS) == 0)
+			return -EFAULT;
+
+		/* Let the codec know the addresses of the frame buffers */
+		for (i = 0; i < ctx->runtime.num_frame_buffers; i++) {
+			u32 *p;
+
+			p = ctx->dev->enc_parabuf.vaddr;
+			p[i * 3] = ctx->runtime.frame_buf_pool[i].y;
+			p[i * 3 + 1] = ctx->runtime.frame_buf_pool[i].cb;
+			p[i * 3 + 2] = ctx->runtime.frame_buf_pool[i].cr;
+		}
+		codadx6_write(dev, ctx->runtime.num_frame_buffers, CODADX6_CMD_SET_FRAME_BUF_NUM);
+		codadx6_write(dev, ctx->runtime.stride, CODADX6_CMD_SET_FRAME_BUF_STRIDE);
+		if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_SET_FRAME_BUF)) {
+			v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_SET_FRAME_BUF timeout\n");
+			return -ETIMEDOUT;
+		}
+
+		ctx->runtime.initial_info_obtained = 1;
+		}
+
+		/* Save stream headers */
+		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
+// 		ctx->runtime.bitstream_buf = vb2_dma_contig_plane_dma_addr(buf, 0);
+		if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) {
+			/* Get SPS in the first frame and copy it to an intermediate buffer TODO: copy directly */
+			codadx6_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODADX6_CMD_ENC_HEADER_BB_START);
+			codadx6_write(dev, ctx->runtime.bitstream_buf_size, CODADX6_CMD_ENC_HEADER_BB_SIZE);
+			codadx6_write(dev, CODADX6_HEADER_H264_SPS, CODADX6_CMD_ENC_HEADER_CODE);
+			if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_ENCODE_HEADER)) {
+				v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_ENCODE_HEADER timeout\n");
+				return -ETIMEDOUT;
+			}
+			ctx->runtime.vpu_header_size[0] = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0) - 
+					codadx6_read(dev, CODADX6_CMD_ENC_HEADER_BB_START);
+			memcpy(&ctx->runtime.vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[0]);
+
+			/* Get PPS in the first frame and copy it to an intermediate buffer TODO: copy directly*/
+			codadx6_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODADX6_CMD_ENC_HEADER_BB_START);
+			codadx6_write(dev, ctx->runtime.bitstream_buf_size, CODADX6_CMD_ENC_HEADER_BB_SIZE);
+			codadx6_write(dev, CODADX6_HEADER_H264_PPS, CODADX6_CMD_ENC_HEADER_CODE);
+			if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_ENCODE_HEADER)) {
+				v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_ENCODE_HEADER timeout\n");
+				return -ETIMEDOUT;
+			}
+			ctx->runtime.vpu_header_size[1] = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0) - 
+					codadx6_read(dev, CODADX6_CMD_ENC_HEADER_BB_START);
+			memcpy(&ctx->runtime.vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[1]);
+			ctx->runtime.vpu_header_size[2] = 0;
+		} else { /* MPEG4 */
+			/* Get VOS in the first frame and copy it to an intermediate buffer TODO: copy directly */
+			codadx6_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODADX6_CMD_ENC_HEADER_BB_START);
+			codadx6_write(dev,  ctx->runtime.bitstream_buf_size, CODADX6_CMD_ENC_HEADER_BB_SIZE);
+			codadx6_write(dev, CODADX6_HEADER_MP4V_VOS, CODADX6_CMD_ENC_HEADER_CODE);
+			if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_ENCODE_HEADER)) {
+				v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_ENCODE_HEADER timeout\n");
+				return -ETIMEDOUT;
+			}
+			ctx->runtime.vpu_header_size[0] = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0) - 
+					codadx6_read(dev, CODADX6_CMD_ENC_HEADER_BB_START);
+			memcpy(&ctx->runtime.vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[0]);
+
+			codadx6_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODADX6_CMD_ENC_HEADER_BB_START);
+			codadx6_write(dev, ctx->runtime.bitstream_buf_size, CODADX6_CMD_ENC_HEADER_BB_SIZE);
+			codadx6_write(dev, CODADX6_HEADER_MP4V_VIS, CODADX6_CMD_ENC_HEADER_CODE);
+			if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_ENCODE_HEADER)) {
+				v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_ENCODE_HEADER failed\n");
+				return -ETIMEDOUT;
+			}
+			ctx->runtime.vpu_header_size[1] = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0) -
+					codadx6_read(dev, CODADX6_CMD_ENC_HEADER_BB_START);
+			memcpy(&ctx->runtime.vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[1]);
+
+			codadx6_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODADX6_CMD_ENC_HEADER_BB_START);
+			codadx6_write(dev, ctx->runtime.bitstream_buf_size, CODADX6_CMD_ENC_HEADER_BB_SIZE);
+			codadx6_write(dev, CODADX6_HEADER_MP4V_VOL, CODADX6_CMD_ENC_HEADER_CODE);
+			if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_ENCODE_HEADER)) {
+				v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_ENCODE_HEADER failed\n");
+				return -ETIMEDOUT;
+			}
+			ctx->runtime.vpu_header_size[2] = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0) -
+					codadx6_read(dev, CODADX6_CMD_ENC_HEADER_BB_START);
+			memcpy(&ctx->runtime.vpu_header[2][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[2]);
+		}
+	}
+	return 0;
+}
+
+static int codadx6_stop_streaming(struct vb2_queue *q)
+{
+	/* TODO */
+	return 0;
+}
+
 static struct vb2_ops codadx6_enc_qops = {
-	.queue_setup	 = codadx6_enc_queue_setup,
-	.buf_prepare	 = codadx6_enc_buf_prepare,
-	.buf_queue	 = codadx6_enc_buf_queue,
-	.wait_prepare	 = codadx6_wait_prepare,
-	.wait_finish	 = codadx6_wait_finish,
+	.queue_setup		= codadx6_enc_queue_setup,
+	.buf_prepare		= codadx6_enc_buf_prepare,
+	.buf_queue		= codadx6_enc_buf_queue,
+	.wait_prepare		= codadx6_wait_prepare,
+	.wait_finish		= codadx6_wait_finish,
+	.start_streaming	= codadx6_start_streaming,
+	.stop_streaming		= codadx6_stop_streaming,
 };
 
 struct vb2_ops *get_enc_qops(void)
