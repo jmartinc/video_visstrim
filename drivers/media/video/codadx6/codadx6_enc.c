@@ -430,18 +430,121 @@ const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void)
 /*
  * Mem-to-mem operations.
  */
+
+/*
+ * TODO: 
+ *  - propagate flags from picture to frame in ISR
+ *  - check that framework adds timestamps
+ */
+
 static void codadx6_device_run(void *m2m_priv)
 {
-	return;
+	struct codadx6_ctx *ctx = m2m_priv;
+	struct codadx6_q_data *q_data_src, *q_data_dst;
+	struct vb2_buffer *src_buf, *dst_buf;
+	struct codadx6_dev *dev = ctx->dev;
+
+	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
+	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
+	q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+	q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+
+	ctx->runtime.source_frame.y = vb2_dma_contig_plane_dma_addr(src_buf, 0);
+	ctx->runtime.source_frame.cb = ctx->runtime.source_frame.y +
+				q_data_src->width * q_data_src->height;
+	ctx->runtime.source_frame.cr = ctx->runtime.source_frame.cb +
+				q_data_src->width / 2 * q_data_src->height / 2;
+
+	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
+		ctx->runtime.force_ipicture = 1;
+		if (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264) {
+			ctx->runtime.quant_param = ctx->enc_params.h264_intra_qp;
+		} else {
+			ctx->runtime.quant_param = ctx->enc_params.mpeg4_intra_qp;
+		}
+	} else {
+		ctx->runtime.force_ipicture = 0;
+		if (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264) {
+			ctx->runtime.quant_param = ctx->enc_params.h264_inter_qp;
+		} else {
+			ctx->runtime.quant_param = ctx->enc_params.mpeg4_inter_qp;
+		}
+	}
+	ctx->runtime.skip_picture = 0;
+	ctx->runtime.all_inter_mb = 0;
+
+	/*
+	 * Copy headers at the beginning of the first frame for H.264 only.
+	 * In MPEG4 they are already copied by the coda.
+	 */
+	if ((src_buf->v4l2_buf.sequence == 0) &&
+	   (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264)) {
+		ctx->runtime.pic_stream_buffer_addr =
+			vb2_dma_contig_plane_dma_addr(dst_buf, 0) +
+			ctx->runtime.vpu_header_size[0] +
+			ctx->runtime.vpu_header_size[1] +
+			ctx->runtime.vpu_header_size[2];
+		ctx->runtime.pic_stream_buffer_size = dst_buf->v4l2_buf.length -
+			ctx->runtime.vpu_header_size[0] -
+			ctx->runtime.vpu_header_size[1] -
+			ctx->runtime.vpu_header_size[2];
+		memcpy(vb2_plane_vaddr(dst_buf, 0),
+		       &ctx->runtime.vpu_header[0][0], ctx->runtime.vpu_header_size[0]);
+		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->runtime.vpu_header_size[0],
+		       &ctx->runtime.vpu_header[1][0], ctx->runtime.vpu_header_size[1]);
+		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->runtime.vpu_header_size[0] + ctx->runtime.vpu_header_size[1],
+		       &ctx->runtime.vpu_header[2][0], ctx->runtime.vpu_header_size[2]);
+	} else {
+		ctx->runtime.pic_stream_buffer_addr = vb2_dma_contig_plane_dma_addr(dst_buf, 0);
+		ctx->runtime.pic_stream_buffer_size = dst_buf->v4l2_buf.length;
+	}
+	
+	/* codadx6_encoder_submit */
+	{
+		codadx6_write(dev, 0, CODADX6_CMD_ENC_PIC_ROT_MODE);
+		codadx6_write(dev, ctx->runtime.quant_param, CODADX6_CMD_ENC_PIC_QS);
+		
+		if (ctx->runtime.skip_picture) {
+			codadx6_write(dev, 1, CODADX6_CMD_ENC_PIC_OPTION);
+		} else {
+			codadx6_write(dev, ctx->runtime.source_frame.y, CODADX6_CMD_ENC_PIC_SRC_ADDR_Y);
+			codadx6_write(dev, ctx->runtime.source_frame.cb, CODADX6_CMD_ENC_PIC_SRC_ADDR_CB);
+			codadx6_write(dev, ctx->runtime.source_frame.cr, CODADX6_CMD_ENC_PIC_SRC_ADDR_CR);
+			codadx6_write(dev, (ctx->runtime.all_inter_mb << 5) | (ctx->runtime.force_ipicture << 1 & 0x2), CODADX6_CMD_ENC_PIC_OPTION);
+		}
+
+		codadx6_write(dev, ctx->runtime.pic_stream_buffer_addr, CODADX6_CMD_ENC_PIC_BB_START);
+		codadx6_write(dev, ctx->runtime.pic_stream_buffer_size / 1024, CODADX6_CMD_ENC_PIC_BB_SIZE);
+		codadx6_command_async(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_PIC_RUN);
+	}
 }
 
 static int codadx6_job_ready(void *m2m_priv)
 {
 	struct codadx6_ctx *ctx = m2m_priv;
 
-	/* TODO */
-	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "job not ready.\n");
-	return 0;
+	/* 
+	 * For both 'P' and 'key' frame cases 1 picture
+	 * and 1 frame are needed.
+	 */
+	if (!(v4l2_m2m_num_src_bufs_ready(ctx->m2m_ctx) >= 1) ||
+		!(v4l2_m2m_num_dst_bufs_ready(ctx->m2m_ctx) >= 1)) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+			 "not ready: not enough video buffers.\n");
+		return 0;
+	}
+
+	/* For P frames a reference picture is needed too */
+	if ((ctx->gopcounter > 0) && (!ctx->reference)) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+			 "not ready: reference frame not available.\n");
+		return 0;
+	}
+
+	/* TODO: make sure coda is not busy */
+	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+			"job ready\n");
+	return 1;
 }
 
 static void codadx6_job_abort(void *m2m_priv)
@@ -480,6 +583,8 @@ struct v4l2_m2m_ops *get_enc_m2m_ops(void)
 void set_enc_default_params(struct codadx6_ctx *ctx) {
 	ctx->enc_params.codec_mode = CODADX6_MODE_INVALID;
 	ctx->enc_params.framerate = 30;
+	ctx->gopcounter = 0;
+	ctx->reference = NULL;
 
 	/* Default formats for output and input queues */
 	ctx->q_data[V4L2_M2M_SRC].fmt = &formats[0];

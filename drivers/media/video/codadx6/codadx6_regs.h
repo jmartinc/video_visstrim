@@ -181,14 +181,14 @@
 #define CODADX6_RET_ENC_SEQ_SUCCESS           0x1C0
 
 // /* Encoder Picture Run */
-// #define CODADX6_CMD_ENC_PIC_SRC_ADDR_Y        0x180
-// #define CODADX6_CMD_ENC_PIC_SRC_ADDR_CB       0x184
-// #define CODADX6_CMD_ENC_PIC_SRC_ADDR_CR       0x188
-// #define CODADX6_CMD_ENC_PIC_QS                0x18C
-// #define CODADX6_CMD_ENC_PIC_ROT_MODE          0x190
-// #define CODADX6_CMD_ENC_PIC_OPTION            0x194
-// #define CODADX6_CMD_ENC_PIC_BB_START          0x198
-// #define CODADX6_CMD_ENC_PIC_BB_SIZE           0x19C
+#define CODADX6_CMD_ENC_PIC_SRC_ADDR_Y        0x180
+#define CODADX6_CMD_ENC_PIC_SRC_ADDR_CB       0x184
+#define CODADX6_CMD_ENC_PIC_SRC_ADDR_CR       0x188
+#define CODADX6_CMD_ENC_PIC_QS                0x18C
+#define CODADX6_CMD_ENC_PIC_ROT_MODE          0x190
+#define CODADX6_CMD_ENC_PIC_OPTION            0x194
+#define CODADX6_CMD_ENC_PIC_BB_START          0x198
+#define CODADX6_CMD_ENC_PIC_BB_SIZE           0x19C
 // #define CODADX6_RET_ENC_PIC_TYPE              0x1C4
 // #define CODADX6_RET_ENC_PIC_SLICE_NUM         0x1CC
 // #define CODADX6_RET_ENC_PIC_FLAG              0x1D0

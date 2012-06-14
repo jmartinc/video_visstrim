@@ -124,6 +124,13 @@ struct codadx6_enc_runtime {
 	int		initial_info_obtained; /* This probably can be removed (framework protects) */
 	int		num_frame_buffers; /* This can be removed */
 	int		stride; /* This can be removed later */
+	struct framebuffer source_frame; /* This is only used to pass data to 'encoder_submit' */
+	int		quant_param; /* idem */
+	int		force_ipicture; /* idem */
+	int		skip_picture; /* idem */
+	int		all_inter_mb; /* idem */
+	u32		pic_stream_buffer_addr; /* idem */
+	int		pic_stream_buffer_size; /* idem */
 	/* headers */
 	char		vpu_header[3][64];
 	int		vpu_header_size[3];
@@ -142,6 +149,8 @@ struct codadx6_ctx {
 	struct v4l2_m2m_ctx		*m2m_ctx;
 	struct v4l2_ctrl_handler	ctrls;
 	struct v4l2_fh			fh;
+	struct vb2_buffer		*reference;
+	int				gopcounter;
 };
 
 static inline void codadx6_write(struct codadx6_dev *dev, u32 data, u32 reg)
