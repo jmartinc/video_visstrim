@@ -209,7 +209,16 @@ static const struct v4l2_file_operations codadx6_fops = {
 
 static irqreturn_t codadx6_irq_handler(int irq, void *data)
 {
-	/*TODO*/
+	struct codadx6_dev *dev = data;
+
+	/* read status register to attend the IRQ */
+	codadx6_read(dev, CODADX6_REG_BIT_INT_STATUS);
+	codadx6_write(dev, CODADX6_REG_BIT_INT_CLEAR_SET,
+		      CODADX6_REG_BIT_INT_CLEAR);
+
+	/* TODO: move to a tasklet? */
+	codadx6_enc_isr(dev);
+
 	return IRQ_HANDLED;
 }
 

@@ -431,11 +431,56 @@ const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void)
  * Mem-to-mem operations.
  */
 
-/*
- * TODO: 
- *  - propagate flags from picture to frame in ISR
- *  - check that framework adds timestamps
- */
+void codadx6_enc_isr(struct codadx6_dev *dev)
+{
+	struct codadx6_ctx *ctx;
+	struct vb2_buffer *src_buf, *dst_buf;
+
+	ctx = v4l2_m2m_get_curr_priv(dev->m2m_enc_dev);
+	if (ctx == NULL) {
+		v4l2_err(&dev->v4l2_dev, "Instance released before the end of transaction\n");
+		return;
+	}
+
+	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
+	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
+
+	dst_buf->v4l2_buf.sequence = dst_buf->v4l2_buf.sequence; /* FIXME: remove for mainline */
+
+	if (dst_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
+		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
+	} else {
+		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_PFRAME;
+	}
+
+	/* Free previous reference picture if available */
+	if (ctx->reference) {
+		v4l2_m2m_buf_done(ctx->reference, VB2_BUF_STATE_DONE);
+		ctx->reference = NULL;
+	}
+
+	/* 
+	 * For the last frame of the gop we don't need to save
+	 * a reference picture.
+	 */
+	if (ctx->gopcounter == 0) {
+		v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_DONE);
+	} else {
+		ctx->reference = v4l2_m2m_src_buf_remove(ctx->m2m_ctx);
+	}
+
+	v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_DONE);
+
+	ctx->gopcounter--;
+	if (ctx->gopcounter < 0)
+		ctx->gopcounter = ctx->enc_params.gop_size - 1;
+
+
+	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev,
+		 "job finished: encoding\n");
+
+	v4l2_m2m_job_finish(ctx->dev->m2m_enc_dev, ctx->m2m_ctx);
+}
 
 static void codadx6_device_run(void *m2m_priv)
 {
@@ -535,13 +580,19 @@ static int codadx6_job_ready(void *m2m_priv)
 	}
 
 	/* For P frames a reference picture is needed too */
-	if ((ctx->gopcounter > 0) && (!ctx->reference)) {
+// 	printk("gopcounter = %d\n", ctx->gopcounter);
+	if ((ctx->gopcounter != (ctx->enc_params.gop_size - 1)) && (!ctx->reference)) {
 		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
-			 "not ready: reference frame not available.\n");
+			 "not ready: reference picture not available.\n");
 		return 0;
 	}
 
-	/* TODO: make sure coda is not busy */
+	if (codadx6_isbusy(ctx->dev)) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+			 "not ready: coda is still busy.\n");
+		return 0;
+	}
+
 	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
 			"job ready\n");
 	return 1;
@@ -583,7 +634,6 @@ struct v4l2_m2m_ops *get_enc_m2m_ops(void)
 void set_enc_default_params(struct codadx6_ctx *ctx) {
 	ctx->enc_params.codec_mode = CODADX6_MODE_INVALID;
 	ctx->enc_params.framerate = 30;
-	ctx->gopcounter = 0;
 	ctx->reference = NULL;
 
 	/* Default formats for output and input queues */
@@ -690,6 +740,8 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 		struct vb2_queue *vq;
 		u32 value;
 		int i = 0;
+
+		ctx->gopcounter = ctx->enc_params.gop_size - 1;
 
 		q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 		ctx->runtime.pic_width = q_data_src->width;
