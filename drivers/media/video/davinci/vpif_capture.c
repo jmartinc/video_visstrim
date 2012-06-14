@@ -2177,6 +2177,12 @@ static __init int vpif_probe(struct platform_device *pdev)
 		return err;
 	}
 
+	err = v4l2_device_register(vpif_dev, &vpif_obj.v4l2_dev);
+	if (err) {
+		v4l2_err(vpif_dev->driver, "Error registering v4l2 device\n");
+		return err;
+	}
+
 	k = 0;
 	while ((res = platform_get_resource(pdev, IORESOURCE_IRQ, k))) {
 		for (i = res->start; i <= res->end; i++) {
@@ -2222,6 +2228,10 @@ static __init int vpif_probe(struct platform_device *pdev)
 		common = &(ch->common[VPIF_VIDEO_INDEX]);
 		spin_lock_init(&common->irqlock);
 		mutex_init(&common->lock);
+		/* Locking in file operations other than ioctl should be done
+		   by the driver, not the V4L2 core.
+		   This driver needs auditing so that this flag can be removed. */
+		set_bit(V4L2_FL_LOCK_ALL_FOPS, &ch->video_dev->flags);
 		ch->video_dev->lock = &common->lock;
 		/* Initialize prio member of channel object */
 		v4l2_prio_init(&ch->prio);
@@ -2244,12 +2254,6 @@ static __init int vpif_probe(struct platform_device *pdev)
 		vpif_err("unable to allocate memory for subdevice pointers\n");
 		err = -ENOMEM;
 		goto probe_out;
-	}
-
-	err = v4l2_device_register(vpif_dev, &vpif_obj.v4l2_dev);
-	if (err) {
-		v4l2_err(vpif_dev->driver, "Error registering v4l2 device\n");
-		goto probe_subdev_out;
 	}
 
 	for (i = 0; i < subdev_count; i++) {
@@ -2281,7 +2285,6 @@ probe_subdev_out:
 
 	j = VPIF_CAPTURE_MAX_DEVICES;
 probe_out:
-	v4l2_device_unregister(&vpif_obj.v4l2_dev);
 	for (k = 0; k < j; k++) {
 		/* Get the pointer to the channel object */
 		ch = vpif_obj.dev[k];
@@ -2303,6 +2306,7 @@ vpif_int_err:
 		if (res)
 			i = res->end;
 	}
+	v4l2_device_unregister(&vpif_obj.v4l2_dev);
 	return err;
 }
 

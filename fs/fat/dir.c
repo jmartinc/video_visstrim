@@ -98,8 +98,8 @@ next:
 
 	*bh = sb_bread(sb, phys);
 	if (*bh == NULL) {
-		fat_msg(sb, KERN_ERR, "Directory bread(block %llu) failed",
-		       (llu)phys);
+		fat_msg_ratelimit(sb, KERN_ERR,
+			"Directory bread(block %llu) failed", (llu)phys);
 		/* skip this block */
 		*pos = (iblock + 1) << sb->s_blocksize_bits;
 		goto next;
@@ -156,8 +156,8 @@ static int uni16_to_x8(struct super_block *sb, unsigned char *ascii,
 		} else {
 			if (uni_xlate == 1) {
 				*op++ = ':';
-				op = pack_hex_byte(op, ec >> 8);
-				op = pack_hex_byte(op, ec);
+				op = hex_byte_pack(op, ec >> 8);
+				op = hex_byte_pack(op, ec);
 				len -= 5;
 			} else {
 				*op++ = '?';

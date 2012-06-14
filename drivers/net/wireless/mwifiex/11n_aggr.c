@@ -84,7 +84,7 @@ mwifiex_11n_form_amsdu_pkt(struct sk_buff *skb_aggr,
 	/* Add payload */
 	skb_put(skb_aggr, skb_src->len);
 	memcpy(skb_aggr->data + sizeof(*tx_header), skb_src->data,
-							skb_src->len);
+	       skb_src->len);
 	*pad = (((skb_src->len + LLC_SNAP_LEN) & 3)) ? (4 - (((skb_src->len +
 						      LLC_SNAP_LEN)) & 3)) : 0;
 	skb_put(skb_aggr, *pad);
@@ -119,14 +119,14 @@ mwifiex_11n_form_amsdu_txpd(struct mwifiex_private *priv,
 	local_tx_pd->tx_pkt_offset = cpu_to_le16(sizeof(struct txpd));
 	local_tx_pd->tx_pkt_type = cpu_to_le16(PKT_TYPE_AMSDU);
 	local_tx_pd->tx_pkt_length = cpu_to_le16(skb->len -
-			sizeof(*local_tx_pd));
+						 sizeof(*local_tx_pd));
 
 	if (local_tx_pd->tx_control == 0)
 		/* TxCtrl set by user or default */
 		local_tx_pd->tx_control = cpu_to_le32(priv->pkt_tx_ctrl);
 
-	if ((GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA) &&
-		(priv->adapter->pps_uapsd_mode)) {
+	if (GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA &&
+	    priv->adapter->pps_uapsd_mode) {
 		if (true == mwifiex_check_last_packet_indication(priv)) {
 			priv->adapter->tx_lock_flag = true;
 			local_tx_pd->flags =
@@ -182,7 +182,8 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 	skb_reserve(skb_aggr, headroom + sizeof(struct txpd));
 	tx_info_aggr =  MWIFIEX_SKB_TXCB(skb_aggr);
 
-	tx_info_aggr->bss_index = tx_info_src->bss_index;
+	tx_info_aggr->bss_type = tx_info_src->bss_type;
+	tx_info_aggr->bss_num = tx_info_src->bss_num;
 	skb_aggr->priority = skb_src->priority;
 
 	do {
@@ -193,7 +194,6 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 		skb_src = skb_dequeue(&pra_list->skb_head);
 
 		pra_list->total_pkts_size -= skb_src->len;
-		pra_list->total_pkts--;
 
 		atomic_dec(&priv->wmm.tx_pkts_queued);
 
@@ -233,22 +233,27 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 
 	skb_push(skb_aggr, headroom);
 
-	/*
-	 * Padding per MSDU will affect the length of next
-	 * packet and hence the exact length of next packet
-	 * is uncertain here.
-	 *
-	 * Also, aggregation of transmission buffer, while
-	 * downloading the data to the card, wont gain much
-	 * on the AMSDU packets as the AMSDU packets utilizes
-	 * the transmission buffer space to the maximum
-	 * (adapter->tx_buf_size).
-	 */
-	tx_param.next_pkt_len = 0;
+	if (adapter->iface_type == MWIFIEX_USB) {
+		adapter->data_sent = true;
+		ret = adapter->if_ops.host_to_card(adapter, MWIFIEX_USB_EP_DATA,
+						   skb_aggr, NULL);
+	} else {
+		/*
+		 * Padding per MSDU will affect the length of next
+		 * packet and hence the exact length of next packet
+		 * is uncertain here.
+		 *
+		 * Also, aggregation of transmission buffer, while
+		 * downloading the data to the card, wont gain much
+		 * on the AMSDU packets as the AMSDU packets utilizes
+		 * the transmission buffer space to the maximum
+		 * (adapter->tx_buf_size).
+		 */
+		tx_param.next_pkt_len = 0;
 
-	ret = adapter->if_ops.host_to_card(adapter, MWIFIEX_TYPE_DATA,
-					     skb_aggr->data,
-					     skb_aggr->len, &tx_param);
+		ret = adapter->if_ops.host_to_card(adapter, MWIFIEX_TYPE_DATA,
+						   skb_aggr, &tx_param);
+	}
 	switch (ret) {
 	case -EBUSY:
 		spin_lock_irqsave(&priv->wmm.ra_list_spinlock, ra_list_flags);
@@ -258,9 +263,8 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 			mwifiex_write_data_complete(adapter, skb_aggr, -1);
 			return -1;
 		}
-		if ((GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA) &&
-			(adapter->pps_uapsd_mode) &&
-			(adapter->tx_lock_flag)) {
+		if (GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA &&
+		    adapter->pps_uapsd_mode && adapter->tx_lock_flag) {
 				priv->adapter->tx_lock_flag = false;
 				if (ptx_pd)
 					ptx_pd->flags = 0;
@@ -269,7 +273,6 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 		skb_queue_tail(&pra_list->skb_head, skb_aggr);
 
 		pra_list->total_pkts_size += skb_aggr->len;
-		pra_list->total_pkts++;
 
 		atomic_inc(&priv->wmm.tx_pkts_queued);
 
@@ -281,7 +284,7 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 	case -1:
 		adapter->data_sent = false;
 		dev_err(adapter->dev, "%s: host_to_card failed: %#x\n",
-						__func__, ret);
+			__func__, ret);
 		adapter->dbg.num_tx_host_to_card_failure++;
 		mwifiex_write_data_complete(adapter, skb_aggr, ret);
 		return 0;

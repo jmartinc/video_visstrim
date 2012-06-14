@@ -246,8 +246,7 @@ clusterip_hashfn(const struct sk_buff *skb,
 			dport = ports[1];
 		}
 	} else {
-		if (net_ratelimit())
-			pr_info("unknown protocol %u\n", iph->protocol);
+		net_info_ratelimited("unknown protocol %u\n", iph->protocol);
 	}
 
 	switch (config->hash_mode) {
@@ -395,7 +394,6 @@ static int clusterip_tg_check(const struct xt_tgchk_param *par)
 			config = clusterip_config_init(cipinfo,
 							e->ip.dst.s_addr, dev);
 			if (!config) {
-				pr_info("cannot allocate config\n");
 				dev_put(dev);
 				return -ENOMEM;
 			}

@@ -30,7 +30,6 @@
 #include <linux/errno.h>
 #include <linux/wait.h>
 #include <linux/of_platform.h>
-#include <linux/of_spi.h>
 #include <linux/of_gpio.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
@@ -467,9 +466,6 @@ static int __init spi_ppc4xx_of_probe(struct platform_device *op)
 	bbp->master->setup = spi_ppc4xx_setup;
 	bbp->master->cleanup = spi_ppc4xx_cleanup;
 
-	/* Allocate bus num dynamically. */
-	bbp->master->bus_num = -1;
-
 	/* the spi->mode bits understood by this driver: */
 	bbp->master->mode_bits =
 		SPI_CPHA | SPI_CPOL | SPI_CS_HIGH | SPI_LSB_FIRST;
@@ -514,7 +510,7 @@ static int __init spi_ppc4xx_of_probe(struct platform_device *op)
 	/* Request IRQ */
 	hw->irqnum = irq_of_parse_and_map(np, 0);
 	ret = request_irq(hw->irqnum, spi_ppc4xx_int,
-			  IRQF_DISABLED, "spi_ppc4xx_of", (void *)hw);
+			  0, "spi_ppc4xx_of", (void *)hw);
 	if (ret) {
 		dev_err(dev, "unable to allocate interrupt\n");
 		goto free_gpios;
@@ -594,18 +590,7 @@ static struct platform_driver spi_ppc4xx_of_driver = {
 		.of_match_table = spi_ppc4xx_of_match,
 	},
 };
-
-static int __init spi_ppc4xx_init(void)
-{
-	return platform_driver_register(&spi_ppc4xx_of_driver);
-}
-module_init(spi_ppc4xx_init);
-
-static void __exit spi_ppc4xx_exit(void)
-{
-	platform_driver_unregister(&spi_ppc4xx_of_driver);
-}
-module_exit(spi_ppc4xx_exit);
+module_platform_driver(spi_ppc4xx_of_driver);
 
 MODULE_AUTHOR("Gary Jennejohn & Stefan Roese");
 MODULE_DESCRIPTION("Simple PPC4xx SPI Driver");

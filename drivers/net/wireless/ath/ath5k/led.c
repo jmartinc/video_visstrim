@@ -39,9 +39,10 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/pci.h>
 #include "ath5k.h"
-#include "base.h"
 
 #define ATH_SDEVICE(subv, subd) \
 	.vendor = PCI_ANY_ID, .device = PCI_ANY_ID, \

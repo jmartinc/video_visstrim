@@ -24,6 +24,7 @@
 #include <linux/irq.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
+#include <linux/export.h>
 
 #include <asm/processor.h>
 #include <asm/sections.h>
@@ -140,7 +141,7 @@ static int __devinit tile_init_irqs(int controller_id,
  *
  * Returns the number of controllers discovered.
  */
-int __devinit tile_pci_init(void)
+int __init tile_pci_init(void)
 {
 	int i;
 
@@ -286,7 +287,7 @@ static void __devinit fixup_read_and_payload_sizes(void)
  * The controllers have been set up by the time we get here, by a call to
  * tile_pci_init.
  */
-int __devinit pcibios_init(void)
+int __init pcibios_init(void)
 {
 	int i;
 
@@ -394,6 +395,11 @@ void __devinit pcibios_fixup_bus(struct pci_bus *bus)
 	/* Nothing needs to be done. */
 }
 
+void pcibios_set_master(struct pci_dev *dev)
+{
+	/* No special bus mastering setup handling. */
+}
+
 /*
  * This can be called from the generic PCI layer, but doesn't need to
  * do anything.
@@ -464,27 +470,6 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 		pci_write_config_word(dev, PCI_COMMAND, cmd);
 	return 0;
 }
-
-void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long max)
-{
-	unsigned long start = pci_resource_start(dev, bar);
-	unsigned long len = pci_resource_len(dev, bar);
-	unsigned long flags = pci_resource_flags(dev, bar);
-
-	if (!len)
-		return NULL;
-	if (max && len > max)
-		len = max;
-
-	if (!(flags & IORESOURCE_MEM)) {
-		pr_info("PCI: Trying to map invalid resource %#lx\n", flags);
-		start = 0;
-	}
-
-	return (void __iomem *)start;
-}
-EXPORT_SYMBOL(pci_iomap);
-
 
 /****************************************************************
  *

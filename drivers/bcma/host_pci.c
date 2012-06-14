@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/bcma/bcma.h>
 #include <linux/pci.h>
+#include <linux/module.h>
 
 static void bcma_host_pci_switch_core(struct bcma_device *core)
 {
@@ -20,48 +21,58 @@ static void bcma_host_pci_switch_core(struct bcma_device *core)
 	pr_debug("Switched to core: 0x%X\n", core->id.id);
 }
 
-static u8 bcma_host_pci_read8(struct bcma_device *core, u16 offset)
+/* Provides access to the requested core. Returns base offset that has to be
+ * used. It makes use of fixed windows when possible. */
+static u16 bcma_host_pci_provide_access_to_core(struct bcma_device *core)
 {
+	switch (core->id.id) {
+	case BCMA_CORE_CHIPCOMMON:
+		return 3 * BCMA_CORE_SIZE;
+	case BCMA_CORE_PCIE:
+		return 2 * BCMA_CORE_SIZE;
+	}
+
 	if (core->bus->mapped_core != core)
 		bcma_host_pci_switch_core(core);
+	return 0;
+}
+
+static u8 bcma_host_pci_read8(struct bcma_device *core, u16 offset)
+{
+	offset += bcma_host_pci_provide_access_to_core(core);
 	return ioread8(core->bus->mmio + offset);
 }
 
 static u16 bcma_host_pci_read16(struct bcma_device *core, u16 offset)
 {
-	if (core->bus->mapped_core != core)
-		bcma_host_pci_switch_core(core);
+	offset += bcma_host_pci_provide_access_to_core(core);
 	return ioread16(core->bus->mmio + offset);
 }
 
 static u32 bcma_host_pci_read32(struct bcma_device *core, u16 offset)
 {
-	if (core->bus->mapped_core != core)
-		bcma_host_pci_switch_core(core);
+	offset += bcma_host_pci_provide_access_to_core(core);
 	return ioread32(core->bus->mmio + offset);
 }
 
 static void bcma_host_pci_write8(struct bcma_device *core, u16 offset,
 				 u8 value)
 {
-	if (core->bus->mapped_core != core)
-		bcma_host_pci_switch_core(core);
+	offset += bcma_host_pci_provide_access_to_core(core);
 	iowrite8(value, core->bus->mmio + offset);
 }
 
 static void bcma_host_pci_write16(struct bcma_device *core, u16 offset,
 				 u16 value)
 {
-	if (core->bus->mapped_core != core)
-		bcma_host_pci_switch_core(core);
+	offset += bcma_host_pci_provide_access_to_core(core);
 	iowrite16(value, core->bus->mmio + offset);
 }
 
 static void bcma_host_pci_write32(struct bcma_device *core, u16 offset,
 				 u32 value)
 {
-	if (core->bus->mapped_core != core)
-		bcma_host_pci_switch_core(core);
+	offset += bcma_host_pci_provide_access_to_core(core);
 	iowrite32(value, core->bus->mmio + offset);
 }
 
@@ -143,8 +154,8 @@ const struct bcma_host_ops bcma_host_pci_ops = {
 	.awrite32	= bcma_host_pci_awrite32,
 };
 
-static int bcma_host_pci_probe(struct pci_dev *dev,
-			     const struct pci_device_id *id)
+static int __devinit bcma_host_pci_probe(struct pci_dev *dev,
+					 const struct pci_device_id *id)
 {
 	struct bcma_bus *bus;
 	int err = -ENOMEM;
@@ -190,6 +201,9 @@ static int bcma_host_pci_probe(struct pci_dev *dev,
 	bus->hosttype = BCMA_HOSTTYPE_PCI;
 	bus->ops = &bcma_host_pci_ops;
 
+	bus->boardinfo.vendor = bus->host_pci->subsystem_vendor;
+	bus->boardinfo.type = bus->host_pci->subsystem_device;
+
 	/* Register */
 	err = bcma_bus_register(bus);
 	if (err)
@@ -211,7 +225,7 @@ err_kfree_bus:
 	return err;
 }
 
-static void bcma_host_pci_remove(struct pci_dev *dev)
+static void __devexit bcma_host_pci_remove(struct pci_dev *dev)
 {
 	struct bcma_bus *bus = pci_get_drvdata(dev);
 
@@ -222,6 +236,35 @@ static void bcma_host_pci_remove(struct pci_dev *dev)
 	kfree(bus);
 	pci_set_drvdata(dev, NULL);
 }
+
+#ifdef CONFIG_PM
+static int bcma_host_pci_suspend(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct bcma_bus *bus = pci_get_drvdata(pdev);
+
+	bus->mapped_core = NULL;
+
+	return bcma_bus_suspend(bus);
+}
+
+static int bcma_host_pci_resume(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct bcma_bus *bus = pci_get_drvdata(pdev);
+
+	return bcma_bus_resume(bus);
+}
+
+static SIMPLE_DEV_PM_OPS(bcma_pm_ops, bcma_host_pci_suspend,
+			 bcma_host_pci_resume);
+#define BCMA_PM_OPS	(&bcma_pm_ops)
+
+#else /* CONFIG_PM */
+
+#define BCMA_PM_OPS     NULL
+
+#endif /* CONFIG_PM */
 
 static DEFINE_PCI_DEVICE_TABLE(bcma_pci_bridge_tbl) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x0576) },
@@ -237,7 +280,8 @@ static struct pci_driver bcma_pci_bridge_driver = {
 	.name = "bcma-pci-bridge",
 	.id_table = bcma_pci_bridge_tbl,
 	.probe = bcma_host_pci_probe,
-	.remove = bcma_host_pci_remove,
+	.remove = __devexit_p(bcma_host_pci_remove),
+	.driver.pm = BCMA_PM_OPS,
 };
 
 int __init bcma_host_pci_init(void)

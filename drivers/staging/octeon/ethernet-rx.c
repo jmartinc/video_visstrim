@@ -36,6 +36,7 @@
 #include <linux/prefetch.h>
 #include <linux/ratelimit.h>
 #include <linux/smp.h>
+#include <linux/interrupt.h>
 #include <net/dst.h>
 #ifdef CONFIG_XFRM
 #include <linux/xfrm.h>
@@ -52,14 +53,14 @@
 #include "octeon-ethernet.h"
 #include "ethernet-util.h"
 
-#include "cvmx-helper.h"
-#include "cvmx-wqe.h"
-#include "cvmx-fau.h"
-#include "cvmx-pow.h"
-#include "cvmx-pip.h"
-#include "cvmx-scratch.h"
+#include <asm/octeon/cvmx-helper.h>
+#include <asm/octeon/cvmx-wqe.h>
+#include <asm/octeon/cvmx-fau.h>
+#include <asm/octeon/cvmx-pow.h>
+#include <asm/octeon/cvmx-pip.h>
+#include <asm/octeon/cvmx-scratch.h>
 
-#include "cvmx-gmxx-defs.h"
+#include <asm/octeon/cvmx-gmxx-defs.h>
 
 struct cvm_napi_wrapper {
 	struct napi_struct napi;
@@ -162,7 +163,7 @@ static inline int cvm_oct_check_rcv_error(cvmx_wqe_t *work)
 		/*
 		 * We received a packet with either an alignment error
 		 * or a FCS error. This may be signalling that we are
-		 * running 10Mbps with GMXX_RXX_FRM_CTL[PRE_CHK}
+		 * running 10Mbps with GMXX_RXX_FRM_CTL[PRE_CHK]
 		 * off. If this is the case we need to parse the
 		 * packet to determine if we can remove a non spec
 		 * preamble and generate a correct packet.

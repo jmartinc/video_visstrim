@@ -20,6 +20,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -37,7 +38,6 @@
 #include <asm/mach/irq.h>
 
 #include <mach/board.h>
-#include <mach/gpio.h>
 #include <mach/cpu.h>
 
 #include "generic.h"
@@ -50,32 +50,25 @@ static void __init ecb_at91init_early(void)
 
 	/* Initialize processor: 18.432 MHz crystal */
 	at91_initialize(18432000);
-
-	/* Setup the LEDs */
-	at91_init_leds(AT91_PIN_PC7, AT91_PIN_PC7);
-
-	/* DBGU on ttyS0. (Rx & Tx only) */
-	at91_register_uart(0, 0, 0);
-
-	/* USART0 on ttyS1. (Rx & Tx only) */
-	at91_register_uart(AT91RM9200_ID_US0, 1, 0);
-
-	/* set serial console to ttyS0 (ie, DBGU) */
-	at91_set_serial_console(0);
 }
 
-static struct at91_eth_data __initdata ecb_at91eth_data = {
+static struct macb_platform_data __initdata ecb_at91eth_data = {
 	.phy_irq_pin	= AT91_PIN_PC4,
 	.is_rmii	= 0,
 };
 
 static struct at91_usbh_data __initdata ecb_at91usbh_data = {
 	.ports		= 1,
+	.vbus_pin	= {-EINVAL, -EINVAL},
+	.overcurrent_pin= {-EINVAL, -EINVAL},
 };
 
 static struct at91_mmc_data __initdata ecb_at91mmc_data = {
 	.slot_b		= 0,
 	.wire4		= 1,
+	.det_pin	= -EINVAL,
+	.wp_pin		= -EINVAL,
+	.vcc_pin	= -EINVAL,
 };
 
 
@@ -146,7 +139,15 @@ static struct spi_board_info __initdata ecb_at91spi_devices[] = {
 
 static void __init ecb_at91board_init(void)
 {
+	/* Setup the LEDs */
+	at91_init_leds(AT91_PIN_PC7, AT91_PIN_PC7);
+
 	/* Serial */
+	/* DBGU on ttyS0. (Rx & Tx only) */
+	at91_register_uart(0, 0, 0);
+
+	/* USART0 on ttyS1. (Rx & Tx only) */
+	at91_register_uart(AT91RM9200_ID_US0, 1, 0);
 	at91_add_device_serial();
 
 	/* Ethernet */

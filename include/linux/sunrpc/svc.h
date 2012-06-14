@@ -84,7 +84,8 @@ struct svc_serv {
 	unsigned int		sv_nrpools;	/* number of thread pools */
 	struct svc_pool *	sv_pools;	/* array of thread pools */
 
-	void			(*sv_shutdown)(struct svc_serv *serv);
+	void			(*sv_shutdown)(struct svc_serv *serv,
+					       struct net *net);
 						/* Callback to use when last thread
 						 * exits.
 						 */
@@ -212,11 +213,6 @@ static inline void svc_putu32(struct kvec *iov, __be32 val)
 	iov->iov_len += sizeof(__be32);
 }
 
-union svc_addr_u {
-    struct in_addr	addr;
-    struct in6_addr	addr6;
-};
-
 /*
  * The context of a single thread, including the request currently being
  * processed.
@@ -225,14 +221,17 @@ struct svc_rqst {
 	struct list_head	rq_list;	/* idle list */
 	struct list_head	rq_all;		/* all threads list */
 	struct svc_xprt *	rq_xprt;	/* transport ptr */
+
 	struct sockaddr_storage	rq_addr;	/* peer address */
 	size_t			rq_addrlen;
+	struct sockaddr_storage	rq_daddr;	/* dest addr of request
+						 *  - reply from here */
+	size_t			rq_daddrlen;
 
 	struct svc_serv *	rq_server;	/* RPC service definition */
 	struct svc_pool *	rq_pool;	/* thread pool */
 	struct svc_procedure *	rq_procinfo;	/* procedure info */
 	struct auth_ops *	rq_authop;	/* authentication flavour */
-	u32			rq_flavor;	/* pseudoflavor */
 	struct svc_cred		rq_cred;	/* auth info */
 	void *			rq_xprt_ctxt;	/* transport specific context ptr */
 	struct svc_deferred_req*rq_deferred;	/* deferred request we are replaying */
@@ -254,9 +253,6 @@ struct svc_rqst {
 	u32			rq_prot;	/* IP protocol */
 	unsigned short
 				rq_secure  : 1;	/* secure port */
-
-	union svc_addr_u	rq_daddr;	/* dest addr of request
-						 *  - reply from here */
 
 	void *			rq_argp;	/* decoded arguments */
 	void *			rq_resp;	/* xdr'd results */
@@ -300,6 +296,21 @@ static inline struct sockaddr *svc_addr(const struct svc_rqst *rqst)
 	return (struct sockaddr *) &rqst->rq_addr;
 }
 
+static inline struct sockaddr_in *svc_daddr_in(const struct svc_rqst *rqst)
+{
+	return (struct sockaddr_in *) &rqst->rq_daddr;
+}
+
+static inline struct sockaddr_in6 *svc_daddr_in6(const struct svc_rqst *rqst)
+{
+	return (struct sockaddr_in6 *) &rqst->rq_daddr;
+}
+
+static inline struct sockaddr *svc_daddr(const struct svc_rqst *rqst)
+{
+	return (struct sockaddr *) &rqst->rq_daddr;
+}
+
 /*
  * Check buffer bounds after decoding arguments
  */
@@ -340,7 +351,8 @@ struct svc_deferred_req {
 	struct svc_xprt		*xprt;
 	struct sockaddr_storage	addr;	/* where reply must go */
 	size_t			addrlen;
-	union svc_addr_u	daddr;	/* where reply must come from */
+	struct sockaddr_storage	daddr;	/* where reply must come from */
+	size_t			daddrlen;
 	struct cache_deferred_req handle;
 	size_t			xprt_hlen;
 	int			argslen;
@@ -401,21 +413,25 @@ struct svc_procedure {
 /*
  * Function prototypes.
  */
+int svc_rpcb_setup(struct svc_serv *serv, struct net *net);
+void svc_rpcb_cleanup(struct svc_serv *serv, struct net *net);
+int svc_bind(struct svc_serv *serv, struct net *net);
 struct svc_serv *svc_create(struct svc_program *, unsigned int,
-			    void (*shutdown)(struct svc_serv *));
+			    void (*shutdown)(struct svc_serv *, struct net *net));
 struct svc_rqst *svc_prepare_thread(struct svc_serv *serv,
-					struct svc_pool *pool);
+					struct svc_pool *pool, int node);
 void		   svc_exit_thread(struct svc_rqst *);
 struct svc_serv *  svc_create_pooled(struct svc_program *, unsigned int,
-			void (*shutdown)(struct svc_serv *),
+			void (*shutdown)(struct svc_serv *, struct net *net),
 			svc_thread_fn, struct module *);
 int		   svc_set_num_threads(struct svc_serv *, struct svc_pool *, int);
 int		   svc_pool_stats_open(struct svc_serv *serv, struct file *file);
 void		   svc_destroy(struct svc_serv *);
+void		   svc_shutdown_net(struct svc_serv *, struct net *);
 int		   svc_process(struct svc_rqst *);
 int		   bc_svc_process(struct svc_serv *, struct rpc_rqst *,
 			struct svc_rqst *);
-int		   svc_register(const struct svc_serv *, const int,
+int		   svc_register(const struct svc_serv *, struct net *, const int,
 				const unsigned short, const unsigned short);
 
 void		   svc_wake_up(struct svc_serv *);

@@ -30,7 +30,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/mutex.h>
 
 #include <sound/core.h>
@@ -57,12 +57,12 @@ static int index = SNDRV_DEFAULT_IDX1;	/* Index */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
 static int playback_bufsize = 16;
 static int capture_bufsize = 16;
-static int force_ac97;			/* disabled as default */
+static bool force_ac97;			/* disabled as default */
 static int buffer_top;			/* not specified */
-static int use_cache;			/* disabled */
-static int vaio_hack;			/* disabled */
-static int reset_workaround;
-static int reset_workaround_2;
+static bool use_cache;			/* disabled */
+static bool vaio_hack;			/* disabled */
+static bool reset_workaround;
+static bool reset_workaround_2;
 
 module_param(index, int, 0444);
 MODULE_PARM_DESC(index, "Index value for " CARD_NAME " soundcard.");
@@ -86,7 +86,7 @@ module_param(reset_workaround_2, bool, 0444);
 MODULE_PARM_DESC(reset_workaround_2, "Enable extended AC97 RESET workaround for some other laptops.");
 
 /* just for backward compatibility */
-static int enable;
+static bool enable;
 module_param(enable, bool, 0444);
 
 
@@ -1742,7 +1742,7 @@ static void __devexit snd_nm256_remove(struct pci_dev *pci)
 }
 
 
-static struct pci_driver driver = {
+static struct pci_driver nm256_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_nm256_ids,
 	.probe = snd_nm256_probe,
@@ -1753,16 +1753,4 @@ static struct pci_driver driver = {
 #endif
 };
 
-
-static int __init alsa_card_nm256_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_nm256_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_nm256_init)
-module_exit(alsa_card_nm256_exit)
+module_pci_driver(nm256_driver);

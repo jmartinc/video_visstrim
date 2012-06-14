@@ -1544,6 +1544,10 @@ static int __devinit viu_of_probe(struct platform_device *op)
 
 	/* initialize locks */
 	mutex_init(&viu_dev->lock);
+	/* Locking in file operations other than ioctl should be done
+	   by the driver, not the V4L2 core.
+	   This driver needs auditing so that this flag can be removed. */
+	set_bit(V4L2_FL_LOCK_ALL_FOPS, &viu_dev->vdev->flags);
 	viu_dev->vdev->lock = &viu_dev->lock;
 	spin_lock_init(&viu_dev->slock);
 
@@ -1661,18 +1665,7 @@ static struct platform_driver viu_of_platform_driver = {
 	},
 };
 
-static int __init viu_init(void)
-{
-	return platform_driver_register(&viu_of_platform_driver);
-}
-
-static void __exit viu_exit(void)
-{
-	platform_driver_unregister(&viu_of_platform_driver);
-}
-
-module_init(viu_init);
-module_exit(viu_exit);
+module_platform_driver(viu_of_platform_driver);
 
 MODULE_DESCRIPTION("Freescale Video-In(VIU)");
 MODULE_AUTHOR("Hongjun Chen");

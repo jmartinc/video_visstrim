@@ -87,7 +87,7 @@ static int hpfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 			ret = -EIOERROR;
 			goto out;
 		}
-		if (!fno->dirflag) {
+		if (!fnode_is_dir(fno)) {
 			e = 1;
 			hpfs_error(inode->i_sb, "not a directory, fnode %08lx",
 					(unsigned long)inode->i_ino);
@@ -247,7 +247,7 @@ struct dentry *hpfs_lookup(struct inode *dir, struct dentry *dentry, struct name
 			result->i_mode &= ~0111;
 			result->i_op = &hpfs_file_iops;
 			result->i_fop = &hpfs_file_ops;
-			result->i_nlink = 1;
+			set_nlink(result, 1);
 		}
 		unlock_new_inode(result);
 	}

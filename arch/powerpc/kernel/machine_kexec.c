@@ -23,13 +23,10 @@
 
 void machine_kexec_mask_interrupts(void) {
 	unsigned int i;
+	struct irq_desc *desc;
 
-	for_each_irq(i) {
-		struct irq_desc *desc = irq_to_desc(i);
+	for_each_irq_desc(i, desc) {
 		struct irq_chip *chip;
-
-		if (!desc)
-			continue;
 
 		chip = irq_desc_get_chip(desc);
 		if (!chip)
@@ -107,9 +104,6 @@ void __init reserve_crashkernel(void)
 	unsigned long long crash_size, crash_base;
 	int ret;
 
-	/* this is necessary because of memblock_phys_mem_size() */
-	memblock_analyze();
-
 	/* use common parsing */
 	ret = parse_crashkernel(boot_command_line, memblock_phys_mem_size(),
 			&crash_size, &crash_base);
@@ -128,7 +122,7 @@ void __init reserve_crashkernel(void)
 
 	crash_size = resource_size(&crashk_res);
 
-#ifndef CONFIG_RELOCATABLE
+#ifndef CONFIG_NONSTATIC_KERNEL
 	if (crashk_res.start != KDUMP_KERNELBASE)
 		printk("Crash kernel location must be 0x%x\n",
 				KDUMP_KERNELBASE);

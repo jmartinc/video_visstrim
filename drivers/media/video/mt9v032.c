@@ -19,6 +19,7 @@
 #include <linux/slab.h>
 #include <linux/videodev2.h>
 #include <linux/v4l2-mediabus.h>
+#include <linux/module.h>
 
 #include <media/mt9v032.h>
 #include <media/v4l2-ctrls.h>
@@ -138,10 +139,10 @@ static struct mt9v032 *to_mt9v032(struct v4l2_subdev *sd)
 
 static int mt9v032_read(struct i2c_client *client, const u8 reg)
 {
-	s32 data = i2c_smbus_read_word_data(client, reg);
+	s32 data = i2c_smbus_read_word_swapped(client, reg);
 	dev_dbg(&client->dev, "%s: read 0x%04x from 0x%02x\n", __func__,
-		swab16(data), reg);
-	return data < 0 ? data : swab16(data);
+		data, reg);
+	return data;
 }
 
 static int mt9v032_write(struct i2c_client *client, const u8 reg,
@@ -149,7 +150,7 @@ static int mt9v032_write(struct i2c_client *client, const u8 reg,
 {
 	dev_dbg(&client->dev, "%s: writing 0x%04x to 0x%02x\n", __func__,
 		data, reg);
-	return i2c_smbus_write_word_data(client, reg, swab16(data));
+	return i2c_smbus_write_word_swapped(client, reg, data);
 }
 
 static int mt9v032_set_chip_control(struct mt9v032 *mt9v032, u16 clear, u16 set)
@@ -480,7 +481,7 @@ static int mt9v032_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	case V4L2_CID_EXPOSURE_AUTO:
 		return mt9v032_update_aec_agc(mt9v032, MT9V032_AEC_ENABLE,
-					      ctrl->val);
+					      !ctrl->val);
 
 	case V4L2_CID_EXPOSURE:
 		return mt9v032_write(client, MT9V032_TOTAL_SHUTTER_WIDTH,
@@ -755,18 +756,7 @@ static struct i2c_driver mt9v032_driver = {
 	.id_table	= mt9v032_id,
 };
 
-static int __init mt9v032_init(void)
-{
-	return i2c_add_driver(&mt9v032_driver);
-}
-
-static void __exit mt9v032_exit(void)
-{
-	i2c_del_driver(&mt9v032_driver);
-}
-
-module_init(mt9v032_init);
-module_exit(mt9v032_exit);
+module_i2c_driver(mt9v032_driver);
 
 MODULE_DESCRIPTION("Aptina MT9V032 Camera driver");
 MODULE_AUTHOR("Laurent Pinchart <laurent.pinchart@ideasonboard.com>");

@@ -8,15 +8,6 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 /* #define VERBOSE_DEBUG */
@@ -295,7 +286,7 @@ static void disable_loopback(struct f_loopback *loop)
 	struct usb_composite_dev	*cdev;
 
 	cdev = loop->function.config->cdev;
-	disable_endpoints(cdev, loop->in_ep, loop->out_ep);
+	disable_endpoints(cdev, loop->in_ep, loop->out_ep, NULL, NULL);
 	VDBG(cdev, "%s disabled\n", loop->function.name);
 }
 
@@ -338,7 +329,7 @@ fail0:
 	 * than 'buflen' bytes each.
 	 */
 	for (i = 0; i < qlen && result == 0; i++) {
-		req = alloc_ep_req(ep);
+		req = alloc_ep_req(ep, 0);
 		if (req) {
 			req->complete = loopback_complete;
 			result = usb_ep_queue(ep, req, GFP_ATOMIC);
@@ -427,7 +418,7 @@ int __init loopback_add(struct usb_composite_dev *cdev, bool autoresume)
 
 	/* support autoresume for remote wakeup testing */
 	if (autoresume)
-		sourcesink_driver.bmAttributes |= USB_CONFIG_ATT_WAKEUP;
+		loopback_driver.bmAttributes |= USB_CONFIG_ATT_WAKEUP;
 
 	/* support OTG systems */
 	if (gadget_is_otg(cdev->gadget)) {

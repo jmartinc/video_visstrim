@@ -1,7 +1,7 @@
 /*
  * Freescale eSDHC controller driver.
  *
- * Copyright (c) 2007 Freescale Semiconductor, Inc.
+ * Copyright (c) 2007, 2010, 2012 Freescale Semiconductor, Inc.
  * Copyright (c) 2009 MontaVista Software, Inc.
  *
  * Authors: Xiaobo Xie <X.Xie@freescale.com>
@@ -14,7 +14,9 @@
  */
 
 #include <linux/io.h>
+#include <linux/of.h>
 #include <linux/delay.h>
+#include <linux/module.h>
 #include <linux/mmc/host.h>
 #include "sdhci-pltfm.h"
 #include "sdhci-esdhc.h"
@@ -22,11 +24,38 @@
 static u16 esdhc_readw(struct sdhci_host *host, int reg)
 {
 	u16 ret;
+	int base = reg & ~0x3;
+	int shift = (reg & 0x2) * 8;
 
 	if (unlikely(reg == SDHCI_HOST_VERSION))
-		ret = in_be16(host->ioaddr + reg);
+		ret = in_be32(host->ioaddr + base) & 0xffff;
 	else
-		ret = sdhci_be32bs_readw(host, reg);
+		ret = (in_be32(host->ioaddr + base) >> shift) & 0xffff;
+	return ret;
+}
+
+static u8 esdhc_readb(struct sdhci_host *host, int reg)
+{
+	int base = reg & ~0x3;
+	int shift = (reg & 0x3) * 8;
+	u8 ret = (in_be32(host->ioaddr + base) >> shift) & 0xff;
+
+	/*
+	 * "DMA select" locates at offset 0x28 in SD specification, but on
+	 * P5020 or P3041, it locates at 0x29.
+	 */
+	if (reg == SDHCI_HOST_CONTROL) {
+		u32 dma_bits;
+
+		dma_bits = in_be32(host->ioaddr + reg);
+		/* DMA select is 22,23 bits in Protocol Control Register */
+		dma_bits = (dma_bits >> 5) & SDHCI_CTRL_DMA_MASK;
+
+		/* fixup the result */
+		ret &= ~SDHCI_CTRL_DMA_MASK;
+		ret |= dma_bits;
+	}
+
 	return ret;
 }
 
@@ -45,6 +74,21 @@ static void esdhc_writew(struct sdhci_host *host, u16 val, int reg)
 
 static void esdhc_writeb(struct sdhci_host *host, u8 val, int reg)
 {
+	/*
+	 * "DMA select" location is offset 0x28 in SD specification, but on
+	 * P5020 or P3041, it's located at 0x29.
+	 */
+	if (reg == SDHCI_HOST_CONTROL) {
+		u32 dma_bits;
+
+		/* DMA select is 22,23 bits in Protocol Control Register */
+		dma_bits = (val & SDHCI_CTRL_DMA_MASK) << 5;
+		clrsetbits_be32(host->ioaddr + reg , SDHCI_CTRL_DMA_MASK << 5,
+			dma_bits);
+		val &= ~SDHCI_CTRL_DMA_MASK;
+		val |= in_be32(host->ioaddr + reg) & SDHCI_CTRL_DMA_MASK;
+	}
+
 	/* Prevent SDHCI core from writing reserved bits (e.g. HISPD). */
 	if (reg == SDHCI_HOST_CONTROL)
 		val &= ~ESDHC_HOST_CONTROL_RES;
@@ -71,17 +115,49 @@ static unsigned int esdhc_of_get_min_clock(struct sdhci_host *host)
 	return pltfm_host->clock / 256 / 16;
 }
 
+static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
+{
+	/* Workaround to reduce the clock frequency for p1010 esdhc */
+	if (of_find_compatible_node(NULL, NULL, "fsl,p1010-esdhc")) {
+		if (clock > 20000000)
+			clock -= 5000000;
+		if (clock > 40000000)
+			clock -= 5000000;
+	}
+
+	/* Set the clock */
+	esdhc_set_clock(host, clock);
+}
+
+#ifdef CONFIG_PM
+static u32 esdhc_proctl;
+static void esdhc_of_suspend(struct sdhci_host *host)
+{
+	esdhc_proctl = sdhci_be32bs_readl(host, SDHCI_HOST_CONTROL);
+}
+
+static void esdhc_of_resume(struct sdhci_host *host)
+{
+	esdhc_of_enable_dma(host);
+	sdhci_be32bs_writel(host, esdhc_proctl, SDHCI_HOST_CONTROL);
+}
+#endif
+
 static struct sdhci_ops sdhci_esdhc_ops = {
 	.read_l = sdhci_be32bs_readl,
 	.read_w = esdhc_readw,
-	.read_b = sdhci_be32bs_readb,
+	.read_b = esdhc_readb,
 	.write_l = sdhci_be32bs_writel,
 	.write_w = esdhc_writew,
 	.write_b = esdhc_writeb,
-	.set_clock = esdhc_set_clock,
+	.set_clock = esdhc_of_set_clock,
 	.enable_dma = esdhc_of_enable_dma,
 	.get_max_clock = esdhc_of_get_max_clock,
 	.get_min_clock = esdhc_of_get_min_clock,
+#ifdef CONFIG_PM
+	.platform_suspend = esdhc_of_suspend,
+	.platform_resume = esdhc_of_resume,
+#endif
 };
 
 static struct sdhci_pltfm_data sdhci_esdhc_pdata = {
@@ -114,26 +190,13 @@ static struct platform_driver sdhci_esdhc_driver = {
 		.name = "sdhci-esdhc",
 		.owner = THIS_MODULE,
 		.of_match_table = sdhci_esdhc_of_match,
+		.pm = SDHCI_PLTFM_PMOPS,
 	},
 	.probe = sdhci_esdhc_probe,
 	.remove = __devexit_p(sdhci_esdhc_remove),
-#ifdef CONFIG_PM
-	.suspend = sdhci_pltfm_suspend,
-	.resume = sdhci_pltfm_resume,
-#endif
 };
 
-static int __init sdhci_esdhc_init(void)
-{
-	return platform_driver_register(&sdhci_esdhc_driver);
-}
-module_init(sdhci_esdhc_init);
-
-static void __exit sdhci_esdhc_exit(void)
-{
-	platform_driver_unregister(&sdhci_esdhc_driver);
-}
-module_exit(sdhci_esdhc_exit);
+module_platform_driver(sdhci_esdhc_driver);
 
 MODULE_DESCRIPTION("SDHCI OF driver for Freescale MPC eSDHC");
 MODULE_AUTHOR("Xiaobo Xie <X.Xie@freescale.com>, "

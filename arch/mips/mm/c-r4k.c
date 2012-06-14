@@ -29,11 +29,10 @@
 #include <asm/pgtable.h>
 #include <asm/r4kcache.h>
 #include <asm/sections.h>
-#include <asm/system.h>
 #include <asm/mmu_context.h>
 #include <asm/war.h>
 #include <asm/cacheflush.h> /* for run_uncached() */
-
+#include <asm/traps.h>
 
 /*
  * Special Variant of smp_call_function for use by cache functions:
@@ -498,7 +497,7 @@ static inline void local_r4k_flush_cache_page(void *args)
 		if (map_coherent)
 			vaddr = kmap_coherent(page, addr);
 		else
-			vaddr = kmap_atomic(page, KM_USER0);
+			vaddr = kmap_atomic(page);
 		addr = (unsigned long)vaddr;
 	}
 
@@ -521,7 +520,7 @@ static inline void local_r4k_flush_cache_page(void *args)
 		if (map_coherent)
 			kunmap_coherent();
 		else
-			kunmap_atomic(vaddr, KM_USER0);
+			kunmap_atomic(vaddr);
 	}
 }
 
@@ -720,6 +719,39 @@ static void r4k_flush_icache_all(void)
 {
 	if (cpu_has_vtag_icache)
 		r4k_blast_icache();
+}
+
+struct flush_kernel_vmap_range_args {
+	unsigned long	vaddr;
+	int		size;
+};
+
+static inline void local_r4k_flush_kernel_vmap_range(void *args)
+{
+	struct flush_kernel_vmap_range_args *vmra = args;
+	unsigned long vaddr = vmra->vaddr;
+	int size = vmra->size;
+
+	/*
+	 * Aliases only affect the primary caches so don't bother with
+	 * S-caches or T-caches.
+	 */
+	if (cpu_has_safe_index_cacheops && size >= dcache_size)
+		r4k_blast_dcache();
+	else {
+		R4600_HIT_CACHEOP_WAR_IMPL;
+		blast_dcache_range(vaddr, vaddr + size);
+	}
+}
+
+static void r4k_flush_kernel_vmap_range(unsigned long vaddr, int size)
+{
+	struct flush_kernel_vmap_range_args args;
+
+	args.vaddr = (unsigned long) vaddr;
+	args.size = size;
+
+	r4k_on_each_cpu(local_r4k_flush_kernel_vmap_range, &args);
 }
 
 static inline void rm7k_erratum31(void)
@@ -1202,6 +1234,9 @@ static void __cpuinit setup_scache(void)
 		loongson2_sc_init();
 		return;
 #endif
+	case CPU_XLP:
+		/* don't need to worry about L2, fully coherent */
+		return;
 
 	default:
 		if (c->isa_level == MIPS_CPU_ISA_M32R1 ||
@@ -1350,10 +1385,8 @@ static int __init setcoherentio(char *str)
 __setup("coherentio", setcoherentio);
 #endif
 
-void __cpuinit r4k_cache_init(void)
+static void __cpuinit r4k_cache_error_setup(void)
 {
-	extern void build_clear_page(void);
-	extern void build_copy_page(void);
 	extern char __weak except_vec2_generic;
 	extern char __weak except_vec2_sb1;
 	struct cpuinfo_mips *c = &current_cpu_data;
@@ -1368,6 +1401,13 @@ void __cpuinit r4k_cache_init(void)
 		set_uncached_handler(0x100, &except_vec2_generic, 0x80);
 		break;
 	}
+}
+
+void __cpuinit r4k_cache_init(void)
+{
+	extern void build_clear_page(void);
+	extern void build_copy_page(void);
+	struct cpuinfo_mips *c = &current_cpu_data;
 
 	probe_pcache();
 	setup_scache();
@@ -1403,6 +1443,8 @@ void __cpuinit r4k_cache_init(void)
 	flush_cache_page	= r4k_flush_cache_page;
 	flush_cache_range	= r4k_flush_cache_range;
 
+	__flush_kernel_vmap_range = r4k_flush_kernel_vmap_range;
+
 	flush_cache_sigtramp	= r4k_flush_cache_sigtramp;
 	flush_icache_all	= r4k_flush_icache_all;
 	local_flush_data_cache_page	= local_r4k_flush_data_cache_page;
@@ -1428,4 +1470,5 @@ void __cpuinit r4k_cache_init(void)
 	local_r4k___flush_cache_all(NULL);
 #endif
 	coherency_setup();
+	board_cache_error_setup = r4k_cache_error_setup;
 }

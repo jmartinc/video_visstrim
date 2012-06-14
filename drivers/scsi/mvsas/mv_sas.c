@@ -214,7 +214,7 @@ int mvs_phy_control(struct asd_sas_phy *sas_phy, enum phy_func func,
 		break;
 	case PHY_FUNC_RELEASE_SPINUP_HOLD:
 	default:
-		rc = -EOPNOTSUPP;
+		rc = -ENOSYS;
 	}
 	msleep(200);
 	return rc;
@@ -265,6 +265,12 @@ static void mvs_bytes_dmaed(struct mvs_info *mvi, int i)
 		id->dev_type = phy->identify.device_type;
 		id->initiator_bits = SAS_PROTOCOL_ALL;
 		id->target_bits = phy->identify.target_port_protocols;
+
+		/* direct attached SAS device */
+		if (phy->att_dev_info & PORT_SSP_TRGT_MASK) {
+			MVS_CHIP_DISP->write_port_cfg_addr(mvi, i, PHYR_PHY_STAT);
+			MVS_CHIP_DISP->write_port_cfg_data(mvi, i, 0x00);
+		}
 	} else if (phy->phy_type & PORT_TYPE_SATA) {
 		/*Nothing*/
 	}
@@ -274,36 +280,6 @@ static void mvs_bytes_dmaed(struct mvs_info *mvi, int i)
 
 	mvi->sas->notify_port_event(sas_phy,
 				   PORTE_BYTES_DMAED);
-}
-
-int mvs_slave_alloc(struct scsi_device *scsi_dev)
-{
-	struct domain_device *dev = sdev_to_domain_dev(scsi_dev);
-	if (dev_is_sata(dev)) {
-		/* We don't need to rescan targets
-		 * if REPORT_LUNS request is failed
-		 */
-		if (scsi_dev->lun > 0)
-			return -ENXIO;
-		scsi_dev->tagged_supported = 1;
-	}
-
-	return sas_slave_alloc(scsi_dev);
-}
-
-int mvs_slave_configure(struct scsi_device *sdev)
-{
-	struct domain_device *dev = sdev_to_domain_dev(sdev);
-	int ret = sas_slave_configure(sdev);
-
-	if (ret)
-		return ret;
-	if (!dev_is_sata(dev)) {
-		sas_change_queue_depth(sdev,
-			MVS_QUEUE_SIZE,
-			SCSI_QDEPTH_DEFAULT);
-	}
-	return 0;
 }
 
 void mvs_scan_start(struct Scsi_Host *shost)
@@ -332,7 +308,7 @@ int mvs_scan_finished(struct Scsi_Host *shost, unsigned long time)
 	if (mvs_prv->scan_finished == 0)
 		return 0;
 
-	scsi_flush_work(shost);
+	sas_drain_work(sha);
 	return 1;
 }
 
@@ -426,7 +402,7 @@ static int mvs_task_prep_smp(struct mvs_info *mvi,
 	/* generate open address frame hdr (first 12 bytes) */
 	/* initiator, SMP, ftype 1h */
 	buf_oaf[0] = (1 << 7) | (PROTOCOL_SMP << 4) | 0x01;
-	buf_oaf[1] = dev->linkrate & 0xf;
+	buf_oaf[1] = min(sas_port->linkrate, dev->linkrate) & 0xf;
 	*(u16 *)(buf_oaf + 2) = 0xFFFF;		/* SAS SPEC */
 	memcpy(buf_oaf + 4, dev->sas_addr, SAS_ADDR_SIZE);
 
@@ -571,7 +547,7 @@ static int mvs_task_prep_ata(struct mvs_info *mvi,
 	/* generate open address frame hdr (first 12 bytes) */
 	/* initiator, STP, ftype 1h */
 	buf_oaf[0] = (1 << 7) | (PROTOCOL_STP << 4) | 0x1;
-	buf_oaf[1] = dev->linkrate & 0xf;
+	buf_oaf[1] = min(sas_port->linkrate, dev->linkrate) & 0xf;
 	*(u16 *)(buf_oaf + 2) = cpu_to_be16(mvi_dev->device_id + 1);
 	memcpy(buf_oaf + 4, dev->sas_addr, SAS_ADDR_SIZE);
 
@@ -679,7 +655,7 @@ static int mvs_task_prep_ssp(struct mvs_info *mvi,
 	/* generate open address frame hdr (first 12 bytes) */
 	/* initiator, SSP, ftype 1h */
 	buf_oaf[0] = (1 << 7) | (PROTOCOL_SSP << 4) | 0x1;
-	buf_oaf[1] = dev->linkrate & 0xf;
+	buf_oaf[1] = min(sas_port->linkrate, dev->linkrate) & 0xf;
 	*(u16 *)(buf_oaf + 2) = cpu_to_be16(mvi_dev->device_id + 1);
 	memcpy(buf_oaf + 4, dev->sas_addr, SAS_ADDR_SIZE);
 
@@ -917,9 +893,6 @@ static int mvs_task_exec(struct sas_task *task, const int num, gfp_t gfp_flags,
 
 	mvi = ((struct mvs_device *)task->dev->lldd_dev)->mvi_info;
 
-	if ((dev->dev_type == SATA_DEV) && (dev->sata_dev.ap != NULL))
-		spin_unlock_irq(dev->sata_dev.ap->lock);
-
 	spin_lock_irqsave(&mvi->lock, flags);
 	rc = mvs_task_prep(task, mvi, is_tmf, tmf, &pass);
 	if (rc)
@@ -929,9 +902,6 @@ static int mvs_task_exec(struct sas_task *task, const int num, gfp_t gfp_flags,
 			MVS_CHIP_DISP->start_delivery(mvi, (mvi->tx_prod - 1) &
 				(MVS_CHIP_SLOT_SZ - 1));
 	spin_unlock_irqrestore(&mvi->lock, flags);
-
-	if ((dev->dev_type == SATA_DEV) && (dev->sata_dev.ap != NULL))
-		spin_lock_irq(dev->sata_dev.ap->lock);
 
 	return rc;
 }
@@ -1241,6 +1211,12 @@ static void mvs_port_notify_formed(struct asd_sas_phy *sas_phy, int lock)
 		port->wide_port_phymap = sas_port->phy_mask;
 		mv_printk("set wide port phy map %x\n", sas_port->phy_mask);
 		mvs_update_wideport(mvi, sas_phy->id);
+
+		/* direct attached SAS device */
+		if (phy->att_dev_info & PORT_SSP_TRGT_MASK) {
+			MVS_CHIP_DISP->write_port_cfg_addr(mvi, i, PHYR_PHY_STAT);
+			MVS_CHIP_DISP->write_port_cfg_data(mvi, i, 0x04);
+		}
 	}
 	if (lock)
 		spin_unlock_irqrestore(&mvi->lock, flags);
@@ -1387,28 +1363,6 @@ void mvs_dev_gone(struct domain_device *dev)
 	mvs_dev_gone_notify(dev);
 }
 
-static  struct sas_task *mvs_alloc_task(void)
-{
-	struct sas_task *task = kzalloc(sizeof(struct sas_task), GFP_KERNEL);
-
-	if (task) {
-		INIT_LIST_HEAD(&task->list);
-		spin_lock_init(&task->task_state_lock);
-		task->task_state_flags = SAS_TASK_STATE_PENDING;
-		init_timer(&task->timer);
-		init_completion(&task->completion);
-	}
-	return task;
-}
-
-static  void mvs_free_task(struct sas_task *task)
-{
-	if (task) {
-		BUG_ON(!list_empty(&task->list));
-		kfree(task);
-	}
-}
-
 static void mvs_task_done(struct sas_task *task)
 {
 	if (!del_timer(&task->timer))
@@ -1432,7 +1386,7 @@ static int mvs_exec_internal_tmf_task(struct domain_device *dev,
 	struct sas_task *task = NULL;
 
 	for (retry = 0; retry < 3; retry++) {
-		task = mvs_alloc_task();
+		task = sas_alloc_task(GFP_KERNEL);
 		if (!task)
 			return -ENOMEM;
 
@@ -1490,15 +1444,14 @@ static int mvs_exec_internal_tmf_task(struct domain_device *dev,
 				    SAS_ADDR(dev->sas_addr),
 				    task->task_status.resp,
 				    task->task_status.stat);
-			mvs_free_task(task);
+			sas_free_task(task);
 			task = NULL;
 
 		}
 	}
 ex_err:
 	BUG_ON(retry == 3 && task != NULL);
-	if (task != NULL)
-		mvs_free_task(task);
+	sas_free_task(task);
 	return res;
 }
 
@@ -1521,10 +1474,11 @@ static int mvs_debug_issue_ssp_tmf(struct domain_device *dev,
 static int mvs_debug_I_T_nexus_reset(struct domain_device *dev)
 {
 	int rc;
-	struct sas_phy *phy = sas_find_local_phy(dev);
+	struct sas_phy *phy = sas_get_local_phy(dev);
 	int reset_type = (dev->dev_type == SATA_DEV ||
 			(dev->tproto & SAS_PROTOCOL_STP)) ? 0 : 1;
 	rc = sas_phy_reset(phy, reset_type);
+	sas_put_local_phy(phy);
 	msleep(2000);
 	return rc;
 }
@@ -1926,11 +1880,11 @@ int mvs_slot_complete(struct mvs_info *mvi, u32 rx_desc, u32 flags)
 	case SAS_PROTOCOL_SMP: {
 			struct scatterlist *sg_resp = &task->smp_task.smp_resp;
 			tstat->stat = SAM_STAT_GOOD;
-			to = kmap_atomic(sg_page(sg_resp), KM_IRQ0);
+			to = kmap_atomic(sg_page(sg_resp));
 			memcpy(to + sg_resp->offset,
 				slot->response + sizeof(struct mvs_err_info),
 				sg_dma_len(sg_resp));
-			kunmap_atomic(to, KM_IRQ0);
+			kunmap_atomic(to);
 			break;
 		}
 

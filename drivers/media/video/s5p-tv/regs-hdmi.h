@@ -127,6 +127,10 @@
 #define HDMI_BLUE_SCR_EN		(1 << 5)
 #define HDMI_EN				(1 << 0)
 
+/* HDMI_CON_2 */
+#define HDMI_DVI_PERAMBLE_EN		(1 << 5)
+#define HDMI_DVI_BAND_EN		(1 << 1)
+
 /* HDMI_PHY_STATUS */
 #define HDMI_PHY_STATUS_READY		(1 << 0)
 
@@ -136,6 +140,7 @@
 #define HDMI_MODE_MASK			(3 << 0)
 
 /* HDMI_TG_CMD */
+#define HDMI_TG_FIELD_EN		(1 << 1)
 #define HDMI_TG_EN			(1 << 0)
 
 #endif /* SAMSUNG_REGS_HDMI_H */

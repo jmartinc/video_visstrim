@@ -7,11 +7,8 @@
 #define IBLOCK_LBA_SHIFT	9
 
 struct iblock_req {
-	struct se_task ib_task;
-	unsigned char ib_scsi_cdb[TCM_MAX_COMMAND_SIZE];
-	atomic_t ib_bio_cnt;
+	atomic_t pending;
 	atomic_t ib_bio_err_cnt;
-	struct bio *ib_bio;
 } ____cacheline_aligned;
 
 #define IBDF_HAS_UDEV_PATH		0x01
@@ -21,11 +18,6 @@ struct iblock_dev {
 	u32	ibd_flags;
 	struct bio_set	*ibd_bio_set;
 	struct block_device *ibd_bd;
-	struct iblock_hba *ibd_host;
-} ____cacheline_aligned;
-
-struct iblock_hba {
-	int		iblock_host_id;
 } ____cacheline_aligned;
 
 #endif /* TARGET_CORE_IBLOCK_H */

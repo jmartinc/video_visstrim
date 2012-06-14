@@ -653,7 +653,7 @@ static int davinci_spi_bufs(struct spi_device *spi, struct spi_transfer *t)
 			dev_dbg(sdev, "Couldn't DMA map a %d bytes RX buffer\n",
 								rx_buf_count);
 			if (t->tx_buf)
-				dma_unmap_single(NULL, t->tx_dma, t->len,
+				dma_unmap_single(&spi->dev, t->tx_dma, t->len,
 								DMA_TO_DEVICE);
 			return -ENOMEM;
 		}
@@ -692,10 +692,10 @@ static int davinci_spi_bufs(struct spi_device *spi, struct spi_transfer *t)
 	if (spicfg->io_type == SPI_IO_TYPE_DMA) {
 
 		if (t->tx_buf)
-			dma_unmap_single(NULL, t->tx_dma, t->len,
+			dma_unmap_single(&spi->dev, t->tx_dma, t->len,
 								DMA_TO_DEVICE);
 
-		dma_unmap_single(NULL, t->rx_dma, rx_buf_count,
+		dma_unmap_single(&spi->dev, t->rx_dma, rx_buf_count,
 							DMA_FROM_DEVICE);
 
 		clear_io_bits(dspi->base + SPIINT, SPIINT_DMA_REQ_EN);
@@ -799,7 +799,7 @@ rx_dma_failed:
  * It will invoke spi_bitbang_start to create work queue so that client driver
  * can register transfer method to work queue.
  */
-static int davinci_spi_probe(struct platform_device *pdev)
+static int __devinit davinci_spi_probe(struct platform_device *pdev)
 {
 	struct spi_master *master;
 	struct davinci_spi *dspi;
@@ -984,7 +984,7 @@ err:
  * It will also call spi_bitbang_stop to destroy the work queue which was
  * created by spi_bitbang_start.
  */
-static int __exit davinci_spi_remove(struct platform_device *pdev)
+static int __devexit davinci_spi_remove(struct platform_device *pdev)
 {
 	struct davinci_spi *dspi;
 	struct spi_master *master;
@@ -1011,20 +1011,10 @@ static struct platform_driver davinci_spi_driver = {
 		.name = "spi_davinci",
 		.owner = THIS_MODULE,
 	},
-	.remove = __exit_p(davinci_spi_remove),
+	.probe = davinci_spi_probe,
+	.remove = __devexit_p(davinci_spi_remove),
 };
-
-static int __init davinci_spi_init(void)
-{
-	return platform_driver_probe(&davinci_spi_driver, davinci_spi_probe);
-}
-module_init(davinci_spi_init);
-
-static void __exit davinci_spi_exit(void)
-{
-	platform_driver_unregister(&davinci_spi_driver);
-}
-module_exit(davinci_spi_exit);
+module_platform_driver(davinci_spi_driver);
 
 MODULE_DESCRIPTION("TI DaVinci SPI Master Controller Driver");
 MODULE_LICENSE("GPL");

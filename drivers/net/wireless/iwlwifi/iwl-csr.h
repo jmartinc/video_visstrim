@@ -5,7 +5,7 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2005 - 2011 Intel Corporation. All rights reserved.
+ * Copyright(c) 2005 - 2012 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -30,7 +30,7 @@
  *
  * BSD LICENSE
  *
- * Copyright(c) 2005 - 2011 Intel Corporation. All rights reserved.
+ * Copyright(c) 2005 - 2012 Intel Corporation. All rights reserved.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -284,8 +284,8 @@
 #define CSR_HW_REV_TYPE_6x35	       CSR_HW_REV_TYPE_6x05
 #define CSR_HW_REV_TYPE_2x30	       (0x00000C0)
 #define CSR_HW_REV_TYPE_2x00	       (0x0000100)
-#define CSR_HW_REV_TYPE_200	       (0x0000110)
-#define CSR_HW_REV_TYPE_230	       (0x0000120)
+#define CSR_HW_REV_TYPE_105	       (0x0000110)
+#define CSR_HW_REV_TYPE_135	       (0x0000120)
 #define CSR_HW_REV_TYPE_NONE           (0x00001F0)
 
 /* EEPROM REG */
@@ -430,6 +430,9 @@
 #define HBUS_TARG_PRPH_WDAT     (HBUS_BASE+0x04c)
 #define HBUS_TARG_PRPH_RDAT     (HBUS_BASE+0x050)
 
+/* Used to enable DBGM */
+#define HBUS_TARG_TEST_REG	(HBUS_BASE+0x05c)
+
 /*
  * Per-Tx-queue write pointer (index, really!)
  * Indicates index to next TFD that driver will fill (1 past latest filled).
@@ -438,5 +441,23 @@
  * 11-8:  queue selector
  */
 #define HBUS_TARG_WRPTR         (HBUS_BASE+0x060)
+
+/**********************************************************
+ * CSR values
+ **********************************************************/
+ /*
+ * host interrupt timeout value
+ * used with setting interrupt coalescing timer
+ * the CSR_INT_COALESCING is an 8 bit register in 32-usec unit
+ *
+ * default interrupt coalescing timer is 64 x 32 = 2048 usecs
+ * default interrupt coalescing calibration timer is 16 x 32 = 512 usecs
+ */
+#define IWL_HOST_INT_TIMEOUT_MAX	(0xFF)
+#define IWL_HOST_INT_TIMEOUT_DEF	(0x40)
+#define IWL_HOST_INT_TIMEOUT_MIN	(0x0)
+#define IWL_HOST_INT_CALIB_TIMEOUT_MAX	(0xFF)
+#define IWL_HOST_INT_CALIB_TIMEOUT_DEF	(0x10)
+#define IWL_HOST_INT_CALIB_TIMEOUT_MIN	(0x0)
 
 #endif /* !__iwl_csr_h__ */

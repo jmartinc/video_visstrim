@@ -116,6 +116,7 @@ struct autofs_sb_info {
 	int needs_reghost;
 	struct super_block *sb;
 	struct mutex wq_mutex;
+	struct mutex pipe_mutex;
 	spinlock_t fs_lock;
 	struct autofs_wait_queue *queues; /* Wait queue pointer */
 	spinlock_t lookup_lock;
@@ -155,7 +156,7 @@ static inline int autofs4_ispending(struct dentry *dentry)
 	return 0;
 }
 
-struct inode *autofs4_get_inode(struct super_block *, mode_t);
+struct inode *autofs4_get_inode(struct super_block *, umode_t);
 void autofs4_free_ino(struct autofs_info *);
 
 /* Expiration */
@@ -267,6 +268,17 @@ static inline void managed_dentry_clear_managed(struct dentry *dentry)
 int autofs4_fill_super(struct super_block *, void *, int);
 struct autofs_info *autofs4_new_ino(struct autofs_sb_info *);
 void autofs4_clean_ino(struct autofs_info *);
+
+static inline int autofs_prepare_pipe(struct file *pipe)
+{
+	if (!pipe->f_op || !pipe->f_op->write)
+		return -EINVAL;
+	if (!S_ISFIFO(pipe->f_dentry->d_inode->i_mode))
+		return -EINVAL;
+	/* We want a packet pipe */
+	pipe->f_flags |= O_DIRECT;
+	return 0;
+}
 
 /* Queue management functions */
 

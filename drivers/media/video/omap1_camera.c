@@ -24,6 +24,7 @@
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
@@ -102,10 +103,10 @@
 /* end of OMAP1 Camera Interface registers */
 
 
-#define SOCAM_BUS_FLAGS	(SOCAM_MASTER | \
-			SOCAM_HSYNC_ACTIVE_HIGH | SOCAM_VSYNC_ACTIVE_HIGH | \
-			SOCAM_PCLK_SAMPLE_RISING | SOCAM_PCLK_SAMPLE_FALLING | \
-			SOCAM_DATA_ACTIVE_HIGH | SOCAM_DATAWIDTH_8)
+#define SOCAM_BUS_FLAGS	(V4L2_MBUS_MASTER | \
+			V4L2_MBUS_HSYNC_ACTIVE_HIGH | V4L2_MBUS_VSYNC_ACTIVE_HIGH | \
+			V4L2_MBUS_PCLK_SAMPLE_RISING | V4L2_MBUS_PCLK_SAMPLE_FALLING | \
+			V4L2_MBUS_DATA_ACTIVE_HIGH)
 
 
 #define FIFO_SIZE		((THRESHOLD_MASK >> THRESHOLD_SHIFT) + 1)
@@ -205,15 +206,10 @@ static int omap1_videobuf_setup(struct videobuf_queue *vq, unsigned int *count,
 		unsigned int *size)
 {
 	struct soc_camera_device *icd = vq->priv_data;
-	int bytes_per_line = soc_mbus_bytes_per_line(icd->user_width,
-			icd->current_fmt->host_fmt);
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct omap1_cam_dev *pcdev = ici->priv;
 
-	if (bytes_per_line < 0)
-		return bytes_per_line;
-
-	*size = bytes_per_line * icd->user_height;
+	*size = icd->sizeimage;
 
 	if (!*count || *count < OMAP1_CAMERA_MIN_BUF_COUNT(pcdev->vb_mode))
 		*count = OMAP1_CAMERA_MIN_BUF_COUNT(pcdev->vb_mode);
@@ -255,14 +251,9 @@ static int omap1_videobuf_prepare(struct videobuf_queue *vq,
 {
 	struct soc_camera_device *icd = vq->priv_data;
 	struct omap1_cam_buf *buf = container_of(vb, struct omap1_cam_buf, vb);
-	int bytes_per_line = soc_mbus_bytes_per_line(icd->user_width,
-			icd->current_fmt->host_fmt);
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct omap1_cam_dev *pcdev = ici->priv;
 	int ret;
-
-	if (bytes_per_line < 0)
-		return bytes_per_line;
 
 	WARN_ON(!list_empty(&vb->queue));
 
@@ -280,7 +271,7 @@ static int omap1_videobuf_prepare(struct videobuf_queue *vq,
 		vb->state  = VIDEOBUF_NEEDS_INIT;
 	}
 
-	vb->size = bytes_per_line * vb->height;
+	vb->size = icd->sizeimage;
 
 	if (vb->baddr && vb->bsize < vb->size) {
 		ret = -EINVAL;
@@ -998,6 +989,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 }, {
 	.code = V4L2_MBUS_FMT_VYUY8_2X8,
@@ -1007,6 +999,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 }, {
 	.code = V4L2_MBUS_FMT_YUYV8_2X8,
@@ -1016,6 +1009,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 }, {
 	.code = V4L2_MBUS_FMT_YVYU8_2X8,
@@ -1025,6 +1019,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 }, {
 	.code = V4L2_MBUS_FMT_RGB555_2X8_PADHI_BE,
@@ -1034,6 +1029,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 }, {
 	.code = V4L2_MBUS_FMT_RGB555_2X8_PADHI_LE,
@@ -1043,6 +1039,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 }, {
 	.code = V4L2_MBUS_FMT_RGB565_2X8_BE,
@@ -1052,6 +1049,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 }, {
 	.code = V4L2_MBUS_FMT_RGB565_2X8_LE,
@@ -1061,6 +1059,7 @@ static const struct soc_mbus_lookup omap1_cam_formats[] = {
 		.bits_per_sample	= 8,
 		.packing		= SOC_MBUS_PACKING_2X8_PADHI,
 		.order			= SOC_MBUS_ORDER_BE,
+		.layout			= SOC_MBUS_LAYOUT_PACKED,
 	},
 },
 };
@@ -1435,44 +1434,58 @@ static int omap1_cam_querycap(struct soc_camera_host *ici,
 	return 0;
 }
 
-static int omap1_cam_set_bus_param(struct soc_camera_device *icd,
-		__u32 pixfmt)
+static int omap1_cam_set_bus_param(struct soc_camera_device *icd)
 {
+	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	struct device *dev = icd->parent;
 	struct soc_camera_host *ici = to_soc_camera_host(dev);
 	struct omap1_cam_dev *pcdev = ici->priv;
+	u32 pixfmt = icd->current_fmt->host_fmt->fourcc;
 	const struct soc_camera_format_xlate *xlate;
 	const struct soc_mbus_pixelfmt *fmt;
-	unsigned long camera_flags, common_flags;
+	struct v4l2_mbus_config cfg = {.type = V4L2_MBUS_PARALLEL,};
+	unsigned long common_flags;
 	u32 ctrlclock, mode;
 	int ret;
 
-	camera_flags = icd->ops->query_bus_param(icd);
-
-	common_flags = soc_camera_bus_param_compatible(camera_flags,
-			SOCAM_BUS_FLAGS);
-	if (!common_flags)
-		return -EINVAL;
-
-	/* Make choices, possibly based on platform configuration */
-	if ((common_flags & SOCAM_PCLK_SAMPLE_RISING) &&
-			(common_flags & SOCAM_PCLK_SAMPLE_FALLING)) {
-		if (!pcdev->pdata ||
-				pcdev->pdata->flags & OMAP1_CAMERA_LCLK_RISING)
-			common_flags &= ~SOCAM_PCLK_SAMPLE_FALLING;
-		else
-			common_flags &= ~SOCAM_PCLK_SAMPLE_RISING;
+	ret = v4l2_subdev_call(sd, video, g_mbus_config, &cfg);
+	if (!ret) {
+		common_flags = soc_mbus_config_compatible(&cfg, SOCAM_BUS_FLAGS);
+		if (!common_flags) {
+			dev_warn(dev,
+				 "Flags incompatible: camera 0x%x, host 0x%x\n",
+				 cfg.flags, SOCAM_BUS_FLAGS);
+			return -EINVAL;
+		}
+	} else if (ret != -ENOIOCTLCMD) {
+		return ret;
+	} else {
+		common_flags = SOCAM_BUS_FLAGS;
 	}
 
-	ret = icd->ops->set_bus_param(icd, common_flags);
-	if (ret < 0)
+	/* Make choices, possibly based on platform configuration */
+	if ((common_flags & V4L2_MBUS_PCLK_SAMPLE_RISING) &&
+			(common_flags & V4L2_MBUS_PCLK_SAMPLE_FALLING)) {
+		if (!pcdev->pdata ||
+				pcdev->pdata->flags & OMAP1_CAMERA_LCLK_RISING)
+			common_flags &= ~V4L2_MBUS_PCLK_SAMPLE_FALLING;
+		else
+			common_flags &= ~V4L2_MBUS_PCLK_SAMPLE_RISING;
+	}
+
+	cfg.flags = common_flags;
+	ret = v4l2_subdev_call(sd, video, s_mbus_config, &cfg);
+	if (ret < 0 && ret != -ENOIOCTLCMD) {
+		dev_dbg(dev, "camera s_mbus_config(0x%lx) returned %d\n",
+			common_flags, ret);
 		return ret;
+	}
 
 	ctrlclock = CAM_READ_CACHE(pcdev, CTRLCLOCK);
 	if (ctrlclock & LCLK_EN)
 		CAM_WRITE(pcdev, CTRLCLOCK, ctrlclock & ~LCLK_EN);
 
-	if (common_flags & SOCAM_PCLK_SAMPLE_RISING) {
+	if (common_flags & V4L2_MBUS_PCLK_SAMPLE_RISING) {
 		dev_dbg(dev, "CTRLCLOCK_REG |= POLCLK\n");
 		ctrlclock |= POLCLK;
 	} else {
@@ -1565,10 +1578,10 @@ static int __init omap1_cam_probe(struct platform_device *pdev)
 	pcdev->clk = clk;
 
 	pcdev->pdata = pdev->dev.platform_data;
-	pcdev->pflags = pcdev->pdata->flags;
-
-	if (pcdev->pdata)
+	if (pcdev->pdata) {
+		pcdev->pflags = pcdev->pdata->flags;
 		pcdev->camexclk = pcdev->pdata->camexclk_khz * 1000;
+	}
 
 	switch (pcdev->camexclk) {
 	case 6000000:
@@ -1578,6 +1591,7 @@ static int __init omap1_cam_probe(struct platform_device *pdev)
 	case 24000000:
 		break;
 	default:
+		/* pcdev->camexclk != 0 => pcdev->pdata != NULL */
 		dev_warn(&pdev->dev,
 				"Incorrect sensor clock frequency %ld kHz, "
 				"should be one of 0, 6, 8, 9.6, 12 or 24 MHz, "
@@ -1585,8 +1599,7 @@ static int __init omap1_cam_probe(struct platform_device *pdev)
 				pcdev->pdata->camexclk_khz);
 		pcdev->camexclk = 0;
 	case 0:
-		dev_info(&pdev->dev,
-				"Not providing sensor clock\n");
+		dev_info(&pdev->dev, "Not providing sensor clock\n");
 	}
 
 	INIT_LIST_HEAD(&pcdev->capture);
@@ -1698,17 +1711,7 @@ static struct platform_driver omap1_cam_driver = {
 	.remove		= __exit_p(omap1_cam_remove),
 };
 
-static int __init omap1_cam_init(void)
-{
-	return platform_driver_register(&omap1_cam_driver);
-}
-module_init(omap1_cam_init);
-
-static void __exit omap1_cam_exit(void)
-{
-	platform_driver_unregister(&omap1_cam_driver);
-}
-module_exit(omap1_cam_exit);
+module_platform_driver(omap1_cam_driver);
 
 module_param(sg_mode, bool, 0644);
 MODULE_PARM_DESC(sg_mode, "videobuf mode, 0: dma-contig (default), 1: dma-sg");
@@ -1716,5 +1719,5 @@ MODULE_PARM_DESC(sg_mode, "videobuf mode, 0: dma-contig (default), 1: dma-sg");
 MODULE_DESCRIPTION("OMAP1 Camera Interface driver");
 MODULE_AUTHOR("Janusz Krzysztofik <jkrzyszt@tis.icnet.pl>");
 MODULE_LICENSE("GPL v2");
-MODULE_LICENSE(DRIVER_VERSION);
+MODULE_VERSION(DRIVER_VERSION);
 MODULE_ALIAS("platform:" DRIVER_NAME);

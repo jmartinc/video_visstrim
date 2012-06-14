@@ -5,6 +5,7 @@
 #include <linux/pci.h>
 #include <linux/platform_device.h>
 #include <linux/of_device.h>
+#include <linux/module.h>
 #include <linux/spi/pxa2xx_spi.h>
 
 struct ce4100_info {
@@ -150,7 +151,7 @@ static void __devexit ce4100_spi_remove(struct pci_dev *dev)
 	kfree(spi_info);
 }
 
-static struct pci_device_id ce4100_spi_devices[] __devinitdata = {
+static DEFINE_PCI_DEVICE_TABLE(ce4100_spi_devices) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x2e6a) },
 	{ },
 };
@@ -163,17 +164,7 @@ static struct pci_driver ce4100_spi_driver = {
 	.remove         = __devexit_p(ce4100_spi_remove),
 };
 
-static int __init ce4100_spi_init(void)
-{
-	return pci_register_driver(&ce4100_spi_driver);
-}
-module_init(ce4100_spi_init);
-
-static void __exit ce4100_spi_exit(void)
-{
-	pci_unregister_driver(&ce4100_spi_driver);
-}
-module_exit(ce4100_spi_exit);
+module_pci_driver(ce4100_spi_driver);
 
 MODULE_DESCRIPTION("CE4100 PCI-SPI glue code for PXA's driver");
 MODULE_LICENSE("GPL v2");

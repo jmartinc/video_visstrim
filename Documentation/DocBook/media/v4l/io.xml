@@ -543,12 +543,13 @@ and can range from zero to the number of buffers allocated
 with the &VIDIOC-REQBUFS; ioctl (&v4l2-requestbuffers; <structfield>count</structfield>) minus one.</entry>
 	  </row>
 	  <row>
-	    <entry>&v4l2-buf-type;</entry>
+	    <entry>__u32</entry>
 	    <entry><structfield>type</structfield></entry>
 	    <entry></entry>
 	    <entry>Type of the buffer, same as &v4l2-format;
 <structfield>type</structfield> or &v4l2-requestbuffers;
-<structfield>type</structfield>, set by the application.</entry>
+<structfield>type</structfield>, set by the application. See <xref
+linkend="v4l2-buf-type" /></entry>
 	  </row>
 	  <row>
 	    <entry>__u32</entry>
@@ -568,7 +569,7 @@ refers to an input stream, applications when an output stream.</entry>
 linkend="buffer-flags" />.</entry>
 	  </row>
 	  <row>
-	    <entry>&v4l2-field;</entry>
+	    <entry>__u32</entry>
 	    <entry><structfield>field</structfield></entry>
 	    <entry></entry>
 	    <entry>Indicates the field order of the image in the
@@ -630,11 +631,12 @@ bandwidth. These devices identify by not enumerating any video
 standards, see <xref linkend="standard" />.</para></entry>
 	  </row>
 	  <row>
-	    <entry>&v4l2-memory;</entry>
+	    <entry>__u32</entry>
 	    <entry><structfield>memory</structfield></entry>
 	    <entry></entry>
 	    <entry>This field must be set by applications and/or drivers
-in accordance with the selected I/O method.</entry>
+in accordance with the selected I/O method. See <xref linkend="v4l2-memory"
+	    /></entry>
 	  </row>
 	  <row>
 	    <entry>union</entry>
@@ -926,6 +928,33 @@ ioctl is called.</entry>
 	    <entry>The <structfield>input</structfield> field is valid.
 Applications set or clear this flag before calling the
 <constant>VIDIOC_QBUF</constant> ioctl.</entry>
+	  </row>
+	  <row>
+	    <entry><constant>V4L2_BUF_FLAG_PREPARED</constant></entry>
+	    <entry>0x0400</entry>
+	    <entry>The buffer has been prepared for I/O and can be queued by the
+application. Drivers set or clear this flag when the
+<link linkend="vidioc-querybuf">VIDIOC_QUERYBUF</link>, <link
+	  linkend="vidioc-qbuf">VIDIOC_PREPARE_BUF</link>, <link
+	  linkend="vidioc-qbuf">VIDIOC_QBUF</link> or <link
+	  linkend="vidioc-qbuf">VIDIOC_DQBUF</link> ioctl is called.</entry>
+	  </row>
+	  <row>
+	    <entry><constant>V4L2_BUF_FLAG_NO_CACHE_INVALIDATE</constant></entry>
+	    <entry>0x0400</entry>
+	    <entry>Caches do not have to be invalidated for this buffer.
+Typically applications shall use this flag if the data captured in the buffer
+is not going to be touched by the CPU, instead the buffer will, probably, be
+passed on to a DMA-capable hardware unit for further processing or output.
+</entry>
+	  </row>
+	  <row>
+	    <entry><constant>V4L2_BUF_FLAG_NO_CACHE_CLEAN</constant></entry>
+	    <entry>0x0800</entry>
+	    <entry>Caches do not have to be cleaned for this buffer.
+Typically applications shall use this flag for output buffers if the data
+in this buffer has not been created by the CPU but by some DMA-capable unit,
+in which case caches have not been used.</entry>
 	  </row>
 	</tbody>
       </tgroup>
@@ -1255,11 +1284,3 @@ line, top field first. The bottom field is transmitted first.</entry>
 	</mediaobject>
     </figure>
   </section>
-
-  <!--
-Local Variables:
-mode: sgml
-sgml-parent-document: "v4l2.sgml"
-indent-tabs-mode: nil
-End:
-  -->

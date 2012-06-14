@@ -36,6 +36,7 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
+#include <linux/module.h>
 
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -1775,8 +1776,7 @@ static int __devinit omap24xxcam_probe(struct platform_device *pdev)
 	cam->mmio_size = resource_size(mem);
 
 	/* map the region */
-	cam->mmio_base = (unsigned long)
-		ioremap_nocache(cam->mmio_base_phys, cam->mmio_size);
+	cam->mmio_base = ioremap_nocache(cam->mmio_base_phys, cam->mmio_size);
 	if (!cam->mmio_base) {
 		dev_err(cam->dev, "cannot map camera register I/O region\n");
 		goto err;
@@ -1867,21 +1867,7 @@ static struct platform_driver omap24xxcam_driver = {
 	},
 };
 
-/*
- *
- * Module initialisation and deinitialisation
- *
- */
-
-static int __init omap24xxcam_init(void)
-{
-	return platform_driver_register(&omap24xxcam_driver);
-}
-
-static void __exit omap24xxcam_cleanup(void)
-{
-	platform_driver_unregister(&omap24xxcam_driver);
-}
+module_platform_driver(omap24xxcam_driver);
 
 MODULE_AUTHOR("Sakari Ailus <sakari.ailus@nokia.com>");
 MODULE_DESCRIPTION("OMAP24xx Video for Linux camera driver");
@@ -1893,6 +1879,3 @@ MODULE_PARM_DESC(video_nr,
 module_param(capture_mem, int, 0);
 MODULE_PARM_DESC(capture_mem, "Maximum amount of memory for capture "
 		 "buffers (default 4800kiB)");
-
-module_init(omap24xxcam_init);
-module_exit(omap24xxcam_cleanup);

@@ -140,7 +140,7 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <sound/core.h>
 #include <sound/initval.h>
@@ -156,7 +156,7 @@ MODULE_SUPPORTED_DEVICE("{{Creative,SB CA0106 chip}}");
 // module parameters (see "Module Parameters")
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 static uint subsystem[SNDRV_CARDS]; /* Force card subsystem model */
 
 module_param_array(index, int, NULL, 0444);
@@ -1932,7 +1932,7 @@ static DEFINE_PCI_DEVICE_TABLE(snd_ca0106_ids) = {
 MODULE_DEVICE_TABLE(pci, snd_ca0106_ids);
 
 // pci_driver definition
-static struct pci_driver driver = {
+static struct pci_driver ca0106_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_ca0106_ids,
 	.probe = snd_ca0106_probe,
@@ -1943,17 +1943,4 @@ static struct pci_driver driver = {
 #endif
 };
 
-// initialization of the module
-static int __init alsa_card_ca0106_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-// clean up the module
-static void __exit alsa_card_ca0106_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_ca0106_init)
-module_exit(alsa_card_ca0106_exit)
+module_pci_driver(ca0106_driver);

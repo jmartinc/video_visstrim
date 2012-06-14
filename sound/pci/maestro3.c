@@ -39,7 +39,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/firmware.h>
 #include <linux/input.h>
 #include <sound/core.h>
@@ -64,8 +64,8 @@ MODULE_FIRMWARE("ess/maestro3_assp_minisrc.fw");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP; /* all enabled */
-static int external_amp[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 1};
+static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP; /* all enabled */
+static bool external_amp[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 1};
 static int amp_gpio[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = -1};
 
 module_param_array(index, int, NULL, 0444);
@@ -2820,8 +2820,8 @@ snd_m3_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 	/* TODO enable MIDI IRQ and I/O */
 	err = snd_mpu401_uart_new(chip->card, 0, MPU401_HW_MPU401,
 				  chip->iobase + MPU401_DATA_PORT,
-				  MPU401_INFO_INTEGRATED,
-				  chip->irq, 0, &chip->rmidi);
+				  MPU401_INFO_INTEGRATED | MPU401_INFO_IRQ_HOOK,
+				  -1, &chip->rmidi);
 	if (err < 0)
 		printk(KERN_WARNING "maestro3: no MIDI support.\n");
 #endif
@@ -2837,7 +2837,7 @@ static void __devexit snd_m3_remove(struct pci_dev *pci)
 	pci_set_drvdata(pci, NULL);
 }
 
-static struct pci_driver driver = {
+static struct pci_driver m3_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_m3_ids,
 	.probe = snd_m3_probe,
@@ -2848,15 +2848,4 @@ static struct pci_driver driver = {
 #endif
 };
 	
-static int __init alsa_card_m3_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_m3_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_m3_init)
-module_exit(alsa_card_m3_exit)
+module_pci_driver(m3_driver);

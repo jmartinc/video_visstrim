@@ -13,6 +13,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/spinlock.h>
@@ -215,9 +216,6 @@ static __devinit int ath79_spi_probe(struct platform_device *pdev)
 	if (pdata) {
 		master->bus_num = pdata->bus_num;
 		master->num_chipselect = pdata->num_chipselect;
-	} else {
-		master->bus_num = -1;
-		master->num_chipselect = 1;
 	}
 
 	sp->bitbang.master = spi_master_get(master);
@@ -273,18 +271,7 @@ static struct platform_driver ath79_spi_driver = {
 		.owner	= THIS_MODULE,
 	},
 };
-
-static __init int ath79_spi_init(void)
-{
-	return platform_driver_register(&ath79_spi_driver);
-}
-module_init(ath79_spi_init);
-
-static __exit void ath79_spi_exit(void)
-{
-	platform_driver_unregister(&ath79_spi_driver);
-}
-module_exit(ath79_spi_exit);
+module_platform_driver(ath79_spi_driver);
 
 MODULE_DESCRIPTION("SPI controller driver for Atheros AR71XX/AR724X/AR913X");
 MODULE_AUTHOR("Gabor Juhos <juhosg@openwrt.org>");

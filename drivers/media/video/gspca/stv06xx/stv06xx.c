@@ -36,8 +36,8 @@ MODULE_AUTHOR("Erik Andrén");
 MODULE_DESCRIPTION("STV06XX USB Camera Driver");
 MODULE_LICENSE("GPL");
 
-static int dump_bridge;
-static int dump_sensor;
+static bool dump_bridge;
+static bool dump_sensor;
 
 int stv06xx_write_bridge(struct sd *sd, u16 address, u16 i2c_data)
 {
@@ -261,6 +261,17 @@ static int stv06xx_init(struct gspca_dev *gspca_dev)
 	return (err < 0) ? err : 0;
 }
 
+/* this function is called at probe time */
+static int stv06xx_init_controls(struct gspca_dev *gspca_dev)
+{
+	struct sd *sd = (struct sd *) gspca_dev;
+
+	PDEBUG(D_PROBE, "Initializing controls");
+
+	gspca_dev->vdev.ctrl_handler = &gspca_dev->ctrl_handler;
+	return sd->sensor->init_controls(sd);
+}
+
 /* Start the camera */
 static int stv06xx_start(struct gspca_dev *gspca_dev)
 {
@@ -304,7 +315,7 @@ static int stv06xx_isoc_init(struct gspca_dev *gspca_dev)
 	struct sd *sd = (struct sd *) gspca_dev;
 
 	/* Start isoc bandwidth "negotiation" at max isoc bandwidth */
-	alt = &gspca_dev->dev->config->intf_cache[0]->altsetting[1];
+	alt = &gspca_dev->dev->actconfig->intf_cache[0]->altsetting[1];
 	alt->endpoint[0].desc.wMaxPacketSize =
 		cpu_to_le16(sd->sensor->max_packet_size[gspca_dev->curr_mode]);
 
@@ -317,7 +328,7 @@ static int stv06xx_isoc_nego(struct gspca_dev *gspca_dev)
 	struct usb_host_interface *alt;
 	struct sd *sd = (struct sd *) gspca_dev;
 
-	alt = &gspca_dev->dev->config->intf_cache[0]->altsetting[1];
+	alt = &gspca_dev->dev->actconfig->intf_cache[0]->altsetting[1];
 	packet_size = le16_to_cpu(alt->endpoint[0].desc.wMaxPacketSize);
 	min_packet_size = sd->sensor->min_packet_size[gspca_dev->curr_mode];
 	if (packet_size <= min_packet_size)
@@ -512,6 +523,7 @@ static const struct sd_desc sd_desc = {
 	.name = MODULE_NAME,
 	.config = stv06xx_config,
 	.init = stv06xx_init,
+	.init_controls = stv06xx_init_controls,
 	.start = stv06xx_start,
 	.stopN = stv06xx_stopN,
 	.pkt_scan = stv06xx_pkt_scan,
@@ -530,9 +542,8 @@ static int stv06xx_config(struct gspca_dev *gspca_dev,
 
 	PDEBUG(D_PROBE, "Configuring camera");
 
-	sd->desc = sd_desc;
 	sd->bridge = id->driver_info;
-	gspca_dev->sd_desc = &sd->desc;
+	gspca_dev->sd_desc = &sd_desc;
 
 	if (dump_bridge)
 		stv06xx_dump_bridge(sd);
@@ -594,11 +605,12 @@ static void sd_disconnect(struct usb_interface *intf)
 {
 	struct gspca_dev *gspca_dev = usb_get_intfdata(intf);
 	struct sd *sd = (struct sd *) gspca_dev;
+	void *priv = sd->sensor_priv;
 	PDEBUG(D_PROBE, "Disconnecting the stv06xx device");
 
-	if (sd->sensor->disconnect)
-		sd->sensor->disconnect(sd);
+	sd->sensor = NULL;
 	gspca_disconnect(intf);
+	kfree(priv);
 }
 
 static struct usb_driver sd_driver = {
@@ -609,21 +621,11 @@ static struct usb_driver sd_driver = {
 #ifdef CONFIG_PM
 	.suspend = gspca_suspend,
 	.resume = gspca_resume,
+	.reset_resume = gspca_resume,
 #endif
 };
 
-/* -- module insert / remove -- */
-static int __init sd_mod_init(void)
-{
-	return usb_register(&sd_driver);
-}
-static void __exit sd_mod_exit(void)
-{
-	usb_deregister(&sd_driver);
-}
-
-module_init(sd_mod_init);
-module_exit(sd_mod_exit);
+module_usb_driver(sd_driver);
 
 module_param(dump_bridge, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(dump_bridge, "Dumps all usb bridge registers at startup");

@@ -130,13 +130,13 @@ config MMC_SDHCI_CNS3XXX
 	  If unsure, say N.
 
 config MMC_SDHCI_ESDHC_IMX
-	tristate "SDHCI platform support for the Freescale eSDHC i.MX controller"
-	depends on ARCH_MX25 || ARCH_MX35 || ARCH_MX5
+	tristate "SDHCI support for the Freescale eSDHC/uSDHC i.MX controller"
+	depends on ARCH_MXC
 	depends on MMC_SDHCI_PLTFM
 	select MMC_SDHCI_IO_ACCESSORS
 	help
-	  This selects the Freescale eSDHC controller support on the platform
-	  bus, found on platforms like mx35/51.
+	  This selects the Freescale eSDHC/uSDHC controller support
+	  found on i.MX25, i.MX35 i.MX5x and i.MX6x.
 
 	  If you have a controller with this interface, say Y or M here.
 
@@ -263,7 +263,7 @@ config MMC_WBSD
 
 config MMC_AU1X
 	tristate "Alchemy AU1XX0 MMC Card Interface support"
-	depends on SOC_AU1200
+	depends on MIPS_ALCHEMY
 	help
 	  This selects the AMD Alchemy(R) Multimedia card interface.
 	  If you have a Alchemy platform with a MMC slot, say Y or M here.
@@ -278,10 +278,13 @@ choice
 	  Choose which driver to use for the Atmel MCI Silicon
 
 config MMC_AT91
-	tristate "AT91 SD/MMC Card Interface support"
+	tristate "AT91 SD/MMC Card Interface support (DEPRECATED)"
 	depends on ARCH_AT91
 	help
-	  This selects the AT91 MCI controller.
+	  This selects the AT91 MCI controller. This driver will
+	  be removed soon (for more information have a look to
+	  Documentation/feature-removal-schedule.txt). Please use
+	  MMC_ATMEL_MCI.
 
 	  If unsure, say N.
 
@@ -307,16 +310,6 @@ config MMC_ATMELMCI_DMA
 
 	  If unsure, say N.
 
-config MMC_IMX
-	tristate "Motorola i.MX Multimedia Card Interface support"
-	depends on ARCH_MX1
-	help
-	  This selects the Motorola i.MX Multimedia card Interface.
-	  If you have a i.MX platform with a Multimedia Card slot,
-	  say Y or M here.
-
-	  If unsure, say N.
-
 config MMC_MSM
 	tristate "Qualcomm SDCC Controller Support"
 	depends on MMC && ARCH_MSM
@@ -326,11 +319,11 @@ config MMC_MSM
 	  support for SDIO devices.
 
 config MMC_MXC
-	tristate "Freescale i.MX2/3 Multimedia Card Interface support"
-	depends on MACH_MX21 || MACH_MX27 || ARCH_MX31
+	tristate "Freescale i.MX21/27/31 Multimedia Card Interface support"
+	depends on ARCH_MXC
 	help
-	  This selects the Freescale i.MX2/3 Multimedia card Interface.
-	  If you have a i.MX platform with a Multimedia Card slot,
+	  This selects the Freescale i.MX21, i.MX27 and i.MX31 Multimedia card
+	  Interface. If you have a i.MX platform with a Multimedia Card slot,
 	  say Y or M here.
 
 	  If unsure, say N.
@@ -395,7 +388,7 @@ config MMC_SPI
 
 config MMC_S3C
 	tristate "Samsung S3C SD/MMC Card Interface support"
-	depends on ARCH_S3C2410
+	depends on ARCH_S3C24XX
 	help
 	  This selects a driver for the MCI interface found in
           Samsung's S3C2410, S3C2412, S3C2440, S3C2442 CPUs.
@@ -477,7 +470,6 @@ config MMC_SDHI
 config MMC_CB710
 	tristate "ENE CB710 MMC/SD Interface support"
 	depends on PCI
-	select MISC_DEVICES
 	select CB710_CORE
 	help
 	  This option enables support for MMC/SD part of ENE CB710/720 Flash
@@ -533,6 +525,31 @@ config MMC_DW_IDMAC
 	  This selects support for the internal DMAC block within the Synopsys
 	  Designware Mobile Storage IP block. This disables the external DMA
 	  interface.
+
+config MMC_DW_PLTFM
+	tristate "Synopsys Designware MCI Support as platform device"
+	depends on MMC_DW
+	default y
+	help
+	  This selects the common helper functions support for Host Controller
+	  Interface based platform driver. Please select this option if the IP
+	  is present as a platform device. This is the common interface for the
+	  Synopsys Designware IP.
+
+	  If you have a controller with this interface, say Y or M here.
+
+	  If unsure, say Y.
+
+config MMC_DW_PCI
+	tristate "Synopsys Designware MCI support on PCI bus"
+	depends on MMC_DW && PCI
+	help
+	  This selects the PCI bus for the Synopsys Designware Mobile Storage IP.
+	  Select this option if the IP is present on PCI platform.
+
+	  If you have a controller with this interface, say Y or M here.
+
+	  If unsure, say N.
 
 config MMC_SH_MMCIF
 	tristate "SuperH Internal MMCIF support"

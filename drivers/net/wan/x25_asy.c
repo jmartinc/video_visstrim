@@ -18,7 +18,6 @@
 
 #include <linux/module.h>
 
-#include <asm/system.h>
 #include <linux/uaccess.h>
 #include <linux/bitops.h>
 #include <linux/string.h>
@@ -434,14 +433,13 @@ static void x25_asy_disconnected(struct net_device *dev, int reason)
 	netif_rx(skb);
 }
 
-static struct lapb_register_struct x25_asy_callbacks = {
+static const struct lapb_register_struct x25_asy_callbacks = {
 	.connect_confirmation = x25_asy_connected,
 	.connect_indication = x25_asy_connected,
 	.disconnect_confirmation = x25_asy_disconnected,
 	.disconnect_indication = x25_asy_disconnected,
 	.data_indication = x25_asy_data_indication,
 	.data_transmit = x25_asy_data_transmit,
-
 };
 
 
@@ -787,10 +785,8 @@ static int __init init_x25_asy(void)
 
 	x25_asy_devs = kcalloc(x25_asy_maxdev, sizeof(struct net_device *),
 				GFP_KERNEL);
-	if (!x25_asy_devs) {
-		pr_warn("Can't allocate x25_asy_ctrls[] array! Uaargh! (-> No X.25 available)\n");
+	if (!x25_asy_devs)
 		return -ENOMEM;
-	}
 
 	return tty_register_ldisc(N_X25, &x25_ldisc);
 }

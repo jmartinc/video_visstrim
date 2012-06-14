@@ -32,7 +32,6 @@
 #include <linux/delay.h>
 #include <linux/timer.h>
 #include <linux/string.h>
-#include <linux/version.h>
 #include <generated/utsrelease.h>
 #include <linux/utsname.h>
 #include <linux/proc_fs.h>
@@ -44,12 +43,12 @@
 #include <scsi/scsi_host.h>
 
 #include <target/target_core_base.h>
-#include <target/target_core_transport.h>
-#include <target/target_core_fabric_ops.h>
+#include <target/target_core_backend.h>
+#include <target/target_core_fabric.h>
 #include <target/target_core_configfs.h>
 #include <target/configfs_macros.h>
 
-#include "target_core_hba.h"
+#include "target_core_internal.h"
 
 #ifndef INITIAL_JIFFIES
 #define INITIAL_JIFFIES ((unsigned long)(unsigned int) (-300*HZ))
@@ -955,7 +954,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_in_cmds(
 {
 	struct se_lun *lun = container_of(pgrps, struct se_lun, port_stat_grps);
 	struct se_port *sep;
-	struct se_portal_group *tpg;
 	ssize_t ret;
 
 	spin_lock(&lun->lun_sep_lock);
@@ -964,7 +962,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_in_cmds(
 		spin_unlock(&lun->lun_sep_lock);
 		return -ENODEV;
 	}
-	tpg = sep->sep_tpg;
 
 	ret = snprintf(page, PAGE_SIZE, "%llu\n", sep->sep_stats.cmd_pdus);
 	spin_unlock(&lun->lun_sep_lock);
@@ -977,7 +974,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_write_mbytes(
 {
 	struct se_lun *lun = container_of(pgrps, struct se_lun, port_stat_grps);
 	struct se_port *sep;
-	struct se_portal_group *tpg;
 	ssize_t ret;
 
 	spin_lock(&lun->lun_sep_lock);
@@ -986,7 +982,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_write_mbytes(
 		spin_unlock(&lun->lun_sep_lock);
 		return -ENODEV;
 	}
-	tpg = sep->sep_tpg;
 
 	ret = snprintf(page, PAGE_SIZE, "%u\n",
 			(u32)(sep->sep_stats.rx_data_octets >> 20));
@@ -1000,7 +995,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_read_mbytes(
 {
 	struct se_lun *lun = container_of(pgrps, struct se_lun, port_stat_grps);
 	struct se_port *sep;
-	struct se_portal_group *tpg;
 	ssize_t ret;
 
 	spin_lock(&lun->lun_sep_lock);
@@ -1009,7 +1003,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_read_mbytes(
 		spin_unlock(&lun->lun_sep_lock);
 		return -ENODEV;
 	}
-	tpg = sep->sep_tpg;
 
 	ret = snprintf(page, PAGE_SIZE, "%u\n",
 			(u32)(sep->sep_stats.tx_data_octets >> 20));
@@ -1023,7 +1016,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_hs_in_cmds(
 {
 	struct se_lun *lun = container_of(pgrps, struct se_lun, port_stat_grps);
 	struct se_port *sep;
-	struct se_portal_group *tpg;
 	ssize_t ret;
 
 	spin_lock(&lun->lun_sep_lock);
@@ -1032,7 +1024,6 @@ static ssize_t target_stat_scsi_tgt_port_show_attr_hs_in_cmds(
 		spin_unlock(&lun->lun_sep_lock);
 		return -ENODEV;
 	}
-	tpg = sep->sep_tpg;
 
 	/* FIXME: scsiTgtPortHsInCommands */
 	ret = snprintf(page, PAGE_SIZE, "%u\n", 0);
@@ -1254,7 +1245,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_inst(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1276,16 +1267,14 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_dev(
 	struct se_node_acl *nacl = lacl->se_lun_nacl;
 	struct se_dev_entry *deve;
 	struct se_lun *lun;
-	struct se_portal_group *tpg;
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
 	}
-	tpg = nacl->se_tpg;
 	lun = deve->se_lun;
 	/* scsiDeviceIndex */
 	ret = snprintf(page, PAGE_SIZE, "%u\n", lun->lun_se_dev->dev_index);
@@ -1305,7 +1294,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_port(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1328,7 +1317,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_indx(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1350,7 +1339,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_dev_or_port(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1372,7 +1361,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_intr_name(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1394,7 +1383,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_map_indx(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1416,7 +1405,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_att_count(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1438,7 +1427,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_num_cmds(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1460,7 +1449,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_read_mbytes(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1482,7 +1471,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_write_mbytes(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1504,7 +1493,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_hs_num_cmds(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1526,7 +1515,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_creation_time(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1549,7 +1538,7 @@ static ssize_t target_stat_scsi_auth_intr_show_attr_row_status(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1622,7 +1611,7 @@ static ssize_t target_stat_scsi_att_intr_port_show_attr_inst(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1644,16 +1633,14 @@ static ssize_t target_stat_scsi_att_intr_port_show_attr_dev(
 	struct se_node_acl *nacl = lacl->se_lun_nacl;
 	struct se_dev_entry *deve;
 	struct se_lun *lun;
-	struct se_portal_group *tpg;
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
 	}
-	tpg = nacl->se_tpg;
 	lun = deve->se_lun;
 	/* scsiDeviceIndex */
 	ret = snprintf(page, PAGE_SIZE, "%u\n", lun->lun_se_dev->dev_index);
@@ -1673,7 +1660,7 @@ static ssize_t target_stat_scsi_att_intr_port_show_attr_port(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1722,7 +1709,7 @@ static ssize_t target_stat_scsi_att_intr_port_show_attr_port_auth_indx(
 	ssize_t ret;
 
 	spin_lock_irq(&nacl->device_list_lock);
-	deve = &nacl->device_list[lacl->mapped_lun];
+	deve = nacl->device_list[lacl->mapped_lun];
 	if (!deve->se_lun || !deve->se_lun_acl) {
 		spin_unlock_irq(&nacl->device_list_lock);
 		return -ENODEV;
@@ -1756,8 +1743,7 @@ static ssize_t target_stat_scsi_att_intr_port_show_attr_port_ident(
 	/* scsiAttIntrPortName+scsiAttIntrPortIdentifier */
 	memset(buf, 0, 64);
 	if (tpg->se_tpg_tfo->sess_get_initiator_sid != NULL)
-		tpg->se_tpg_tfo->sess_get_initiator_sid(se_sess,
-				(unsigned char *)&buf[0], 64);
+		tpg->se_tpg_tfo->sess_get_initiator_sid(se_sess, buf, 64);
 
 	ret = snprintf(page, PAGE_SIZE, "%s+i+%s\n", nacl->initiatorname, buf);
 	spin_unlock_irq(&nacl->nacl_sess_lock);

@@ -306,7 +306,7 @@ static void cx_sensor(struct gspca_dev*gspca_dev)
 
 	reg_w(gspca_dev, 0x0020, reg20, 8);
 	reg_w(gspca_dev, 0x0028, reg28, 8);
-	reg_w(gspca_dev, 0x0010, reg10, 8);
+	reg_w(gspca_dev, 0x0010, reg10, 2);
 	reg_w_val(gspca_dev, 0x0092, 0x03);
 
 	switch (gspca_dev->cam.cam_mode[(int) gspca_dev->curr_mode].priv) {
@@ -326,7 +326,7 @@ static void cx_sensor(struct gspca_dev*gspca_dev)
 	}
 	reg_w(gspca_dev, 0x007b, reg7b, 6);
 	reg_w_val(gspca_dev, 0x00f8, 0x00);
-	reg_w(gspca_dev, 0x0010, reg10, 8);
+	reg_w(gspca_dev, 0x0010, reg10, 2);
 	reg_w_val(gspca_dev, 0x0098, 0x41);
 	for (i = 0; i < 11; i++) {
 		if (i == 3 || i == 5 || i == 8)
@@ -1067,15 +1067,4 @@ static struct usb_driver sd_driver = {
 #endif
 };
 
-/* -- module insert / remove -- */
-static int __init sd_mod_init(void)
-{
-	return usb_register(&sd_driver);
-}
-static void __exit sd_mod_exit(void)
-{
-	usb_deregister(&sd_driver);
-}
-
-module_init(sd_mod_init);
-module_exit(sd_mod_exit);
+module_usb_driver(sd_driver);

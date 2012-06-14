@@ -150,6 +150,11 @@ static int hfsplus_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		filp->f_pos++;
 		/* fall through */
 	case 1:
+		if (fd.entrylength > sizeof(entry) || fd.entrylength < 0) {
+			err = -EIO;
+			goto out;
+		}
+
 		hfs_bnode_read(fd.bnode, &entry, fd.entryoffset,
 			fd.entrylength);
 		if (be16_to_cpu(entry.type) != HFSPLUS_FOLDER_THREAD) {
@@ -181,6 +186,12 @@ static int hfsplus_readdir(struct file *filp, void *dirent, filldir_t filldir)
 			err = -EIO;
 			goto out;
 		}
+
+		if (fd.entrylength > sizeof(entry) || fd.entrylength < 0) {
+			err = -EIO;
+			goto out;
+		}
+
 		hfs_bnode_read(fd.bnode, &entry, fd.entryoffset,
 			fd.entrylength);
 		type = be16_to_cpu(entry.type);
@@ -415,7 +426,7 @@ static int hfsplus_symlink(struct inode *dir, struct dentry *dentry,
 	goto out;
 
 out_err:
-	inode->i_nlink = 0;
+	clear_nlink(inode);
 	hfsplus_delete_inode(inode);
 	iput(inode);
 out:
@@ -424,7 +435,7 @@ out:
 }
 
 static int hfsplus_mknod(struct inode *dir, struct dentry *dentry,
-			 int mode, dev_t rdev)
+			 umode_t mode, dev_t rdev)
 {
 	struct hfsplus_sb_info *sbi = HFSPLUS_SB(dir->i_sb);
 	struct inode *inode;
@@ -440,7 +451,7 @@ static int hfsplus_mknod(struct inode *dir, struct dentry *dentry,
 
 	res = hfsplus_create_cat(inode->i_ino, dir, &dentry->d_name, inode);
 	if (res) {
-		inode->i_nlink = 0;
+		clear_nlink(inode);
 		hfsplus_delete_inode(inode);
 		iput(inode);
 		goto out;
@@ -453,13 +464,13 @@ out:
 	return res;
 }
 
-static int hfsplus_create(struct inode *dir, struct dentry *dentry, int mode,
+static int hfsplus_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 			  struct nameidata *nd)
 {
 	return hfsplus_mknod(dir, dentry, mode, 0);
 }
 
-static int hfsplus_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+static int hfsplus_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	return hfsplus_mknod(dir, dentry, mode | S_IFDIR, 0);
 }

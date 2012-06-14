@@ -26,7 +26,7 @@ void lpfc_sli_read_link_ste(struct lpfc_hba *);
 void lpfc_dump_mem(struct lpfc_hba *, LPFC_MBOXQ_t *, uint16_t, uint16_t);
 void lpfc_dump_wakeup_param(struct lpfc_hba *, LPFC_MBOXQ_t *);
 int lpfc_dump_static_vport(struct lpfc_hba *, LPFC_MBOXQ_t *, uint16_t);
-int lpfc_dump_fcoe_param(struct lpfc_hba *, struct lpfcMboxq *);
+int lpfc_sli4_dump_cfg_rg23(struct lpfc_hba *, struct lpfcMboxq *);
 void lpfc_read_nv(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_config_async(struct lpfc_hba *, LPFC_MBOXQ_t *, uint32_t);
 
@@ -78,6 +78,7 @@ void lpfc_mbx_cmpl_fabric_reg_login(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_mbx_cmpl_ns_reg_login(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_mbx_cmpl_fdmi_reg_login(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_mbx_cmpl_reg_vfi(struct lpfc_hba *, LPFC_MBOXQ_t *);
+void lpfc_unregister_vfi_cmpl(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_enqueue_node(struct lpfc_vport *, struct lpfc_nodelist *);
 void lpfc_dequeue_node(struct lpfc_vport *, struct lpfc_nodelist *);
 struct lpfc_nodelist *lpfc_enable_node(struct lpfc_vport *,
@@ -106,7 +107,7 @@ void lpfc_cleanup(struct lpfc_vport *);
 void lpfc_disc_timeout(unsigned long);
 
 struct lpfc_nodelist *__lpfc_findnode_rpi(struct lpfc_vport *, uint16_t);
-
+struct lpfc_nodelist *lpfc_findnode_rpi(struct lpfc_vport *, uint16_t);
 void lpfc_worker_wake_up(struct lpfc_hba *);
 int lpfc_workq_post_event(struct lpfc_hba *, void *, void *, uint32_t);
 int lpfc_do_work(void *);
@@ -209,7 +210,7 @@ void __lpfc_mbox_cmpl_put(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_mbox_cmpl_put(struct lpfc_hba *, LPFC_MBOXQ_t *);
 int lpfc_mbox_cmd_check(struct lpfc_hba *, LPFC_MBOXQ_t *);
 int lpfc_mbox_dev_check(struct lpfc_hba *);
-int lpfc_mbox_tmo_val(struct lpfc_hba *, int);
+int lpfc_mbox_tmo_val(struct lpfc_hba *, LPFC_MBOXQ_t *);
 void lpfc_init_vfi(struct lpfcMboxq *, struct lpfc_vport *);
 void lpfc_reg_vfi(struct lpfcMboxq *, struct lpfc_vport *, dma_addr_t);
 void lpfc_init_vpi(struct lpfc_hba *, struct lpfcMboxq *, uint16_t);
@@ -253,6 +254,7 @@ int
 lpfc_sli_handle_fast_ring_event(struct lpfc_hba *,
 			struct lpfc_sli_ring *, uint32_t);
 
+struct lpfc_iocbq *__lpfc_sli_get_iocbq(struct lpfc_hba *);
 struct lpfc_iocbq * lpfc_sli_get_iocbq(struct lpfc_hba *);
 void lpfc_sli_release_iocbq(struct lpfc_hba *, struct lpfc_iocbq *);
 uint16_t lpfc_sli_next_iotag(struct lpfc_hba *, struct lpfc_iocbq *);
@@ -451,3 +453,15 @@ int lpfc_wr_object(struct lpfc_hba *, struct list_head *, uint32_t, uint32_t *);
 /* functions to support SR-IOV */
 int lpfc_sli_probe_sriov_nr_virtfn(struct lpfc_hba *, int);
 uint16_t lpfc_sli_sriov_nr_virtfn_get(struct lpfc_hba *);
+int lpfc_sli4_queue_create(struct lpfc_hba *);
+void lpfc_sli4_queue_destroy(struct lpfc_hba *);
+void lpfc_sli4_abts_err_handler(struct lpfc_hba *, struct lpfc_nodelist *,
+				struct sli4_wcqe_xri_aborted *);
+int lpfc_hba_init_link_fc_topology(struct lpfc_hba *, uint32_t, uint32_t);
+int lpfc_issue_reg_vfi(struct lpfc_vport *);
+int lpfc_issue_unreg_vfi(struct lpfc_vport *);
+int lpfc_selective_reset(struct lpfc_hba *);
+int lpfc_sli4_read_config(struct lpfc_hba *);
+void lpfc_sli4_node_prep(struct lpfc_hba *);
+int lpfc_sli4_xri_sgl_update(struct lpfc_hba *);
+void lpfc_free_sgl_list(struct lpfc_hba *, struct list_head *);

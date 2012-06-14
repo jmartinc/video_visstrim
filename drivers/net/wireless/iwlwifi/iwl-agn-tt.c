@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2007 - 2011 Intel Corporation. All rights reserved.
+ * Copyright(c) 2007 - 2012 Intel Corporation. All rights reserved.
  *
  * Portions of this file are derived from the ipw3945 project, as well
  * as portions of the ieee80211 subsystem header files.
@@ -34,13 +34,14 @@
 
 #include <net/mac80211.h>
 
+#include "iwl-agn.h"
 #include "iwl-eeprom.h"
 #include "iwl-dev.h"
-#include "iwl-core.h"
 #include "iwl-io.h"
 #include "iwl-commands.h"
 #include "iwl-debug.h"
 #include "iwl-agn-tt.h"
+#include "iwl-modparams.h"
 
 /* default Thermal Throttling transaction table
  * Current state   |         Throttling Down               |  Throttling Up
@@ -114,9 +115,6 @@ static bool iwl_within_ct_kill_margin(struct iwl_priv *priv)
 	s32 temp = priv->temperature; /* degrees CELSIUS except specified */
 	bool within_margin = false;
 
-	if (priv->cfg->base_params->temperature_kelvin)
-		temp = KELVIN_TO_CELSIUS(priv->temperature);
-
 	if (!priv->thermal_throttle.advanced_tt)
 		within_margin = ((temp + IWL_TT_CT_KILL_MARGIN) >=
 				CT_KILL_THRESHOLD_LEGACY) ? true : false;
@@ -181,19 +179,19 @@ static void iwl_tt_check_exit_ct_kill(unsigned long data)
 
 	if (tt->state == IWL_TI_CT_KILL) {
 		if (priv->thermal_throttle.ct_kill_toggle) {
-			iwl_write32(priv, CSR_UCODE_DRV_GP1_CLR,
+			iwl_write32(priv->trans, CSR_UCODE_DRV_GP1_CLR,
 				    CSR_UCODE_DRV_GP1_REG_BIT_CT_KILL_EXIT);
 			priv->thermal_throttle.ct_kill_toggle = false;
 		} else {
-			iwl_write32(priv, CSR_UCODE_DRV_GP1_SET,
+			iwl_write32(priv->trans, CSR_UCODE_DRV_GP1_SET,
 				    CSR_UCODE_DRV_GP1_REG_BIT_CT_KILL_EXIT);
 			priv->thermal_throttle.ct_kill_toggle = true;
 		}
-		iwl_read32(priv, CSR_UCODE_DRV_GP1);
-		spin_lock_irqsave(&priv->reg_lock, flags);
-		if (!iwl_grab_nic_access(priv))
-			iwl_release_nic_access(priv);
-		spin_unlock_irqrestore(&priv->reg_lock, flags);
+		iwl_read32(priv->trans, CSR_UCODE_DRV_GP1);
+		spin_lock_irqsave(&priv->trans->reg_lock, flags);
+		if (likely(iwl_grab_nic_access(priv->trans)))
+			iwl_release_nic_access(priv->trans);
+		spin_unlock_irqrestore(&priv->trans->reg_lock, flags);
 
 		/* Reschedule the ct_kill timer to occur in
 		 * CT_KILL_EXIT_DURATION seconds to ensure we get a
@@ -589,9 +587,6 @@ static void iwl_bg_tt_work(struct work_struct *work)
 	if (test_bit(STATUS_EXIT_PENDING, &priv->status))
 		return;
 
-	if (priv->cfg->base_params->temperature_kelvin)
-		temp = KELVIN_TO_CELSIUS(priv->temperature);
-
 	if (!priv->thermal_throttle.advanced_tt)
 		iwl_legacy_tt_handler(priv, temp, false);
 	else
@@ -639,11 +634,13 @@ void iwl_tt_initialize(struct iwl_priv *priv)
 
 	if (priv->cfg->base_params->adv_thermal_throttle) {
 		IWL_DEBUG_TEMP(priv, "Advanced Thermal Throttling\n");
-		tt->restriction = kzalloc(sizeof(struct iwl_tt_restriction) *
-					 IWL_TI_STATE_MAX, GFP_KERNEL);
-		tt->transaction = kzalloc(sizeof(struct iwl_tt_trans) *
-			IWL_TI_STATE_MAX * (IWL_TI_STATE_MAX - 1),
-			GFP_KERNEL);
+		tt->restriction = kcalloc(IWL_TI_STATE_MAX,
+					  sizeof(struct iwl_tt_restriction),
+					  GFP_KERNEL);
+		tt->transaction = kcalloc(IWL_TI_STATE_MAX *
+					  (IWL_TI_STATE_MAX - 1),
+					  sizeof(struct iwl_tt_trans),
+					  GFP_KERNEL);
 		if (!tt->restriction || !tt->transaction) {
 			IWL_ERR(priv, "Fallback to Legacy Throttling\n");
 			priv->thermal_throttle.advanced_tt = false;

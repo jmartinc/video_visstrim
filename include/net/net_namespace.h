@@ -77,7 +77,7 @@ struct net {
 	struct netns_packet	packet;
 	struct netns_unix	unx;
 	struct netns_ipv4	ipv4;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if IS_ENABLED(CONFIG_IPV6)
 	struct netns_ipv6	ipv6;
 #endif
 #if defined(CONFIG_IP_DCCP) || defined(CONFIG_IP_DCCP_MODULE)
@@ -279,14 +279,25 @@ extern void unregister_pernet_subsys(struct pernet_operations *);
 extern int register_pernet_device(struct pernet_operations *);
 extern void unregister_pernet_device(struct pernet_operations *);
 
-struct ctl_path;
 struct ctl_table;
 struct ctl_table_header;
 
-extern struct ctl_table_header *register_net_sysctl_table(struct net *net,
-	const struct ctl_path *path, struct ctl_table *table);
-extern struct ctl_table_header *register_net_sysctl_rotable(
-	const struct ctl_path *path, struct ctl_table *table);
+#ifdef CONFIG_SYSCTL
+extern int net_sysctl_init(void);
+extern struct ctl_table_header *register_net_sysctl(struct net *net,
+	const char *path, struct ctl_table *table);
 extern void unregister_net_sysctl_table(struct ctl_table_header *header);
+#else
+static inline int net_sysctl_init(void) { return 0; }
+static inline struct ctl_table_header *register_net_sysctl(struct net *net,
+	const char *path, struct ctl_table *table)
+{
+	return NULL;
+}
+static inline void unregister_net_sysctl_table(struct ctl_table_header *header)
+{
+}
+#endif
+
 
 #endif /* __NET_NET_NAMESPACE_H */

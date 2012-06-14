@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/videodev2.h>
 #include <linux/delay.h>
+#include <linux/module.h>
 #include <asm/div64.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-chip-ident.h>
@@ -708,15 +709,4 @@ static struct i2c_driver mt9v011_driver = {
 	.id_table	= mt9v011_id,
 };
 
-static __init int init_mt9v011(void)
-{
-	return i2c_add_driver(&mt9v011_driver);
-}
-
-static __exit void exit_mt9v011(void)
-{
-	i2c_del_driver(&mt9v011_driver);
-}
-
-module_init(init_mt9v011);
-module_exit(exit_mt9v011);
+module_i2c_driver(mt9v011_driver);

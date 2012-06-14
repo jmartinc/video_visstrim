@@ -97,6 +97,7 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 		   "BdiDirtyThresh:     %10lu kB\n"
 		   "DirtyThresh:        %10lu kB\n"
 		   "BackgroundThresh:   %10lu kB\n"
+		   "BdiDirtied:         %10lu kB\n"
 		   "BdiWritten:         %10lu kB\n"
 		   "BdiWriteBandwidth:  %10lu kBps\n"
 		   "b_dirty:            %10lu\n"
@@ -109,6 +110,7 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 		   K(bdi_thresh),
 		   K(dirty_thresh),
 		   K(background_thresh),
+		   (unsigned long) K(bdi_stat(bdi, BDI_DIRTIED)),
 		   (unsigned long) K(bdi_stat(bdi, BDI_WRITTEN)),
 		   (unsigned long) K(bdi->write_bandwidth),
 		   nr_dirty,
@@ -316,7 +318,7 @@ static void wakeup_timer_fn(unsigned long data)
 	if (bdi->wb.task) {
 		trace_writeback_wake_thread(bdi);
 		wake_up_process(bdi->wb.task);
-	} else {
+	} else if (bdi->dev) {
 		/*
 		 * When bdi tasks are inactive for long time, they are killed.
 		 * In this case we have to wake-up the forker thread which
@@ -404,9 +406,8 @@ static int bdi_forker_thread(void *ptr)
 		/*
 		 * In the following loop we are going to check whether we have
 		 * some work to do without any synchronization with tasks
-		 * waking us up to do work for them. So we have to set task
-		 * state already here so that we don't miss wakeups coming
-		 * after we verify some condition.
+		 * waking us up to do work for them. Set the task state here
+		 * so that we don't miss wakeups after verifying conditions.
 		 */
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -474,7 +475,8 @@ static int bdi_forker_thread(void *ptr)
 				 * the bdi from the thread. Hopefully 1024 is
 				 * large enough for efficient IO.
 				 */
-				writeback_inodes_wb(&bdi->wb, 1024);
+				writeback_inodes_wb(&bdi->wb, 1024,
+						    WB_REASON_FORKER_THREAD);
 			} else {
 				/*
 				 * The spinlock makes sure we do not lose
@@ -582,6 +584,8 @@ EXPORT_SYMBOL(bdi_register_dev);
  */
 static void bdi_wb_shutdown(struct backing_dev_info *bdi)
 {
+	struct task_struct *task;
+
 	if (!bdi_cap_writeback_dirty(bdi))
 		return;
 
@@ -598,14 +602,15 @@ static void bdi_wb_shutdown(struct backing_dev_info *bdi)
 
 	/*
 	 * Finally, kill the kernel thread. We don't need to be RCU
-	 * safe anymore, since the bdi is gone from visibility. Force
-	 * unfreeze of the thread before calling kthread_stop(), otherwise
-	 * it would never exet if it is currently stuck in the refrigerator.
+	 * safe anymore, since the bdi is gone from visibility.
 	 */
-	if (bdi->wb.task) {
-		thaw_process(bdi->wb.task);
-		kthread_stop(bdi->wb.task);
-	}
+	spin_lock_bh(&bdi->wb_lock);
+	task = bdi->wb.task;
+	bdi->wb.task = NULL;
+	spin_unlock_bh(&bdi->wb_lock);
+
+	if (task)
+		kthread_stop(task);
 }
 
 /*
@@ -625,7 +630,9 @@ static void bdi_prune_sb(struct backing_dev_info *bdi)
 
 void bdi_unregister(struct backing_dev_info *bdi)
 {
-	if (bdi->dev) {
+	struct device *dev = bdi->dev;
+
+	if (dev) {
 		bdi_set_min_ratio(bdi, 0);
 		trace_writeback_bdi_unregister(bdi);
 		bdi_prune_sb(bdi);
@@ -634,8 +641,12 @@ void bdi_unregister(struct backing_dev_info *bdi)
 		if (!bdi_cap_flush_forker(bdi))
 			bdi_wb_shutdown(bdi);
 		bdi_debug_unregister(bdi);
-		device_unregister(bdi->dev);
+
+		spin_lock_bh(&bdi->wb_lock);
 		bdi->dev = NULL;
+		spin_unlock_bh(&bdi->wb_lock);
+
+		device_unregister(dev);
 	}
 }
 EXPORT_SYMBOL(bdi_unregister);
@@ -684,6 +695,8 @@ int bdi_init(struct backing_dev_info *bdi)
 	bdi->bw_time_stamp = jiffies;
 	bdi->written_stamp = 0;
 
+	bdi->balanced_dirty_ratelimit = INIT_BW;
+	bdi->dirty_ratelimit = INIT_BW;
 	bdi->write_bandwidth = INIT_BW;
 	bdi->avg_write_bandwidth = INIT_BW;
 
@@ -719,6 +732,14 @@ void bdi_destroy(struct backing_dev_info *bdi)
 	}
 
 	bdi_unregister(bdi);
+
+	/*
+	 * If bdi_unregister() had already been called earlier, the
+	 * wakeup_timer could still be armed because bdi_prune_sb()
+	 * can race with the bdi_wakeup_thread_delayed() calls from
+	 * __mark_inode_dirty().
+	 */
+	del_timer_sync(&bdi->wb.wakeup_timer);
 
 	for (i = 0; i < NR_BDI_STAT_ITEMS; i++)
 		percpu_counter_destroy(&bdi->bdi_stat[i]);

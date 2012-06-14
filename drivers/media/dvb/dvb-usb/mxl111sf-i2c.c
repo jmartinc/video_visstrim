@@ -398,7 +398,6 @@ static int mxl111sf_i2c_readagain(struct mxl111sf_state *state,
 	u8 i2c_r_data[24];
 	u8 i = 0;
 	u8 fifo_status = 0;
-	int ret;
 	int status = 0;
 
 	mxl_i2c("read %d bytes", count);
@@ -418,7 +417,7 @@ static int mxl111sf_i2c_readagain(struct mxl111sf_state *state,
 		i2c_w_data[4+(i*3)] = 0x00;
 	}
 
-	ret = mxl111sf_i2c_get_data(state, 0, i2c_w_data, i2c_r_data);
+	mxl111sf_i2c_get_data(state, 0, i2c_w_data, i2c_r_data);
 
 	/* Check for I2C NACK status */
 	if (mxl111sf_i2c_check_status(state) == 1) {
@@ -453,7 +452,7 @@ static int mxl111sf_i2c_hw_xfer_msg(struct mxl111sf_state *state,
 
 	mxl_i2c("addr: 0x%02x, read buff len: %d, write buff len: %d",
 		msg->addr, (msg->flags & I2C_M_RD) ? msg->len : 0,
-		(!msg->flags & I2C_M_RD) ? msg->len : 0);
+		(!(msg->flags & I2C_M_RD)) ? msg->len : 0);
 
 	for (index = 0; index < 26; index++)
 		buf[index] = USB_END_I2C_CMD;
@@ -489,7 +488,7 @@ static int mxl111sf_i2c_hw_xfer_msg(struct mxl111sf_state *state,
 	ret = mxl111sf_i2c_send_data(state, 0, buf);
 
 	/* write data on I2C bus */
-	if ((!msg->flags & I2C_M_RD) && (msg->len > 0)) {
+	if (!(msg->flags & I2C_M_RD) && (msg->len > 0)) {
 		mxl_i2c("%d\t%02x", msg->len, msg->buf[0]);
 
 		/* control register on I2C interface to initialize I2C bus */

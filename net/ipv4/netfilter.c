@@ -5,13 +5,14 @@
 #include <linux/ip.h>
 #include <linux/skbuff.h>
 #include <linux/gfp.h>
+#include <linux/export.h>
 #include <net/route.h>
 #include <net/xfrm.h>
 #include <net/ip.h>
 #include <net/netfilter/nf_queue.h>
 
 /* route_me_harder function, used by iptable_nat, iptable_mangle + ip_queue */
-int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
+int ip_route_me_harder(struct sk_buff *skb, unsigned int addr_type)
 {
 	struct net *net = dev_net(skb_dst(skb)->dev);
 	const struct iphdr *iph = ip_hdr(skb);
@@ -63,7 +64,8 @@ int ip_route_me_harder(struct sk_buff *skb, unsigned addr_type)
 	/* Change in oif may mean change in hh_len. */
 	hh_len = skb_dst(skb)->dev->hard_header_len;
 	if (skb_headroom(skb) < hh_len &&
-	    pskb_expand_head(skb, hh_len - skb_headroom(skb), 0, GFP_ATOMIC))
+	    pskb_expand_head(skb, HH_DATA_ALIGN(hh_len - skb_headroom(skb)),
+				0, GFP_ATOMIC))
 		return -1;
 
 	return 0;
@@ -235,13 +237,3 @@ static void ipv4_netfilter_fini(void)
 
 module_init(ipv4_netfilter_init);
 module_exit(ipv4_netfilter_fini);
-
-#ifdef CONFIG_SYSCTL
-struct ctl_path nf_net_ipv4_netfilter_sysctl_path[] = {
-	{ .procname = "net", },
-	{ .procname = "ipv4", },
-	{ .procname = "netfilter", },
-	{ }
-};
-EXPORT_SYMBOL_GPL(nf_net_ipv4_netfilter_sysctl_path);
-#endif /* CONFIG_SYSCTL */

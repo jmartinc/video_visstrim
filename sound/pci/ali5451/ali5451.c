@@ -31,7 +31,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -48,7 +48,7 @@ MODULE_SUPPORTED_DEVICE("{{ALI,M5451,pci},{ALI,M5451}}");
 static int index = SNDRV_DEFAULT_IDX1;	/* Index */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
 static int pcm_channels = 32;
-static int spdif;
+static bool spdif;
 
 module_param(index, int, 0444);
 MODULE_PARM_DESC(index, "Index value for ALI M5451 PCI Audio.");
@@ -60,7 +60,7 @@ module_param(spdif, bool, 0444);
 MODULE_PARM_DESC(spdif, "Support SPDIF I/O");
 
 /* just for backward compatibility */
-static int enable;
+static bool enable;
 module_param(enable, bool, 0444);
 
 
@@ -2294,7 +2294,7 @@ static void __devexit snd_ali_remove(struct pci_dev *pci)
 	pci_set_drvdata(pci, NULL);
 }
 
-static struct pci_driver driver = {
+static struct pci_driver ali5451_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_ali_ids,
 	.probe = snd_ali_probe,
@@ -2305,15 +2305,4 @@ static struct pci_driver driver = {
 #endif
 };                                
 
-static int __init alsa_card_ali_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_ali_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_ali_init)
-module_exit(alsa_card_ali_exit)
+module_pci_driver(ali5451_driver);

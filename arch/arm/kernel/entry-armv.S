@@ -15,15 +15,19 @@
  *  that causes it to save wrong values...  Be aware!
  */
 
+#include <asm/assembler.h>
 #include <asm/memory.h>
 #include <asm/glue-df.h>
 #include <asm/glue-pf.h>
 #include <asm/vfpmacros.h>
+#ifndef CONFIG_MULTI_IRQ_HANDLER
 #include <mach/entry-macro.S>
+#endif
 #include <asm/thread_notify.h>
 #include <asm/unwind.h>
 #include <asm/unistd.h>
 #include <asm/tls.h>
+#include <asm/system_info.h>
 
 #include "entry-header.S"
 #include <asm/entry-macro-multi.S>
@@ -35,12 +39,11 @@
 #ifdef CONFIG_MULTI_IRQ_HANDLER
 	ldr	r1, =handle_arch_irq
 	mov	r0, sp
-	ldr	r1, [r1]
 	adr	lr, BSYM(9997f)
-	teq	r1, #0
-	movne	pc, r1
-#endif
+	ldr	pc, [r1]
+#else
 	arch_irq_handler_default
+#endif
 9997:
 	.endm
 
@@ -262,8 +265,7 @@ __und_svc:
 	ldr	r0, [r4, #-4]
 #else
 	ldrh	r0, [r4, #-2]			@ Thumb instruction at LR - 2
-	and	r9, r0, #0xf800
-	cmp	r9, #0xe800			@ 32-bit instruction if xx >= 0
+	cmp	r0, #0xe800			@ 32-bit instruction if xx >= 0
 	ldrhhs	r9, [r4]			@ bottom 16 bits
 	orrhs	r0, r9, r0, lsl #16
 #endif
@@ -440,18 +442,46 @@ __und_usr:
 #endif
 	beq	call_fpe
 	@ Thumb instruction
-#if __LINUX_ARM_ARCH__ >= 7
+#if CONFIG_ARM_THUMB && __LINUX_ARM_ARCH__ >= 6 && CONFIG_CPU_V7
+/*
+ * Thumb-2 instruction handling.  Note that because pre-v6 and >= v6 platforms
+ * can never be supported in a single kernel, this code is not applicable at
+ * all when __LINUX_ARM_ARCH__ < 6.  This allows simplifying assumptions to be
+ * made about .arch directives.
+ */
+#if __LINUX_ARM_ARCH__ < 7
+/* If the target CPU may not be Thumb-2-capable, a run-time check is needed: */
+#define NEED_CPU_ARCHITECTURE
+	ldr	r5, .LCcpu_architecture
+	ldr	r5, [r5]
+	cmp	r5, #CPU_ARCH_ARMv7
+	blo	__und_usr_unknown
+/*
+ * The following code won't get run unless the running CPU really is v7, so
+ * coding round the lack of ldrht on older arches is pointless.  Temporarily
+ * override the assembler target arch with the minimum required instead:
+ */
+	.arch	armv6t2
+#endif
 2:
  ARM(	ldrht	r5, [r4], #2	)
  THUMB(	ldrht	r5, [r4]	)
  THUMB(	add	r4, r4, #2	)
-	and	r0, r5, #0xf800			@ mask bits 111x x... .... ....
-	cmp	r0, #0xe800			@ 32bit instruction if xx != 0
+	cmp	r5, #0xe800			@ 32bit instruction if xx != 0
 	blo	__und_usr_unknown
 3:	ldrht	r0, [r4]
 	add	r2, r2, #2			@ r2 is PC + 2, make it PC + 4
 	orr	r0, r0, r5, lsl #16
+
+#if __LINUX_ARM_ARCH__ < 7
+/* If the target arch was overridden, change it back: */
+#ifdef CONFIG_CPU_32v6K
+	.arch	armv6k
 #else
+	.arch	armv6
+#endif
+#endif /* __LINUX_ARM_ARCH__ < 7 */
+#else /* !(CONFIG_ARM_THUMB && __LINUX_ARM_ARCH__ >= 6 && CONFIG_CPU_V7) */
 	b	__und_usr_unknown
 #endif
  UNWIND(.fnend		)
@@ -469,7 +499,7 @@ ENDPROC(__und_usr)
 	.popsection
 	.pushsection __ex_table,"a"
 	.long	1b, 4b
-#if __LINUX_ARM_ARCH__ >= 7
+#if CONFIG_ARM_THUMB && __LINUX_ARM_ARCH__ >= 6 && CONFIG_CPU_V7
 	.long	2b, 4b
 	.long	3b, 4b
 #endif
@@ -526,10 +556,6 @@ call_fpe:
 #endif
 	tst	r0, #0x08000000			@ only CDP/CPRT/LDC/STC have bit 27
 	tstne	r0, #0x04000000			@ bit 26 set on both ARM and Thumb-2
-#if defined(CONFIG_CPU_ARM610) || defined(CONFIG_CPU_ARM710)
-	and	r8, r0, #0x0f000000		@ mask out op-code bits
-	teqne	r8, #0x0f000000			@ SWI (ARM6/7 bug)?
-#endif
 	moveq	pc, lr
 	get_thread_info r10			@ get current thread
 	and	r8, r0, #0x00000f00		@ mask out CP number
@@ -577,6 +603,12 @@ call_fpe:
 	movw_pc	lr				@ CP#13
 	movw_pc	lr				@ CP#14 (Debug)
 	movw_pc	lr				@ CP#15 (Control)
+
+#ifdef NEED_CPU_ARCHITECTURE
+	.align	2
+.LCcpu_architecture:
+	.word	__cpu_architecture
+#endif
 
 #ifdef CONFIG_NEON
 	.align	6
@@ -757,7 +789,7 @@ __kuser_cmpxchg64:				@ 0xffff0f60
 	smp_dmb	arm
 	rsbs	r0, r3, #0			@ set returned val and C flag
 	ldmfd	sp!, {r4, r5, r6, r7}
-	bx	lr
+	usr_ret	lr
 
 #elif !defined(CONFIG_SMP)
 
@@ -1068,7 +1100,6 @@ __stubs_start:
  * get out of that mode without clobbering one register.
  */
 vector_fiq:
-	disable_fiq
 	subs	pc, lr, #4
 
 /*=============================================================================

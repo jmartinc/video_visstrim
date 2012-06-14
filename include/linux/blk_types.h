@@ -14,6 +14,8 @@ struct bio;
 struct bio_integrity_payload;
 struct page;
 struct block_device;
+struct io_context;
+struct cgroup_subsys_state;
 typedef void (bio_end_io_t) (struct bio *, int);
 typedef void (bio_destructor_t) (struct bio *);
 
@@ -59,8 +61,6 @@ struct bio {
 
 	unsigned int		bi_max_vecs;	/* max bvl_vecs we can hold */
 
-	unsigned int		bi_comp_cpu;	/* completion CPU */
-
 	atomic_t		bi_cnt;		/* pin count */
 
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */
@@ -68,6 +68,14 @@ struct bio {
 	bio_end_io_t		*bi_end_io;
 
 	void			*bi_private;
+#ifdef CONFIG_BLK_CGROUP
+	/*
+	 * Optional ioc and css associated with this bio.  Put on bio
+	 * release.  Read comment on top of bio_associate_current().
+	 */
+	struct io_context	*bi_ioc;
+	struct cgroup_subsys_state *bi_css;
+#endif
 #if defined(CONFIG_BLK_DEV_INTEGRITY)
 	struct bio_integrity_payload *bi_integrity;  /* data integrity */
 #endif
@@ -93,11 +101,10 @@ struct bio {
 #define BIO_BOUNCED	5	/* bio is a bounce bio */
 #define BIO_USER_MAPPED 6	/* contains user pages */
 #define BIO_EOPNOTSUPP	7	/* not supported */
-#define BIO_CPU_AFFINE	8	/* complete bio on same CPU as submitted */
-#define BIO_NULL_MAPPED 9	/* contains invalid user pages */
-#define BIO_FS_INTEGRITY 10	/* fs owns integrity data, not block layer */
-#define BIO_QUIET	11	/* Make BIO Quiet */
-#define BIO_MAPPED_INTEGRITY 12/* integrity metadata has been remapped */
+#define BIO_NULL_MAPPED 8	/* contains invalid user pages */
+#define BIO_FS_INTEGRITY 9	/* fs owns integrity data, not block layer */
+#define BIO_QUIET	10	/* Make BIO Quiet */
+#define BIO_MAPPED_INTEGRITY 11/* integrity metadata has been remapped */
 #define bio_flagged(bio, flag)	((bio)->bi_flags & (1 << (flag)))
 
 /*

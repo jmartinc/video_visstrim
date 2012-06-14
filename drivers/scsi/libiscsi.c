@@ -26,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/log2.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 #include <asm/unaligned.h>
 #include <net/tcp.h>
 #include <scsi/scsi_cmnd.h>
@@ -1908,6 +1909,16 @@ static enum blk_eh_timer_return iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	ISCSI_DBG_EH(session, "scsi cmd %p timedout\n", sc);
 
 	spin_lock(&session->lock);
+	task = (struct iscsi_task *)sc->SCp.ptr;
+	if (!task) {
+		/*
+		 * Raced with completion. Blk layer has taken ownership
+		 * so let timeout code complete it now.
+		 */
+		rc = BLK_EH_HANDLED;
+		goto done;
+	}
+
 	if (session->state != ISCSI_STATE_LOGGED_IN) {
 		/*
 		 * We are probably in the middle of iscsi recovery so let
@@ -1920,16 +1931,6 @@ static enum blk_eh_timer_return iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	conn = session->leadconn;
 	if (!conn) {
 		/* In the middle of shuting down */
-		rc = BLK_EH_RESET_TIMER;
-		goto done;
-	}
-
-	task = (struct iscsi_task *)sc->SCp.ptr;
-	if (!task) {
-		/*
-		 * Raced with completion. Just reset timer, and let it
-		 * complete normally
-		 */
 		rc = BLK_EH_RESET_TIMER;
 		goto done;
 	}
@@ -2806,6 +2807,7 @@ void iscsi_session_teardown(struct iscsi_cls_session *cls_session)
 	kfree(session->username);
 	kfree(session->username_in);
 	kfree(session->targetname);
+	kfree(session->targetalias);
 	kfree(session->initiatorname);
 	kfree(session->ifacename);
 
@@ -3163,7 +3165,6 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
 {
 	struct iscsi_conn *conn = cls_conn->dd_data;
 	struct iscsi_session *session = conn->session;
-	uint32_t value;
 
 	switch(param) {
 	case ISCSI_PARAM_FAST_ABORT:
@@ -3200,7 +3201,7 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
 		sscanf(buf, "%d", &session->initial_r2t_en);
 		break;
 	case ISCSI_PARAM_MAX_R2T:
-		sscanf(buf, "%d", &session->max_r2t);
+		sscanf(buf, "%hu", &session->max_r2t);
 		break;
 	case ISCSI_PARAM_IMM_DATA_EN:
 		sscanf(buf, "%d", &session->imm_data_en);
@@ -3220,14 +3221,6 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
 	case ISCSI_PARAM_ERL:
 		sscanf(buf, "%d", &session->erl);
 		break;
-	case ISCSI_PARAM_IFMARKER_EN:
-		sscanf(buf, "%d", &value);
-		BUG_ON(value);
-		break;
-	case ISCSI_PARAM_OFMARKER_EN:
-		sscanf(buf, "%d", &value);
-		BUG_ON(value);
-		break;
 	case ISCSI_PARAM_EXP_STATSN:
 		sscanf(buf, "%u", &conn->exp_statsn);
 		break;
@@ -3241,6 +3234,8 @@ int iscsi_set_param(struct iscsi_cls_conn *cls_conn,
 		return iscsi_switch_str_param(&session->password_in, buf);
 	case ISCSI_PARAM_TARGET_NAME:
 		return iscsi_switch_str_param(&session->targetname, buf);
+	case ISCSI_PARAM_TARGET_ALIAS:
+		return iscsi_switch_str_param(&session->targetalias, buf);
 	case ISCSI_PARAM_TPGT:
 		sscanf(buf, "%d", &session->tpgt);
 		break;
@@ -3306,6 +3301,9 @@ int iscsi_session_get_param(struct iscsi_cls_session *cls_session,
 		break;
 	case ISCSI_PARAM_TARGET_NAME:
 		len = sprintf(buf, "%s\n", session->targetname);
+		break;
+	case ISCSI_PARAM_TARGET_ALIAS:
+		len = sprintf(buf, "%s\n", session->targetalias);
 		break;
 	case ISCSI_PARAM_TPGT:
 		len = sprintf(buf, "%d\n", session->tpgt);

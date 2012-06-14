@@ -30,7 +30,6 @@
 #include <asm/btext.h>
 #include <asm/machdep.h>
 #include <asm/uaccess.h>
-#include <asm/system.h>
 #include <asm/pmac_feature.h>
 #include <asm/sections.h>
 #include <asm/nvram.h>
@@ -107,6 +106,8 @@ notrace unsigned long __init early_init(unsigned long dt_ptr)
 			 PTRRELOC(&__start___lwsync_fixup),
 			 PTRRELOC(&__stop___lwsync_fixup));
 
+	do_final_fixups();
+
 	return KERNELBASE + offset;
 }
 
@@ -117,7 +118,7 @@ notrace unsigned long __init early_init(unsigned long dt_ptr)
  * This is called very early on the boot process, after a minimal
  * MMU environment has been set up but before MMU_init is called.
  */
-notrace void __init machine_init(unsigned long dt_ptr)
+notrace void __init machine_init(u64 dt_ptr)
 {
 	lockdep_init();
 
@@ -149,6 +150,9 @@ notrace void __init machine_init(unsigned long dt_ptr)
 }
 
 #ifdef CONFIG_BOOKE_WDT
+extern u32 booke_wdt_enabled;
+extern u32 booke_wdt_period;
+
 /* Checks wdt=x and wdt_period=xx command-line option */
 notrace int __init early_parse_wdt(char *p)
 {

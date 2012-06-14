@@ -29,7 +29,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/device.h>
-#include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <asm/uaccess.h>
@@ -50,7 +49,6 @@
 #include <asm/cpu.h>
 #include <asm/mips_mt.h>
 #include <asm/processor.h>
-#include <asm/system.h>
 #include <asm/vpe.h>
 #include <asm/kspd.h>
 

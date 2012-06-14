@@ -232,6 +232,14 @@ static int __devinit sch_gpio_probe(struct platform_device *pdev)
 			sch_gpio_resume.ngpio = 9;
 			break;
 
+		case PCI_DEVICE_ID_INTEL_CENTERTON_ILB:
+			sch_gpio_core.base = 0;
+			sch_gpio_core.ngpio = 21;
+
+			sch_gpio_resume.base = 21;
+			sch_gpio_resume.ngpio = 9;
+			break;
+
 		default:
 			return -ENODEV;
 	}
@@ -297,18 +305,7 @@ static struct platform_driver sch_gpio_driver = {
 	.remove		= __devexit_p(sch_gpio_remove),
 };
 
-static int __init sch_gpio_init(void)
-{
-	return platform_driver_register(&sch_gpio_driver);
-}
-
-static void __exit sch_gpio_exit(void)
-{
-	platform_driver_unregister(&sch_gpio_driver);
-}
-
-module_init(sch_gpio_init);
-module_exit(sch_gpio_exit);
+module_platform_driver(sch_gpio_driver);
 
 MODULE_AUTHOR("Denis Turischev <denis@compulab.co.il>");
 MODULE_DESCRIPTION("GPIO interface for Intel Poulsbo SCH");

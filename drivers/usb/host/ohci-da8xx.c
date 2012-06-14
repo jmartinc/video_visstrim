@@ -344,7 +344,7 @@ static int usb_hcd_da8xx_probe(const struct hc_driver *driver,
 		error = -ENODEV;
 		goto err4;
 	}
-	error = usb_add_hcd(hcd, irq, IRQF_DISABLED);
+	error = usb_add_hcd(hcd, irq, 0);
 	if (error)
 		goto err4;
 
@@ -454,3 +454,5 @@ static struct platform_driver ohci_hcd_da8xx_driver = {
 		.name	= "ohci",
 	},
 };
+
+MODULE_ALIAS("platform:ohci");

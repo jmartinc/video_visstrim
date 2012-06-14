@@ -140,7 +140,8 @@ static int ohci_tmio_start(struct usb_hcd *hcd)
 		return ret;
 
 	if ((ret = ohci_run(ohci)) < 0) {
-		err("can't start %s", hcd->self.bus_name);
+		dev_err(hcd->self.controller, "can't start %s\n",
+			hcd->self.bus_name);
 		ohci_stop(hcd);
 		return ret;
 	}
@@ -244,7 +245,7 @@ static int __devinit ohci_hcd_tmio_drv_probe(struct platform_device *dev)
 	ohci = hcd_to_ohci(hcd);
 	ohci_hcd_init(ohci);
 
-	ret = usb_add_hcd(hcd, irq, IRQF_DISABLED);
+	ret = usb_add_hcd(hcd, irq, 0);
 	if (ret)
 		goto err_add_hcd;
 
@@ -318,9 +319,6 @@ static int ohci_hcd_tmio_drv_suspend(struct platform_device *dev, pm_message_t s
 		if (ret)
 			return ret;
 	}
-
-	hcd->state = HC_STATE_SUSPENDED;
-
 	return 0;
 }
 

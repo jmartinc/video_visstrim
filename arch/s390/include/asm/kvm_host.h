@@ -47,7 +47,7 @@ struct sca_block {
 #define KVM_HPAGE_MASK(x)	(~(KVM_HPAGE_SIZE(x) - 1))
 #define KVM_PAGES_PER_HPAGE(x)	(KVM_HPAGE_SIZE(x) / PAGE_SIZE)
 
-#define CPUSTAT_HOST       0x80000000
+#define CPUSTAT_STOPPED    0x80000000
 #define CPUSTAT_WAIT       0x10000000
 #define CPUSTAT_ECALL_PEND 0x08000000
 #define CPUSTAT_STOP_INT   0x04000000
@@ -119,6 +119,7 @@ struct kvm_vcpu_stat {
 	u32 instruction_lctlg;
 	u32 exit_program_interruption;
 	u32 exit_instr_and_program;
+	u32 deliver_external_call;
 	u32 deliver_emergency_signal;
 	u32 deliver_service_signal;
 	u32 deliver_virtio_interrupt;
@@ -138,12 +139,16 @@ struct kvm_vcpu_stat {
 	u32 instruction_stfl;
 	u32 instruction_tprot;
 	u32 instruction_sigp_sense;
+	u32 instruction_sigp_sense_running;
+	u32 instruction_sigp_external_call;
 	u32 instruction_sigp_emergency;
 	u32 instruction_sigp_stop;
 	u32 instruction_sigp_arch;
 	u32 instruction_sigp_prefix;
 	u32 instruction_sigp_restart;
+	u32 diagnose_10;
 	u32 diagnose_44;
+	u32 diagnose_9c;
 };
 
 struct kvm_s390_io_info {
@@ -174,6 +179,10 @@ struct kvm_s390_prefix_info {
 	__u32 address;
 };
 
+struct kvm_s390_extcall_info {
+	__u16 code;
+};
+
 struct kvm_s390_emerg_info {
 	__u16 code;
 };
@@ -186,6 +195,7 @@ struct kvm_s390_interrupt_info {
 		struct kvm_s390_ext_info ext;
 		struct kvm_s390_pgm_info pgm;
 		struct kvm_s390_emerg_info emerg;
+		struct kvm_s390_extcall_info extcall;
 		struct kvm_s390_prefix_info prefix;
 	};
 };
@@ -211,18 +221,17 @@ struct kvm_s390_float_interrupt {
 	struct list_head list;
 	atomic_t active;
 	int next_rr_cpu;
-	unsigned long idle_mask [(64 + sizeof(long) - 1) / sizeof(long)];
-	struct kvm_s390_local_interrupt *local_int[64];
+	unsigned long idle_mask[(KVM_MAX_VCPUS + sizeof(long) - 1)
+				/ sizeof(long)];
+	struct kvm_s390_local_interrupt *local_int[KVM_MAX_VCPUS];
 };
 
 
 struct kvm_vcpu_arch {
 	struct kvm_s390_sie_block *sie_block;
-	unsigned long	  guest_gprs[16];
 	s390_fp_regs      host_fpregs;
 	unsigned int      host_acrs[NUM_ACRS];
 	s390_fp_regs      guest_fpregs;
-	unsigned int      guest_acrs[NUM_ACRS];
 	struct kvm_s390_local_interrupt local_int;
 	struct hrtimer    ckc_timer;
 	struct tasklet_struct tasklet;
@@ -237,6 +246,9 @@ struct kvm_vm_stat {
 	u32 remote_tlb_flush;
 };
 
+struct kvm_arch_memory_slot {
+};
+
 struct kvm_arch{
 	struct sca_block *sca;
 	debug_info_t *dbf;
@@ -244,5 +256,5 @@ struct kvm_arch{
 	struct gmap *gmap;
 };
 
-extern int sie64a(struct kvm_s390_sie_block *, unsigned long *);
+extern int sie64a(struct kvm_s390_sie_block *, u64 *);
 #endif

@@ -92,17 +92,26 @@ struct spi_sh_data {
 	unsigned long cr1;
 	wait_queue_head_t wait;
 	spinlock_t lock;
+	int width;
 };
 
 static void spi_sh_write(struct spi_sh_data *ss, unsigned long data,
 			     unsigned long offset)
 {
-	writel(data, ss->addr + offset);
+	if (ss->width == 8)
+		iowrite8(data, ss->addr + (offset >> 2));
+	else if (ss->width == 32)
+		iowrite32(data, ss->addr + offset);
 }
 
 static unsigned long spi_sh_read(struct spi_sh_data *ss, unsigned long offset)
 {
-	return readl(ss->addr + offset);
+	if (ss->width == 8)
+		return ioread8(ss->addr + (offset >> 2));
+	else if (ss->width == 32)
+		return ioread32(ss->addr + offset);
+	else
+		return 0;
 }
 
 static void spi_sh_set_bit(struct spi_sh_data *ss, unsigned long val,
@@ -464,6 +473,18 @@ static int __devinit spi_sh_probe(struct platform_device *pdev)
 	ss = spi_master_get_devdata(master);
 	dev_set_drvdata(&pdev->dev, ss);
 
+	switch (res->flags & IORESOURCE_MEM_TYPE_MASK) {
+	case IORESOURCE_MEM_8BIT:
+		ss->width = 8;
+		break;
+	case IORESOURCE_MEM_32BIT:
+		ss->width = 32;
+		break;
+	default:
+		dev_err(&pdev->dev, "No support width\n");
+		ret = -ENODEV;
+		goto error1;
+	}
 	ss->irq = irq;
 	ss->master = master;
 	ss->addr = ioremap(res->start, resource_size(res));
@@ -484,7 +505,7 @@ static int __devinit spi_sh_probe(struct platform_device *pdev)
 		goto error2;
 	}
 
-	ret = request_irq(irq, spi_sh_irq, IRQF_DISABLED, "spi_sh", ss);
+	ret = request_irq(irq, spi_sh_irq, 0, "spi_sh", ss);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "request_irq error\n");
 		goto error3;
@@ -524,18 +545,7 @@ static struct platform_driver spi_sh_driver = {
 		.owner = THIS_MODULE,
 	},
 };
-
-static int __init spi_sh_init(void)
-{
-	return platform_driver_register(&spi_sh_driver);
-}
-module_init(spi_sh_init);
-
-static void __exit spi_sh_exit(void)
-{
-	platform_driver_unregister(&spi_sh_driver);
-}
-module_exit(spi_sh_exit);
+module_platform_driver(spi_sh_driver);
 
 MODULE_DESCRIPTION("SH SPI bus driver");
 MODULE_LICENSE("GPL");

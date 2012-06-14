@@ -28,6 +28,9 @@
  *      Chris Wilson <chris@chris-wilson.co.uk>
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
+#include <linux/moduleparam.h>
 #include "intel_drv.h"
 
 #define PCI_LBPC 0xf4 /* legacy/combination backlight modes */
@@ -47,8 +50,6 @@ intel_fixed_panel_mode(struct drm_display_mode *fixed_mode,
 	adjusted_mode->vtotal = fixed_mode->vtotal;
 
 	adjusted_mode->clock = fixed_mode->clock;
-
-	drm_mode_set_crtcinfo(adjusted_mode, CRTC_INTERLACE_HALVE_V);
 }
 
 /* adjusted_mode has been preset to be the panel's fixed mode */
@@ -84,7 +85,7 @@ intel_pch_panel_fitting(struct drm_device *dev,
 			if (scaled_width > scaled_height) { /* pillar */
 				width = scaled_height / mode->vdisplay;
 				if (width & 1)
-				    	width++;
+					width++;
 				x = (adjusted_mode->hdisplay - width + 1) / 2;
 				y = 0;
 				height = adjusted_mode->vdisplay;
@@ -141,8 +142,8 @@ static u32 i915_read_blc_pwm_ctl(struct drm_i915_private *dev_priv)
 			dev_priv->saveBLC_PWM_CTL2 = val;
 		} else if (val == 0) {
 			I915_WRITE(BLC_PWM_PCH_CTL2,
-				   dev_priv->saveBLC_PWM_CTL);
-			val = dev_priv->saveBLC_PWM_CTL;
+				   dev_priv->saveBLC_PWM_CTL2);
+			val = dev_priv->saveBLC_PWM_CTL2;
 		}
 	} else {
 		val = I915_READ(BLC_PWM_CTL);
@@ -171,20 +172,17 @@ u32 intel_panel_get_max_backlight(struct drm_device *dev)
 		/* XXX add code here to query mode clock or hardware clock
 		 * and program max PWM appropriately.
 		 */
-		printk_once(KERN_WARNING "fixme: max PWM is zero.\n");
+		pr_warn_once("fixme: max PWM is zero\n");
 		return 1;
 	}
 
 	if (HAS_PCH_SPLIT(dev)) {
 		max >>= 16;
 	} else {
-		if (IS_PINEVIEW(dev)) {
+		if (INTEL_INFO(dev)->gen < 4)
 			max >>= 17;
-		} else {
+		else
 			max >>= 16;
-			if (INTEL_INFO(dev)->gen < 4)
-				max &= ~1;
-		}
 
 		if (is_backlight_combination_mode(dev))
 			max *= 0xff;
@@ -192,6 +190,27 @@ u32 intel_panel_get_max_backlight(struct drm_device *dev)
 
 	DRM_DEBUG_DRIVER("max backlight PWM = %d\n", max);
 	return max;
+}
+
+static int i915_panel_invert_brightness;
+MODULE_PARM_DESC(invert_brightness, "Invert backlight brightness "
+	"(-1 force normal, 0 machine defaults, 1 force inversion), please "
+	"report PCI device ID, subsystem vendor and subsystem device ID "
+	"to dri-devel@lists.freedesktop.org, if your machine needs it. "
+	"It will then be included in an upcoming module version.");
+module_param_named(invert_brightness, i915_panel_invert_brightness, int, 0600);
+static u32 intel_panel_compute_brightness(struct drm_device *dev, u32 val)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	if (i915_panel_invert_brightness < 0)
+		return val;
+
+	if (i915_panel_invert_brightness > 0 ||
+	    dev_priv->quirks & QUIRK_INVERT_BRIGHTNESS)
+		return intel_panel_get_max_backlight(dev) - val;
+
+	return val;
 }
 
 u32 intel_panel_get_backlight(struct drm_device *dev)
@@ -203,18 +222,18 @@ u32 intel_panel_get_backlight(struct drm_device *dev)
 		val = I915_READ(BLC_PWM_CPU_CTL) & BACKLIGHT_DUTY_CYCLE_MASK;
 	} else {
 		val = I915_READ(BLC_PWM_CTL) & BACKLIGHT_DUTY_CYCLE_MASK;
-		if (IS_PINEVIEW(dev))
+		if (INTEL_INFO(dev)->gen < 4)
 			val >>= 1;
 
-		if (is_backlight_combination_mode(dev)){
+		if (is_backlight_combination_mode(dev)) {
 			u8 lbpc;
 
-			val &= ~1;
 			pci_read_config_byte(dev->pdev, PCI_LBPC, &lbpc);
 			val *= lbpc;
 		}
 	}
 
+	val = intel_panel_compute_brightness(dev, val);
 	DRM_DEBUG_DRIVER("get backlight PWM = %d\n", val);
 	return val;
 }
@@ -226,17 +245,18 @@ static void intel_pch_panel_set_backlight(struct drm_device *dev, u32 level)
 	I915_WRITE(BLC_PWM_CPU_CTL, val | level);
 }
 
-void intel_panel_set_backlight(struct drm_device *dev, u32 level)
+static void intel_panel_actually_set_backlight(struct drm_device *dev, u32 level)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 tmp;
 
 	DRM_DEBUG_DRIVER("set backlight PWM = %d\n", level);
+	level = intel_panel_compute_brightness(dev, level);
 
 	if (HAS_PCH_SPLIT(dev))
 		return intel_pch_panel_set_backlight(dev, level);
 
-	if (is_backlight_combination_mode(dev)){
+	if (is_backlight_combination_mode(dev)) {
 		u32 max = intel_panel_get_max_backlight(dev);
 		u8 lbpc;
 
@@ -246,24 +266,27 @@ void intel_panel_set_backlight(struct drm_device *dev, u32 level)
 	}
 
 	tmp = I915_READ(BLC_PWM_CTL);
-	if (IS_PINEVIEW(dev)) {
-		tmp &= ~(BACKLIGHT_DUTY_CYCLE_MASK - 1);
+	if (INTEL_INFO(dev)->gen < 4) 
 		level <<= 1;
-	} else
-		tmp &= ~BACKLIGHT_DUTY_CYCLE_MASK;
+	tmp &= ~BACKLIGHT_DUTY_CYCLE_MASK;
 	I915_WRITE(BLC_PWM_CTL, tmp | level);
+}
+
+void intel_panel_set_backlight(struct drm_device *dev, u32 level)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	dev_priv->backlight_level = level;
+	if (dev_priv->backlight_enabled)
+		intel_panel_actually_set_backlight(dev, level);
 }
 
 void intel_panel_disable_backlight(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
-	if (dev_priv->backlight_enabled) {
-		dev_priv->backlight_level = intel_panel_get_backlight(dev);
-		dev_priv->backlight_enabled = false;
-	}
-
-	intel_panel_set_backlight(dev, 0);
+	dev_priv->backlight_enabled = false;
+	intel_panel_actually_set_backlight(dev, 0);
 }
 
 void intel_panel_enable_backlight(struct drm_device *dev)
@@ -273,8 +296,8 @@ void intel_panel_enable_backlight(struct drm_device *dev)
 	if (dev_priv->backlight_level == 0)
 		dev_priv->backlight_level = intel_panel_get_max_backlight(dev);
 
-	intel_panel_set_backlight(dev, dev_priv->backlight_level);
 	dev_priv->backlight_enabled = true;
+	intel_panel_actually_set_backlight(dev, dev_priv->backlight_level);
 }
 
 static void intel_panel_init_backlight(struct drm_device *dev)
@@ -321,7 +344,8 @@ static int intel_panel_update_status(struct backlight_device *bd)
 static int intel_panel_get_brightness(struct backlight_device *bd)
 {
 	struct drm_device *dev = bl_get_data(bd);
-	return intel_panel_get_backlight(dev);
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	return dev_priv->backlight_level;
 }
 
 static const struct backlight_ops intel_panel_bl_ops = {
@@ -344,6 +368,7 @@ int intel_panel_setup_backlight(struct drm_device *dev)
 	else
 		return -ENODEV;
 
+	memset(&props, 0, sizeof(props));
 	props.type = BACKLIGHT_RAW;
 	props.max_brightness = intel_panel_get_max_backlight(dev);
 	dev_priv->backlight =

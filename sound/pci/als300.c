@@ -32,7 +32,7 @@
 
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
@@ -115,7 +115,14 @@ MODULE_SUPPORTED_DEVICE("{{Avance Logic,ALS300},{Avance Logic,ALS300+}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+
+module_param_array(index, int, NULL, 0444);
+MODULE_PARM_DESC(index, "Index value for ALS300 sound card.");
+module_param_array(id, charp, NULL, 0444);
+MODULE_PARM_DESC(id, "ID string for ALS300 sound card.");
+module_param_array(enable, bool, NULL, 0444);
+MODULE_PARM_DESC(enable, "Enable ALS300 sound card.");
 
 struct snd_als300 {
 	unsigned long port;
@@ -845,7 +852,7 @@ static int __devinit snd_als300_probe(struct pci_dev *pci,
 	return 0;
 }
 
-static struct pci_driver driver = {
+static struct pci_driver als300_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_als300_ids,
 	.probe = snd_als300_probe,
@@ -856,15 +863,4 @@ static struct pci_driver driver = {
 #endif
 };
 
-static int __init alsa_card_als300_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_als300_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_als300_init)
-module_exit(alsa_card_als300_exit)
+module_pci_driver(als300_driver);

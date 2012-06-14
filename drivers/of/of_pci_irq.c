@@ -1,6 +1,7 @@
 #include <linux/kernel.h>
 #include <linux/of_pci.h>
 #include <linux/of_irq.h>
+#include <linux/export.h>
 #include <asm/prom.h>
 
 /**
@@ -14,7 +15,7 @@
  * PCI tree until an device-node is found, at which point it will finish
  * resolving using the OF tree walking.
  */
-int of_irq_map_pci(struct pci_dev *pdev, struct of_irq *out_irq)
+int of_irq_map_pci(const struct pci_dev *pdev, struct of_irq *out_irq)
 {
 	struct device_node *dn, *ppnode;
 	struct pci_dev *ppdev;

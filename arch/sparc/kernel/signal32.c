@@ -28,10 +28,9 @@
 #include <asm/fpumacro.h>
 #include <asm/visasm.h>
 #include <asm/compat_signal.h>
+#include <asm/switch_to.h>
 
 #include "sigutil.h"
-
-#define _BLOCKABLE (~(sigmask(SIGKILL) | sigmask(SIGSTOP)))
 
 /* This magic should be in g_upper[0] for all upper parts
  * to be valid.
@@ -214,8 +213,9 @@ void do_sigreturn32(struct pt_regs *regs)
 	    (((unsigned long) sf) & 3))
 		goto segv;
 
-	get_user(pc, &sf->info.si_regs.pc);
-	__get_user(npc, &sf->info.si_regs.npc);
+	if (get_user(pc, &sf->info.si_regs.pc) ||
+	    __get_user(npc, &sf->info.si_regs.npc))
+		goto segv;
 
 	if ((pc | npc) & 3)
 		goto segv;
@@ -272,7 +272,6 @@ void do_sigreturn32(struct pt_regs *regs)
 		case 2: set.sig[1] = seta[2] + (((long)seta[3]) << 32);
 		case 1: set.sig[0] = seta[0] + (((long)seta[1]) << 32);
 	}
-	sigdelsetmask(&set, ~_BLOCKABLE);
 	set_current_blocked(&set);
 	return;
 
@@ -304,8 +303,9 @@ asmlinkage void do_rt_sigreturn32(struct pt_regs *regs)
 	    (((unsigned long) sf) & 3))
 		goto segv;
 
-	get_user(pc, &sf->regs.pc);
-	__get_user(npc, &sf->regs.npc);
+	if (get_user(pc, &sf->regs.pc) || 
+	    __get_user(npc, &sf->regs.npc))
+		goto segv;
 
 	if ((pc | npc) & 3)
 		goto segv;
@@ -373,7 +373,6 @@ asmlinkage void do_rt_sigreturn32(struct pt_regs *regs)
 		case 2: set.sig[1] = seta.sig[2] + (((long)seta.sig[3]) << 32);
 		case 1: set.sig[0] = seta.sig[0] + (((long)seta.sig[1]) << 32);
 	}
-	sigdelsetmask(&set, ~_BLOCKABLE);
 	set_current_blocked(&set);
 	return;
 segv:
@@ -772,11 +771,10 @@ sigsegv:
 	return -EFAULT;
 }
 
-static inline int handle_signal32(unsigned long signr, struct k_sigaction *ka,
+static inline void handle_signal32(unsigned long signr, struct k_sigaction *ka,
 				  siginfo_t *info,
 				  sigset_t *oldset, struct pt_regs *regs)
 {
-	sigset_t blocked;
 	int err;
 
 	if (ka->sa.sa_flags & SA_SIGINFO)
@@ -785,16 +783,9 @@ static inline int handle_signal32(unsigned long signr, struct k_sigaction *ka,
 		err = setup_frame32(ka, regs, signr, oldset);
 
 	if (err)
-		return err;
+		return;
 
-	sigorsets(&blocked, &current->blocked, &ka->sa.sa_mask);
-	if (!(ka->sa.sa_flags & SA_NOMASK))
-		sigaddset(&blocked, signr);
-	set_current_blocked(&blocked);
-
-	tracehook_signal_handler(signr, info, ka, regs, 0);
-
-	return 0;
+	signal_delivered(signr, info, ka, regs, 0);
 }
 
 static inline void syscall_restart32(unsigned long orig_i0, struct pt_regs *regs,
@@ -822,33 +813,28 @@ static inline void syscall_restart32(unsigned long orig_i0, struct pt_regs *regs
  * want to handle. Thus you cannot kill init even with a SIGKILL even by
  * mistake.
  */
-void do_signal32(sigset_t *oldset, struct pt_regs * regs,
-		 int restart_syscall, unsigned long orig_i0)
+void do_signal32(sigset_t *oldset, struct pt_regs * regs)
 {
 	struct k_sigaction ka;
+	unsigned long orig_i0;
+	int restart_syscall;
 	siginfo_t info;
 	int signr;
 	
 	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
 
-	/* If the debugger messes with the program counter, it clears
-	 * the "in syscall" bit, directing us to not perform a syscall
-	 * restart.
-	 */
-	if (restart_syscall && !pt_regs_is_syscall(regs))
-		restart_syscall = 0;
+	restart_syscall = 0;
+	orig_i0 = 0;
+	if (pt_regs_is_syscall(regs) &&
+	    (regs->tstate & (TSTATE_XCARRY | TSTATE_ICARRY))) {
+		restart_syscall = 1;
+		orig_i0 = regs->u_regs[UREG_G6];
+	}
 
 	if (signr > 0) {
 		if (restart_syscall)
 			syscall_restart32(orig_i0, regs, &ka.sa);
-		if (handle_signal32(signr, &ka, &info, oldset, regs) == 0) {
-			/* A signal was successfully delivered; the saved
-			 * sigmask will have been stored in the signal frame,
-			 * and will be restored by sigreturn, so we can simply
-			 * clear the TS_RESTORE_SIGMASK flag.
-			 */
-			current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
-		}
+		handle_signal32(signr, &ka, &info, oldset, regs);
 		return;
 	}
 	if (restart_syscall &&
@@ -872,10 +858,7 @@ void do_signal32(sigset_t *oldset, struct pt_regs * regs,
 	/* If there's no signal to deliver, we just put the saved sigmask
 	 * back
 	 */
-	if (current_thread_info()->status & TS_RESTORE_SIGMASK) {
-		current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
-		set_current_blocked(&current->saved_sigmask);
-	}
+	restore_saved_sigmask();
 }
 
 struct sigstack32 {

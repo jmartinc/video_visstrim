@@ -53,6 +53,7 @@
 #include <mach/pxa27x-udc.h>
 #include <mach/camera.h>
 #include <mach/audio.h>
+#include <mach/smemc.h>
 #include <media/soc_camera.h>
 
 #include <mach/mioa701.h>
@@ -102,6 +103,7 @@ static unsigned long mioa701_pin_config[] = {
 	GPIO82_CIF_DD_5,
 	GPIO84_CIF_FV,
 	GPIO85_CIF_LV,
+	MIO_CFG_OUT(GPIO56_MT9M111_nOE, AF0, DRIVE_LOW),
 
 	/* Bluetooth */
 	MIO_CFG_IN(GPIO14_BT_nACTIVITY, AF0),
@@ -390,24 +392,19 @@ static struct pxamci_platform_data mioa701_mci_info = {
 };
 
 /* FlashRAM */
-static struct resource strataflash_resource = {
+static struct resource docg3_resource = {
 	.start = PXA_CS0_PHYS,
-	.end   = PXA_CS0_PHYS + SZ_64M - 1,
+	.end   = PXA_CS0_PHYS + SZ_8K - 1,
 	.flags = IORESOURCE_MEM,
 };
 
-static struct physmap_flash_data strataflash_data = {
-	.width = 2,
-	/* .set_vpp = mioa701_set_vpp, */
-};
-
-static struct platform_device strataflash = {
-	.name	       = "physmap-flash",
+static struct platform_device docg3 = {
+	.name	       = "docg3",
 	.id	       = -1,
-	.resource      = &strataflash_resource,
+	.resource      = &docg3_resource,
 	.num_resources = 1,
 	.dev = {
-		.platform_data = &strataflash_data,
+		.platform_data = NULL,
 	},
 };
 
@@ -541,15 +538,15 @@ static struct pda_power_pdata power_pdata = {
 static struct resource power_resources[] = {
 	[0] = {
 		.name	= "ac",
-		.start	= gpio_to_irq(GPIO96_AC_DETECT),
-		.end	= gpio_to_irq(GPIO96_AC_DETECT),
+		.start	= PXA_GPIO_TO_IRQ(GPIO96_AC_DETECT),
+		.end	= PXA_GPIO_TO_IRQ(GPIO96_AC_DETECT),
 		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE |
 		IORESOURCE_IRQ_LOWEDGE,
 	},
 	[1] = {
 		.name	= "usb",
-		.start	= gpio_to_irq(GPIO13_nUSB_DETECT),
-		.end	= gpio_to_irq(GPIO13_nUSB_DETECT),
+		.start	= PXA_GPIO_TO_IRQ(GPIO13_nUSB_DETECT),
+		.end	= PXA_GPIO_TO_IRQ(GPIO13_nUSB_DETECT),
 		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE |
 		IORESOURCE_IRQ_LOWEDGE,
 	},
@@ -585,9 +582,7 @@ static struct wm97xx_pdata mioa701_wm97xx_pdata = {
  * Voltage regulation
  */
 static struct regulator_consumer_supply max1586_consumers[] = {
-	{
-		.supply = "vcc_core",
-	}
+	REGULATOR_SUPPLY("vcc_core", NULL),
 };
 
 static struct regulator_init_data max1586_v3_info = {
@@ -685,7 +680,7 @@ static struct platform_device *devices[] __initdata = {
 	&pxa2xx_pcm,
 	&mioa701_sound,
 	&power_dev,
-	&strataflash,
+	&docg3,
 	&gpio_vbus,
 	&mioa701_camera,
 	&mioa701_board,
@@ -696,19 +691,20 @@ static void mioa701_machine_exit(void);
 static void mioa701_poweroff(void)
 {
 	mioa701_machine_exit();
-	arm_machine_restart('s', NULL);
+	pxa_restart('s', NULL);
 }
 
 static void mioa701_restart(char c, const char *cmd)
 {
 	mioa701_machine_exit();
-	arm_machine_restart('s', cmd);
+	pxa_restart('s', cmd);
 }
 
 static struct gpio global_gpios[] = {
 	{ GPIO9_CHARGE_EN, GPIOF_OUT_INIT_HIGH, "Charger enable" },
 	{ GPIO18_POWEROFF, GPIOF_OUT_INIT_LOW, "Power Off" },
 	{ GPIO87_LCD_POWER, GPIOF_OUT_INIT_LOW, "LCD Power" },
+	{ GPIO56_MT9M111_nOE, GPIOF_OUT_INIT_LOW, "Camera nOE" },
 };
 
 static void __init mioa701_machine_init(void)
@@ -719,6 +715,15 @@ static void __init mioa701_machine_init(void)
 	PCFR = PCFR_DC_EN | PCFR_GPR_EN | PCFR_OPDE;
 	RTTR = 32768 - 1; /* Reset crazy WinCE value */
 	UP2OCR = UP2OCR_HXOE;
+
+	/*
+	 * Set up the flash memory : DiskOnChip G3 on first static memory bank
+	 */
+	__raw_writel(0x7ff02dd8, MSC0);
+	__raw_writel(0x0001c391, MCMEM0);
+	__raw_writel(0x0001c391, MCATT0);
+	__raw_writel(0x0001c391, MCIO0);
+
 
 	pxa2xx_mfp_config(ARRAY_AND_SIZE(mioa701_pin_config));
 	pxa_set_ffuart_info(NULL);
@@ -734,7 +739,6 @@ static void __init mioa701_machine_init(void)
 	pxa_set_udc_info(&mioa701_udc_info);
 	pxa_set_ac97_info(&mioa701_ac97_info);
 	pm_power_off = mioa701_poweroff;
-	arm_pm_restart = mioa701_restart;
 	platform_add_devices(devices, ARRAY_SIZE(devices));
 	gsm_init();
 
@@ -751,10 +755,13 @@ static void mioa701_machine_exit(void)
 }
 
 MACHINE_START(MIOA701, "MIO A701")
-	.boot_params	= 0xa0000100,
+	.atag_offset	= 0x100,
+	.restart_mode	= 's',
 	.map_io		= &pxa27x_map_io,
+	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= &pxa27x_init_irq,
 	.handle_irq	= &pxa27x_handle_irq,
 	.init_machine	= mioa701_machine_init,
 	.timer		= &pxa_timer,
+	.restart	= mioa701_restart,
 MACHINE_END

@@ -24,6 +24,7 @@
 
 #include <linux/kernel.h>
 #include <linux/io.h>
+#include <linux/export.h>
 #include <linux/err.h>
 #include <linux/delay.h>
 #include <linux/seq_file.h>
@@ -32,7 +33,10 @@
 #include <linux/pm_runtime.h>
 
 #include <video/omapdss.h>
+
+#include <plat/cpu.h>
 #include <plat/clock.h>
+
 #include "dss.h"
 #include "dss_features.h"
 
@@ -57,6 +61,9 @@ struct dss_reg {
 
 #define REG_FLD_MOD(idx, val, start, end) \
 	dss_write_reg(idx, FLD_MOD(dss_read_reg(idx), val, start, end))
+
+static int dss_runtime_get(void);
+static void dss_runtime_put(void);
 
 static struct {
 	struct platform_device *pdev;
@@ -273,7 +280,7 @@ void dss_dump_clocks(struct seq_file *s)
 	dss_runtime_put();
 }
 
-void dss_dump_regs(struct seq_file *s)
+static void dss_dump_regs(struct seq_file *s)
 {
 #define DUMPREG(r) seq_printf(s, "%-35s %08x\n", #r, dss_read_reg(r))
 
@@ -318,6 +325,7 @@ void dss_select_dispc_clk_source(enum omap_dss_clk_source clk_src)
 		break;
 	default:
 		BUG();
+		return;
 	}
 
 	dss_feat_get_reg_field(FEAT_REG_DISPC_CLK_SWITCH, &start, &end);
@@ -331,7 +339,7 @@ void dss_select_dsi_clk_source(int dsi_module,
 		enum omap_dss_clk_source clk_src)
 {
 	struct platform_device *dsidev;
-	int b;
+	int b, pos;
 
 	switch (clk_src) {
 	case OMAP_DSS_CLK_SRC_FCK:
@@ -351,9 +359,11 @@ void dss_select_dsi_clk_source(int dsi_module,
 		break;
 	default:
 		BUG();
+		return;
 	}
 
-	REG_FLD_MOD(DSS_CONTROL, b, 1, 1);	/* DSI_CLK_SWITCH */
+	pos = dsi_module == 0 ? 1 : 10;
+	REG_FLD_MOD(DSS_CONTROL, b, pos, pos);	/* DSIx_CLK_SWITCH */
 
 	dss.dsi_clk_source[dsi_module] = clk_src;
 }
@@ -385,6 +395,7 @@ void dss_select_lcd_clk_source(enum omap_channel channel,
 		break;
 	default:
 		BUG();
+		return;
 	}
 
 	pos = channel == OMAP_DSS_CHANNEL_LCD ? 0 : 12;
@@ -639,6 +650,17 @@ void dss_select_hdmi_venc_clk_source(enum dss_hdmi_venc_clk_source_select hdmi)
 	REG_FLD_MOD(DSS_CONTROL, hdmi, 15, 15);	/* VENC_HDMI_SWITCH */
 }
 
+enum dss_hdmi_venc_clk_source_select dss_get_hdmi_venc_clk_source(void)
+{
+	enum omap_display_type displays;
+
+	displays = dss_feat_get_supported_displays(OMAP_DSS_CHANNEL_DIGIT);
+	if ((displays & OMAP_DISPLAY_TYPE_HDMI) == 0)
+		return DSS_VENC_TV_CLK;
+
+	return REG_GET(DSS_CONTROL, 15, 15);
+}
+
 static int dss_get_clocks(void)
 {
 	struct clk *clk;
@@ -691,12 +713,7 @@ static void dss_put_clocks(void)
 	clk_put(dss.dss_clk);
 }
 
-struct clk *dss_get_ick(void)
-{
-	return clk_get(&dss.pdev->dev, "ick");
-}
-
-int dss_runtime_get(void)
+static int dss_runtime_get(void)
 {
 	int r;
 
@@ -707,14 +724,14 @@ int dss_runtime_get(void)
 	return r < 0 ? r : 0;
 }
 
-void dss_runtime_put(void)
+static void dss_runtime_put(void)
 {
 	int r;
 
 	DSSDBG("dss_runtime_put\n");
 
-	r = pm_runtime_put(&dss.pdev->dev);
-	WARN_ON(r < 0);
+	r = pm_runtime_put_sync(&dss.pdev->dev);
+	WARN_ON(r < 0 && r != -EBUSY);
 }
 
 /* DEBUGFS */
@@ -730,7 +747,7 @@ void dss_debug_dump_clocks(struct seq_file *s)
 #endif
 
 /* DSS HW IP initialisation */
-static int omap_dsshw_probe(struct platform_device *pdev)
+static int __init omap_dsshw_probe(struct platform_device *pdev)
 {
 	struct resource *dss_mem;
 	u32 rev;
@@ -741,19 +758,19 @@ static int omap_dsshw_probe(struct platform_device *pdev)
 	dss_mem = platform_get_resource(dss.pdev, IORESOURCE_MEM, 0);
 	if (!dss_mem) {
 		DSSERR("can't get IORESOURCE_MEM DSS\n");
-		r = -EINVAL;
-		goto err_ioremap;
+		return -EINVAL;
 	}
-	dss.base = ioremap(dss_mem->start, resource_size(dss_mem));
+
+	dss.base = devm_ioremap(&pdev->dev, dss_mem->start,
+				resource_size(dss_mem));
 	if (!dss.base) {
 		DSSERR("can't ioremap DSS\n");
-		r = -ENOMEM;
-		goto err_ioremap;
+		return -ENOMEM;
 	}
 
 	r = dss_get_clocks();
 	if (r)
-		goto err_clocks;
+		return r;
 
 	pm_runtime_enable(&pdev->dev);
 
@@ -775,45 +792,24 @@ static int omap_dsshw_probe(struct platform_device *pdev)
 	dss.lcd_clk_source[0] = OMAP_DSS_CLK_SRC_FCK;
 	dss.lcd_clk_source[1] = OMAP_DSS_CLK_SRC_FCK;
 
-	r = dpi_init();
-	if (r) {
-		DSSERR("Failed to initialize DPI\n");
-		goto err_dpi;
-	}
-
-	r = sdi_init();
-	if (r) {
-		DSSERR("Failed to initialize SDI\n");
-		goto err_sdi;
-	}
-
 	rev = dss_read_reg(DSS_REVISION);
 	printk(KERN_INFO "OMAP DSS rev %d.%d\n",
 			FLD_GET(rev, 7, 4), FLD_GET(rev, 3, 0));
 
 	dss_runtime_put();
 
+	dss_debugfs_create_file("dss", dss_dump_regs);
+
 	return 0;
-err_sdi:
-	dpi_exit();
-err_dpi:
-	dss_runtime_put();
+
 err_runtime_get:
 	pm_runtime_disable(&pdev->dev);
 	dss_put_clocks();
-err_clocks:
-	iounmap(dss.base);
-err_ioremap:
 	return r;
 }
 
-static int omap_dsshw_remove(struct platform_device *pdev)
+static int __exit omap_dsshw_remove(struct platform_device *pdev)
 {
-	dpi_exit();
-	sdi_exit();
-
-	iounmap(dss.base);
-
 	pm_runtime_disable(&pdev->dev);
 
 	dss_put_clocks();
@@ -824,13 +820,24 @@ static int omap_dsshw_remove(struct platform_device *pdev)
 static int dss_runtime_suspend(struct device *dev)
 {
 	dss_save_context();
-	clk_disable(dss.dss_clk);
+	dss_set_min_bus_tput(dev, 0);
 	return 0;
 }
 
 static int dss_runtime_resume(struct device *dev)
 {
-	clk_enable(dss.dss_clk);
+	int r;
+	/*
+	 * Set an arbitrarily high tput request to ensure OPP100.
+	 * What we should really do is to make a request to stay in OPP100,
+	 * without any tput requirements, but that is not currently possible
+	 * via the PM layer.
+	 */
+
+	r = dss_set_min_bus_tput(dev, 1000000000);
+	if (r)
+		return r;
+
 	dss_restore_context();
 	return 0;
 }
@@ -841,8 +848,7 @@ static const struct dev_pm_ops dss_pm_ops = {
 };
 
 static struct platform_driver omap_dsshw_driver = {
-	.probe          = omap_dsshw_probe,
-	.remove         = omap_dsshw_remove,
+	.remove         = __exit_p(omap_dsshw_remove),
 	.driver         = {
 		.name   = "omapdss_dss",
 		.owner  = THIS_MODULE,
@@ -850,12 +856,12 @@ static struct platform_driver omap_dsshw_driver = {
 	},
 };
 
-int dss_init_platform_driver(void)
+int __init dss_init_platform_driver(void)
 {
-	return platform_driver_register(&omap_dsshw_driver);
+	return platform_driver_probe(&omap_dsshw_driver, omap_dsshw_probe);
 }
 
 void dss_uninit_platform_driver(void)
 {
-	return platform_driver_unregister(&omap_dsshw_driver);
+	platform_driver_unregister(&omap_dsshw_driver);
 }

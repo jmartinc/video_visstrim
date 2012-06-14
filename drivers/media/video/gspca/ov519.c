@@ -2804,7 +2804,7 @@ static void ov7xx0_configure(struct sd *sd)
 	/* add OV7670 here
 	 * it appears to be wrongly detected as a 7610 by default */
 	if (rc < 0) {
-		PDEBUG(D_ERR, "Error detecting sensor type");
+		pr_err("Error detecting sensor type\n");
 		return;
 	}
 	if ((rc & 3) == 3) {
@@ -2832,12 +2832,12 @@ static void ov7xx0_configure(struct sd *sd)
 		/* try to read product id registers */
 		high = i2c_r(sd, 0x0a);
 		if (high < 0) {
-			PDEBUG(D_ERR, "Error detecting camera chip PID");
+			pr_err("Error detecting camera chip PID\n");
 			return;
 		}
 		low = i2c_r(sd, 0x0b);
 		if (low < 0) {
-			PDEBUG(D_ERR, "Error detecting camera chip VER");
+			pr_err("Error detecting camera chip VER\n");
 			return;
 		}
 		if (high == 0x76) {
@@ -2863,7 +2863,7 @@ static void ov7xx0_configure(struct sd *sd)
 				sd->sensor = SEN_OV7660;
 				break;
 			default:
-				PDEBUG(D_PROBE, "Unknown sensor: 0x76%x", low);
+				pr_err("Unknown sensor: 0x76%02x\n", low);
 				return;
 			}
 		} else {
@@ -2884,7 +2884,7 @@ static void ov6xx0_configure(struct sd *sd)
 	/* Detect sensor (sub)type */
 	rc = i2c_r(sd, OV7610_REG_COM_I);
 	if (rc < 0) {
-		PDEBUG(D_ERR, "Error detecting sensor type");
+		pr_err("Error detecting sensor type\n");
 		return;
 	}
 
@@ -3348,7 +3348,6 @@ static int sd_config(struct gspca_dev *gspca_dev,
 	case BRIDGE_W9968CF:
 		cam->cam_mode = w9968cf_vga_mode;
 		cam->nmodes = ARRAY_SIZE(w9968cf_vga_mode);
-		cam->reverse_alts = 1;
 		break;
 	}
 
@@ -3684,8 +3683,8 @@ static void ov511_mode_init_regs(struct sd *sd)
 	/* Check if we have enough bandwidth to disable compression */
 	fps = (interlaced ? 60 : 30) / (sd->clockdiv + 1) + 1;
 	needed = fps * sd->gspca_dev.width * sd->gspca_dev.height * 3 / 2;
-	/* 1400 is a conservative estimate of the max nr of isoc packets/sec */
-	if (needed > 1400 * packet_size) {
+	/* 1000 isoc packets/sec */
+	if (needed > 1000 * packet_size) {
 		/* Enable Y and UV quantization and compression */
 		reg_w(sd, R511_COMP_EN, 0x07);
 		reg_w(sd, R511_COMP_LUT_EN, 0x03);
@@ -5056,18 +5055,7 @@ static struct usb_driver sd_driver = {
 #endif
 };
 
-/* -- module insert / remove -- */
-static int __init sd_mod_init(void)
-{
-	return usb_register(&sd_driver);
-}
-static void __exit sd_mod_exit(void)
-{
-	usb_deregister(&sd_driver);
-}
-
-module_init(sd_mod_init);
-module_exit(sd_mod_exit);
+module_usb_driver(sd_driver);
 
 module_param(frame_rate, int, 0644);
 MODULE_PARM_DESC(frame_rate, "Frame rate (5, 10, 15, 20 or 30 fps)");

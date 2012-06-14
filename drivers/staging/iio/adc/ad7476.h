@@ -27,7 +27,6 @@ struct ad7476_state {
 	struct spi_device		*spi;
 	const struct ad7476_chip_info	*chip_info;
 	struct regulator		*reg;
-	size_t				d_size;
 	u16				int_vref_mv;
 	struct spi_transfer		xfer;
 	struct spi_message		msg;
@@ -49,15 +48,10 @@ enum ad7476_supported_device_ids {
 	ID_AD7495
 };
 
-#ifdef CONFIG_IIO_RING_BUFFER
-int ad7476_scan_from_ring(struct iio_dev *indio_dev);
+#ifdef CONFIG_IIO_BUFFER
 int ad7476_register_ring_funcs_and_init(struct iio_dev *indio_dev);
 void ad7476_ring_cleanup(struct iio_dev *indio_dev);
-#else /* CONFIG_IIO_RING_BUFFER */
-static inline int ad7476_scan_from_ring(struct iio_dev *indio_dev)
-{
-	return 0;
-}
+#else /* CONFIG_IIO_BUFFER */
 
 static inline int
 ad7476_register_ring_funcs_and_init(struct iio_dev *indio_dev)
@@ -68,5 +62,5 @@ ad7476_register_ring_funcs_and_init(struct iio_dev *indio_dev)
 static inline void ad7476_ring_cleanup(struct iio_dev *indio_dev)
 {
 }
-#endif /* CONFIG_IIO_RING_BUFFER */
+#endif /* CONFIG_IIO_BUFFER */
 #endif /* IIO_ADC_AD7476_H_ */

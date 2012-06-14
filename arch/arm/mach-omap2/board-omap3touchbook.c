@@ -42,9 +42,10 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/flash.h>
+#include <asm/system_info.h>
 
 #include <plat/board.h>
-#include <plat/common.h>
+#include "common.h"
 #include <plat/gpmc.h>
 #include <plat/nand.h>
 #include <plat/usb.h>
@@ -100,17 +101,9 @@ static struct omap2_hsmmc_info mmc[] = {
 		.mmc		= 1,
 		.caps		= MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA,
 		.gpio_wp	= 29,
+		.deferred	= true,
 	},
 	{}	/* Terminator */
-};
-
-static struct platform_device omap3_touchbook_lcd_device = {
-	.name		= "omap3touchbook_lcd",
-	.id		= -1,
-};
-
-static struct omap_lcd_config omap3_touchbook_lcd_config __initdata = {
-	.ctrl_name	= "internal",
 };
 
 static struct regulator_consumer_supply touchbook_vmmc1_supply[] = {
@@ -126,15 +119,9 @@ static struct gpio_led gpio_leds[];
 static int touchbook_twl_gpio_setup(struct device *dev,
 		unsigned gpio, unsigned ngpio)
 {
-	if (system_rev >= 0x20 && system_rev <= 0x34301000) {
-		omap_mux_init_gpio(23, OMAP_PIN_INPUT);
-		mmc[0].gpio_wp = 23;
-	} else {
-		omap_mux_init_gpio(29, OMAP_PIN_INPUT);
-	}
 	/* gpio + 0 is "mmc0_cd" (input/IRQ) */
 	mmc[0].gpio_cd = gpio + 0;
-	omap2_hsmmc_init(mmc);
+	omap_hsmmc_late_init(mmc);
 
 	/* REVISIT: need ehci-omap hooks for external VBUS
 	 * power switch and overcurrent detect
@@ -165,14 +152,12 @@ static struct twl4030_gpio_platform_data touchbook_gpio_data = {
 static struct regulator_consumer_supply touchbook_vdac_supply[] = {
 {
 	.supply		= "vdac",
-	.dev		= &omap3_touchbook_lcd_device.dev,
 },
 };
 
 static struct regulator_consumer_supply touchbook_vdvi_supply[] = {
 {
 	.supply		= "vdvi",
-	.dev		= &omap3_touchbook_lcd_device.dev,
 },
 };
 
@@ -316,30 +301,13 @@ static struct platform_device keys_gpio = {
 	},
 };
 
-static struct omap_board_config_kernel omap3_touchbook_config[] __initdata = {
-	{ OMAP_TAG_LCD,		&omap3_touchbook_lcd_config },
-};
-
 #ifdef CONFIG_OMAP_MUX
 static struct omap_board_mux board_mux[] __initdata = {
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
 #endif
 
-static void __init omap3_touchbook_init_early(void)
-{
-	omap2_init_common_infrastructure();
-	omap2_init_common_devices(mt46h32m32lf6_sdrc_params,
-				  mt46h32m32lf6_sdrc_params);
-}
-
-static void __init omap3_touchbook_init_irq(void)
-{
-	omap3_init_irq();
-}
-
 static struct platform_device *omap3_touchbook_devices[] __initdata = {
-	&omap3_touchbook_lcd_device,
 	&leds_gpio,
 	&keys_gpio,
 };
@@ -376,15 +344,23 @@ early_param("tbr", early_touchbook_revision);
 static void __init omap3_touchbook_init(void)
 {
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
-	omap_board_config = omap3_touchbook_config;
-	omap_board_config_size = ARRAY_SIZE(omap3_touchbook_config);
 
 	pm_power_off = omap3_touchbook_poweroff;
+
+	if (system_rev >= 0x20 && system_rev <= 0x34301000) {
+		omap_mux_init_gpio(23, OMAP_PIN_INPUT);
+		mmc[0].gpio_wp = 23;
+	} else {
+		omap_mux_init_gpio(29, OMAP_PIN_INPUT);
+	}
+	omap_hsmmc_init(mmc);
 
 	omap3_touchbook_i2c_init();
 	platform_add_devices(omap3_touchbook_devices,
 			ARRAY_SIZE(omap3_touchbook_devices));
 	omap_serial_init();
+	omap_sdrc_init(mt46h32m32lf6_sdrc_params,
+				  mt46h32m32lf6_sdrc_params);
 
 	omap_mux_init_gpio(170, OMAP_PIN_INPUT);
 	/* REVISIT leave DVI powered down until it's needed ... */
@@ -404,11 +380,14 @@ static void __init omap3_touchbook_init(void)
 
 MACHINE_START(TOUCHBOOK, "OMAP3 touchbook Board")
 	/* Maintainer: Gregoire Gentil - http://www.alwaysinnovating.com */
-	.boot_params	= 0x80000100,
+	.atag_offset	= 0x100,
 	.reserve	= omap_reserve,
 	.map_io		= omap3_map_io,
-	.init_early	= omap3_touchbook_init_early,
-	.init_irq	= omap3_touchbook_init_irq,
+	.init_early	= omap3430_init_early,
+	.init_irq	= omap3_init_irq,
+	.handle_irq	= omap3_intc_handle_irq,
 	.init_machine	= omap3_touchbook_init,
+	.init_late	= omap3430_init_late,
 	.timer		= &omap3_secure_timer,
+	.restart	= omap_prcm_restart,
 MACHINE_END

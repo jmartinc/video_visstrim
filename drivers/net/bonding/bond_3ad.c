@@ -660,7 +660,7 @@ static void __attach_bond_to_agg(struct port *port)
 static void __detach_bond_from_agg(struct port *port)
 {
 	port = NULL; /* just to satisfy the compiler */
-	// This function does nothing sience the parser/multiplexer of the receive
+	// This function does nothing since the parser/multiplexer of the receive
 	// and the parser/multiplexer of the aggregator are already combined
 }
 
@@ -1135,13 +1135,6 @@ static void ad_rx_machine(struct lacpdu *lacpdu, struct port *port)
 			__record_pdu(lacpdu, port);
 			port->sm_rx_timer_counter = __ad_timer_to_ticks(AD_CURRENT_WHILE_TIMER, (u16)(port->actor_oper_port_state & AD_STATE_LACP_TIMEOUT));
 			port->actor_oper_port_state &= ~AD_STATE_EXPIRED;
-			// verify that if the aggregator is enabled, the port is enabled too.
-			//(because if the link goes down for a short time, the 802.3ad will not
-			// catch it, and the port will continue to be disabled)
-			if (port->aggregator
-			    && port->aggregator->is_active
-			    && !__port_is_enabled(port))
-				__enable_port(port);
 			break;
 		default:    //to silence the compiler
 			break;
@@ -2117,9 +2110,6 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
 
 	read_lock(&bond->lock);
 
-	if (bond->kill_timers)
-		goto out;
-
 	//check if there are any slaves
 	if (bond->slave_cnt == 0)
 		goto re_arm;
@@ -2168,9 +2158,8 @@ void bond_3ad_state_machine_handler(struct work_struct *work)
 	}
 
 re_arm:
-	if (!bond->kill_timers)
-		queue_delayed_work(bond->wq, &bond->ad_work, ad_delta_in_ticks);
-out:
+	queue_delayed_work(bond->wq, &bond->ad_work, ad_delta_in_ticks);
+
 	read_unlock(&bond->lock);
 }
 
@@ -2184,9 +2173,10 @@ out:
  * received frames (loopback). Since only the payload is given to this
  * function, it check for loopback.
  */
-static void bond_3ad_rx_indication(struct lacpdu *lacpdu, struct slave *slave, u16 length)
+static int bond_3ad_rx_indication(struct lacpdu *lacpdu, struct slave *slave, u16 length)
 {
 	struct port *port;
+	int ret = RX_HANDLER_ANOTHER;
 
 	if (length >= sizeof(struct lacpdu)) {
 
@@ -2195,11 +2185,12 @@ static void bond_3ad_rx_indication(struct lacpdu *lacpdu, struct slave *slave, u
 		if (!port->slave) {
 			pr_warning("%s: Warning: port of slave %s is uninitialized\n",
 				   slave->dev->name, slave->dev->master->name);
-			return;
+			return ret;
 		}
 
 		switch (lacpdu->subtype) {
 		case AD_TYPE_LACPDU:
+			ret = RX_HANDLER_CONSUMED;
 			pr_debug("Received LACPDU on port %d\n",
 				 port->actor_port_number);
 			/* Protect against concurrent state machines */
@@ -2209,6 +2200,7 @@ static void bond_3ad_rx_indication(struct lacpdu *lacpdu, struct slave *slave, u
 			break;
 
 		case AD_TYPE_MARKER:
+			ret = RX_HANDLER_CONSUMED;
 			// No need to convert fields to Little Endian since we don't use the marker's fields.
 
 			switch (((struct bond_marker *)lacpdu)->tlv_type) {
@@ -2230,6 +2222,7 @@ static void bond_3ad_rx_indication(struct lacpdu *lacpdu, struct slave *slave, u
 			}
 		}
 	}
+	return ret;
 }
 
 /**
@@ -2467,18 +2460,20 @@ out:
 	return NETDEV_TX_OK;
 }
 
-void bond_3ad_lacpdu_recv(struct sk_buff *skb, struct bonding *bond,
+int bond_3ad_lacpdu_recv(struct sk_buff *skb, struct bonding *bond,
 			  struct slave *slave)
 {
+	int ret = RX_HANDLER_ANOTHER;
 	if (skb->protocol != PKT_TYPE_LACPDU)
-		return;
+		return ret;
 
 	if (!pskb_may_pull(skb, sizeof(struct lacpdu)))
-		return;
+		return ret;
 
 	read_lock(&bond->lock);
-	bond_3ad_rx_indication((struct lacpdu *) skb->data, slave, skb->len);
+	ret = bond_3ad_rx_indication((struct lacpdu *) skb->data, slave, skb->len);
 	read_unlock(&bond->lock);
+	return ret;
 }
 
 /*

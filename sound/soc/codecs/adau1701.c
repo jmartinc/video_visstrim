@@ -12,13 +12,13 @@
 #include <linux/init.h>
 #include <linux/i2c.h>
 #include <linux/delay.h>
-#include <linux/sigma.h>
 #include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 
+#include "sigmadsp.h"
 #include "adau1701.h"
 
 #define ADAU1701_DSPCTRL	0x1c
@@ -258,8 +258,7 @@ static int adau1701_set_playback_pcm_format(struct snd_soc_codec *codec,
 static int adau1701_hw_params(struct snd_pcm_substream *substream,
 		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	snd_pcm_format_t format;
 	unsigned int val;
 
@@ -401,7 +400,7 @@ static int adau1701_digital_mute(struct snd_soc_dai *dai, int mute)
 }
 
 static int adau1701_set_sysclk(struct snd_soc_codec *codec, int clk_id,
-	unsigned int freq, int dir)
+	int source, unsigned int freq, int dir)
 {
 	unsigned int val;
 
@@ -457,7 +456,7 @@ static int adau1701_probe(struct snd_soc_codec *codec)
 {
 	int ret;
 
-	codec->dapm.idle_bias_off = 1;
+	codec->control_data = to_i2c_client(codec->dev);
 
 	ret = adau1701_load_firmware(codec);
 	if (ret)
@@ -472,6 +471,7 @@ static int adau1701_probe(struct snd_soc_codec *codec)
 static struct snd_soc_codec_driver adau1701_codec_drv = {
 	.probe			= adau1701_probe,
 	.set_bias_level		= adau1701_set_bias_level,
+	.idle_bias_off		= true,
 
 	.reg_cache_size		= ADAU1701_NUM_REGS,
 	.reg_word_size		= sizeof(u16),
@@ -495,23 +495,19 @@ static __devinit int adau1701_i2c_probe(struct i2c_client *client,
 	struct adau1701 *adau1701;
 	int ret;
 
-	adau1701 = kzalloc(sizeof(*adau1701), GFP_KERNEL);
+	adau1701 = devm_kzalloc(&client->dev, sizeof(*adau1701), GFP_KERNEL);
 	if (!adau1701)
 		return -ENOMEM;
 
 	i2c_set_clientdata(client, adau1701);
 	ret = snd_soc_register_codec(&client->dev, &adau1701_codec_drv,
 			&adau1701_dai, 1);
-	if (ret < 0)
-		kfree(adau1701);
-
 	return ret;
 }
 
 static __devexit int adau1701_i2c_remove(struct i2c_client *client)
 {
 	snd_soc_unregister_codec(&client->dev);
-	kfree(i2c_get_clientdata(client));
 	return 0;
 }
 

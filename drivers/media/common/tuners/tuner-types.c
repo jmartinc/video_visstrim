@@ -5,6 +5,7 @@
  */
 
 #include <linux/i2c.h>
+#include <linux/module.h>
 #include <media/tuner.h>
 #include <media/tuner-types.h>
 
@@ -1866,6 +1867,10 @@ struct tunertype tuners[] = {
 		.name   = "Tena TNF5337 MFD",
 		.params = tuner_tena_tnf_5337_params,
 		.count  = ARRAY_SIZE(tuner_tena_tnf_5337_params),
+	},
+	[TUNER_XC5000C] = { /* Xceive 5000C */
+		.name   = "Xceive 5000C tuner",
+		/* see xc5000.c for details */
 	},
 };
 EXPORT_SYMBOL(tuners);

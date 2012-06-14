@@ -24,20 +24,8 @@
  *	Theodore Ts'o, 2002
  */
 
-#include <linux/fs.h>
-#include <linux/pagemap.h>
-#include <linux/jbd.h>
-#include <linux/time.h>
-#include <linux/ext3_fs.h>
-#include <linux/ext3_jbd.h>
-#include <linux/fcntl.h>
-#include <linux/stat.h>
-#include <linux/string.h>
 #include <linux/quotaops.h>
-#include <linux/buffer_head.h>
-#include <linux/bio.h>
-#include <trace/events/ext3.h>
-
+#include "ext3.h"
 #include "namei.h"
 #include "xattr.h"
 #include "acl.h"
@@ -921,9 +909,12 @@ restart:
 				num++;
 				bh = ext3_getblk(NULL, dir, b++, 0, &err);
 				bh_use[ra_max] = bh;
-				if (bh)
-					ll_rw_block(READ | REQ_META | REQ_PRIO,
-						    1, &bh);
+				if (bh && !bh_uptodate_or_lock(bh)) {
+					get_bh(bh);
+					bh->b_end_io = end_buffer_read_sync;
+					submit_bh(READ | REQ_META | REQ_PRIO,
+						  bh);
+				}
 			}
 		}
 		if ((bh = bh_use[ra_ptr++]) == NULL)
@@ -1054,7 +1045,7 @@ static struct dentry *ext3_lookup(struct inode * dir, struct dentry *dentry, str
 struct dentry *ext3_get_parent(struct dentry *child)
 {
 	unsigned long ino;
-	struct qstr dotdot = {.name = "..", .len = 2};
+	struct qstr dotdot = QSTR_INIT("..", 2);
 	struct ext3_dir_entry_2 * de;
 	struct buffer_head *bh;
 
@@ -1698,7 +1689,7 @@ static int ext3_add_nondir(handle_t *handle,
  * If the create succeeds, we fill in the inode information
  * with d_instantiate().
  */
-static int ext3_create (struct inode * dir, struct dentry * dentry, int mode,
+static int ext3_create (struct inode * dir, struct dentry * dentry, umode_t mode,
 		struct nameidata *nd)
 {
 	handle_t *handle;
@@ -1732,7 +1723,7 @@ retry:
 }
 
 static int ext3_mknod (struct inode * dir, struct dentry *dentry,
-			int mode, dev_t rdev)
+			umode_t mode, dev_t rdev)
 {
 	handle_t *handle;
 	struct inode *inode;
@@ -1768,7 +1759,7 @@ retry:
 	return err;
 }
 
-static int ext3_mkdir(struct inode * dir, struct dentry * dentry, int mode)
+static int ext3_mkdir(struct inode * dir, struct dentry * dentry, umode_t mode)
 {
 	handle_t *handle;
 	struct inode * inode;
@@ -1821,7 +1812,7 @@ retry:
 	de->name_len = 2;
 	strcpy (de->name, "..");
 	ext3_set_de_type(dir->i_sb, de, S_IFDIR);
-	inode->i_nlink = 2;
+	set_nlink(inode, 2);
 	BUFFER_TRACE(dir_block, "call ext3_journal_dirty_metadata");
 	err = ext3_journal_dirty_metadata(handle, dir_block);
 	if (err)
@@ -1833,7 +1824,7 @@ retry:
 
 	if (err) {
 out_clear_inode:
-		inode->i_nlink = 0;
+		clear_nlink(inode);
 		unlock_new_inode(inode);
 		ext3_mark_inode_dirty(handle, inode);
 		iput (inode);
@@ -2170,7 +2161,7 @@ static int ext3_unlink(struct inode * dir, struct dentry *dentry)
 		ext3_warning (inode->i_sb, "ext3_unlink",
 			      "Deleting nonexistent file (%lu), %d",
 			      inode->i_ino, inode->i_nlink);
-		inode->i_nlink = 1;
+		set_nlink(inode, 1);
 	}
 	retval = ext3_delete_entry(handle, dir, de, bh);
 	if (retval)
@@ -2272,7 +2263,7 @@ retry:
 			err = PTR_ERR(handle);
 			goto err_drop_inode;
 		}
-		inc_nlink(inode);
+		set_nlink(inode, 1);
 		err = ext3_orphan_del(handle, inode);
 		if (err) {
 			ext3_journal_stop(handle);

@@ -90,7 +90,7 @@ void mxr_reg_reset(struct mxr_device *mdev)
 	mxr_vsync_set_update(mdev, MXR_DISABLE);
 
 	/* set output in RGB888 mode */
-	mxr_write(mdev, MXR_CFG, MXR_CFG_OUT_YUV444);
+	mxr_write(mdev, MXR_CFG, MXR_CFG_OUT_RGB888);
 
 	/* 16 beat burst in DMA */
 	mxr_write_mask(mdev, MXR_STATUS, MXR_STATUS_16_BURST,
@@ -296,20 +296,24 @@ irqreturn_t mxr_irq_handler(int irq, void *dev_data)
 	/* wake up process waiting for VSYNC */
 	if (val & MXR_INT_STATUS_VSYNC) {
 		set_bit(MXR_EVENT_VSYNC, &mdev->event_flags);
+		/* toggle TOP field event if working in interlaced mode */
+		if (~mxr_read(mdev, MXR_CFG) & MXR_CFG_SCAN_PROGRASSIVE)
+			change_bit(MXR_EVENT_TOP, &mdev->event_flags);
 		wake_up(&mdev->event_queue);
+		/* vsync interrupt use different bit for read and clear */
+		val &= ~MXR_INT_STATUS_VSYNC;
+		val |= MXR_INT_CLEAR_VSYNC;
 	}
 
 	/* clear interrupts */
-	if (~val & MXR_INT_EN_VSYNC) {
-		/* vsync interrupt use different bit for read and clear */
-		val &= ~MXR_INT_EN_VSYNC;
-		val |= MXR_INT_CLEAR_VSYNC;
-	}
 	mxr_write(mdev, MXR_INT_STATUS, val);
 
 	spin_unlock(&mdev->reg_slock);
 	/* leave on non-vsync event */
 	if (~val & MXR_INT_CLEAR_VSYNC)
+		return IRQ_HANDLED;
+	/* skip layer update on bottom field */
+	if (!test_bit(MXR_EVENT_TOP, &mdev->event_flags))
 		return IRQ_HANDLED;
 	for (i = 0; i < MXR_MAX_LAYERS; ++i)
 		mxr_irq_layer_handle(mdev->layer[i]);
@@ -333,6 +337,7 @@ void mxr_reg_streamon(struct mxr_device *mdev)
 
 	/* start MIXER */
 	mxr_write_mask(mdev, MXR_STATUS, ~0, MXR_STATUS_REG_RUN);
+	set_bit(MXR_EVENT_TOP, &mdev->event_flags);
 
 	spin_unlock_irqrestore(&mdev->reg_slock, flags);
 }
@@ -376,6 +381,12 @@ void mxr_reg_set_mbus_fmt(struct mxr_device *mdev,
 	spin_lock_irqsave(&mdev->reg_slock, flags);
 	mxr_vsync_set_update(mdev, MXR_DISABLE);
 
+	/* selecting colorspace accepted by output */
+	if (fmt->colorspace == V4L2_COLORSPACE_JPEG)
+		val |= MXR_CFG_OUT_YUV444;
+	else
+		val |= MXR_CFG_OUT_RGB888;
+
 	/* choosing between interlace and progressive mode */
 	if (fmt->field == V4L2_FIELD_INTERLACED)
 		val |= MXR_CFG_SCAN_INTERLACE;
@@ -394,7 +405,8 @@ void mxr_reg_set_mbus_fmt(struct mxr_device *mdev,
 	else
 		WARN(1, "unrecognized mbus height %u!\n", fmt->height);
 
-	mxr_write_mask(mdev, MXR_CFG, val, MXR_CFG_SCAN_MASK);
+	mxr_write_mask(mdev, MXR_CFG, val, MXR_CFG_SCAN_MASK |
+		MXR_CFG_OUT_MASK);
 
 	val = (fmt->field == V4L2_FIELD_INTERLACED) ? ~0 : 0;
 	vp_write_mask(mdev, VP_MODE, val,

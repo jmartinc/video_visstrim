@@ -1,7 +1,6 @@
 /*********************************************************************
  *
  * Description:   Driver for the SMC Infrared Communications Controller
- * Status:        Experimental.
  * Author:        Daniele Peri (peri@csai.unipa.it)
  * Created at:
  * Modified at:
@@ -79,7 +78,7 @@ MODULE_AUTHOR("Daniele Peri <peri@csai.unipa.it>");
 MODULE_DESCRIPTION("SMC IrCC SIR/FIR controller driver");
 MODULE_LICENSE("GPL");
 
-static int smsc_nopnp = 1;
+static bool smsc_nopnp = true;
 module_param_named(nopnp, smsc_nopnp, bool, 0);
 MODULE_PARM_DESC(nopnp, "Do not use PNP to detect controller settings, defaults to true");
 

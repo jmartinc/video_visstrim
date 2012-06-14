@@ -42,10 +42,10 @@
 #include <asm/reset.h>
 #include <asm/airq.h>
 #include <linux/atomic.h>
-#include <asm/system.h>
 #include <asm/isc.h>
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
+#include <asm/facility.h>
 
 #include "ap_bus.h"
 
@@ -215,7 +215,7 @@ ap_queue_interruption_control(ap_qid_t qid, void *ind)
 	register struct ap_queue_status reg1_out asm ("1");
 	register void *reg2 asm ("2") = ind;
 	asm volatile(
-		".long 0xb2af0000"		/* PQAP(RAPQ) */
+		".long 0xb2af0000"		/* PQAP(AQIC) */
 		: "+d" (reg0), "+d" (reg1_in), "=d" (reg1_out), "+d" (reg2)
 		:
 		: "cc" );
@@ -232,7 +232,7 @@ __ap_query_functions(ap_qid_t qid, unsigned int *functions)
 	register unsigned long reg2 asm ("2");
 
 	asm volatile(
-		".long 0xb2af0000\n"
+		".long 0xb2af0000\n"		/* PQAP(TAPQ) */
 		"0:\n"
 		EX_TABLE(0b, 0b)
 		: "+d" (reg0), "+d" (reg1), "=d" (reg2)
@@ -391,7 +391,7 @@ __ap_send(ap_qid_t qid, unsigned long long psmid, void *msg, size_t length,
 		reg0 |= 0x400000UL;
 
 	asm volatile (
-		"0: .long 0xb2ad0042\n"		/* DQAP */
+		"0: .long 0xb2ad0042\n"		/* NQAP */
 		"   brc   2,0b"
 		: "+d" (reg0), "=d" (reg1), "+d" (reg2), "+d" (reg3)
 		: "d" (reg4), "d" (reg5), "m" (*(msgblock *) msg)
@@ -450,7 +450,7 @@ __ap_recv(ap_qid_t qid, unsigned long long *psmid, void *msg, size_t length)
 
 
 	asm volatile(
-		"0: .long 0xb2ae0064\n"
+		"0: .long 0xb2ae0064\n"		/* DQAP */
 		"   brc   6,0b\n"
 		: "+d" (reg0), "=d" (reg1), "+d" (reg2),
 		"+d" (reg4), "+d" (reg5), "+d" (reg6), "+d" (reg7),
@@ -836,12 +836,12 @@ static void __ap_flush_queue(struct ap_device *ap_dev)
 	list_for_each_entry_safe(ap_msg, next, &ap_dev->pendingq, list) {
 		list_del_init(&ap_msg->list);
 		ap_dev->pendingq_count--;
-		ap_dev->drv->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
+		ap_msg->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
 	}
 	list_for_each_entry_safe(ap_msg, next, &ap_dev->requestq, list) {
 		list_del_init(&ap_msg->list);
 		ap_dev->requestq_count--;
-		ap_dev->drv->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
+		ap_msg->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
 	}
 }
 
@@ -1271,18 +1271,16 @@ ap_config_timeout(unsigned long ptr)
 }
 
 /**
- * ap_schedule_poll_timer(): Schedule poll timer.
+ * __ap_schedule_poll_timer(): Schedule poll timer.
  *
  * Set up the timer to run the poll tasklet
  */
-static inline void ap_schedule_poll_timer(void)
+static inline void __ap_schedule_poll_timer(void)
 {
 	ktime_t hr_time;
 
 	spin_lock_bh(&ap_poll_timer_lock);
-	if (ap_using_interrupts() || ap_suspend_flag)
-		goto out;
-	if (hrtimer_is_queued(&ap_poll_timer))
+	if (hrtimer_is_queued(&ap_poll_timer) || ap_suspend_flag)
 		goto out;
 	if (ktime_to_ns(hrtimer_expires_remaining(&ap_poll_timer)) <= 0) {
 		hr_time = ktime_set(0, poll_timeout);
@@ -1291,6 +1289,18 @@ static inline void ap_schedule_poll_timer(void)
 	}
 out:
 	spin_unlock_bh(&ap_poll_timer_lock);
+}
+
+/**
+ * ap_schedule_poll_timer(): Schedule poll timer.
+ *
+ * Set up the timer to run the poll tasklet
+ */
+static inline void ap_schedule_poll_timer(void)
+{
+	if (ap_using_interrupts())
+		return;
+	__ap_schedule_poll_timer();
 }
 
 /**
@@ -1319,7 +1329,7 @@ static int ap_poll_read(struct ap_device *ap_dev, unsigned long *flags)
 				continue;
 			list_del_init(&ap_msg->list);
 			ap_dev->pendingq_count--;
-			ap_dev->drv->receive(ap_dev, ap_msg, ap_dev->reply);
+			ap_msg->receive(ap_dev, ap_msg, ap_dev->reply);
 			break;
 		}
 		if (ap_dev->queue_count > 0)
@@ -1374,8 +1384,9 @@ static int ap_poll_write(struct ap_device *ap_dev, unsigned long *flags)
 			*flags |= 1;
 		*flags |= 2;
 		break;
-	case AP_RESPONSE_Q_FULL:
 	case AP_RESPONSE_RESET_IN_PROGRESS:
+		__ap_schedule_poll_timer();
+	case AP_RESPONSE_Q_FULL:
 		*flags |= 2;
 		break;
 	case AP_RESPONSE_MESSAGE_TOO_BIG:
@@ -1439,10 +1450,10 @@ static int __ap_queue_message(struct ap_device *ap_dev, struct ap_message *ap_ms
 			return -EBUSY;
 		case AP_RESPONSE_REQ_FAC_NOT_INST:
 		case AP_RESPONSE_MESSAGE_TOO_BIG:
-			ap_dev->drv->receive(ap_dev, ap_msg, ERR_PTR(-EINVAL));
+			ap_msg->receive(ap_dev, ap_msg, ERR_PTR(-EINVAL));
 			return -EINVAL;
 		default:	/* Device is gone. */
-			ap_dev->drv->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
+			ap_msg->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
 			return -ENODEV;
 		}
 	} else {
@@ -1460,6 +1471,10 @@ void ap_queue_message(struct ap_device *ap_dev, struct ap_message *ap_msg)
 	unsigned long flags;
 	int rc;
 
+	/* For asynchronous message handling a valid receive-callback
+	 * is required. */
+	BUG_ON(!ap_msg->receive);
+
 	spin_lock_bh(&ap_dev->lock);
 	if (!ap_dev->unregistered) {
 		/* Make room on the queue by polling for finished requests. */
@@ -1471,7 +1486,7 @@ void ap_queue_message(struct ap_device *ap_dev, struct ap_message *ap_msg)
 		if (rc == -ENODEV)
 			ap_dev->unregistered = 1;
 	} else {
-		ap_dev->drv->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
+		ap_msg->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
 		rc = -ENODEV;
 	}
 	spin_unlock_bh(&ap_dev->lock);
@@ -1541,6 +1556,8 @@ static void ap_reset(struct ap_device *ap_dev)
 	rc = ap_init_queue(ap_dev->qid);
 	if (rc == -ENODEV)
 		ap_dev->unregistered = 1;
+	else
+		__ap_schedule_poll_timer();
 }
 
 static int __ap_poll_device(struct ap_device *ap_dev, unsigned long *flags)
@@ -1849,7 +1866,5 @@ void ap_module_exit(void)
 	}
 }
 
-#ifndef CONFIG_ZCRYPT_MONOLITHIC
 module_init(ap_module_init);
 module_exit(ap_module_exit);
-#endif

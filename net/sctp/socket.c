@@ -78,6 +78,7 @@
 #include <net/inet_common.h>
 
 #include <linux/socket.h> /* for sa_family_t */
+#include <linux/export.h>
 #include <net/sock.h>
 #include <net/sctp/sctp.h>
 #include <net/sctp/sm.h>
@@ -803,7 +804,7 @@ static int sctp_send_asconf_del_ip(struct sock		*sk,
 				struct sockaddr_in6 *sin6;
 
 				sin6 = (struct sockaddr_in6 *)addrs;
-				ipv6_addr_copy(&asoc->asconf_addr_del_pending->v6.sin6_addr, &sin6->sin6_addr);
+				asoc->asconf_addr_del_pending->v6.sin6_addr = sin6->sin6_addr;
 			}
 			SCTP_DEBUG_PRINTK_IPADDR("send_asconf_del_ip: keep the last address asoc: %p ",
 			    " at %p\n", asoc, asoc->asconf_addr_del_pending,
@@ -2199,8 +2200,6 @@ static int sctp_setsockopt_autoclose(struct sock *sk, char __user *optval,
 		return -EINVAL;
 	if (copy_from_user(&sp->autoclose, optval, optlen))
 		return -EFAULT;
-	/* make sure it won't exceed MAX_SCHEDULE_TIMEOUT */
-	sp->autoclose = min_t(long, sp->autoclose, MAX_SCHEDULE_TIMEOUT / HZ);
 
 	return 0;
 }
@@ -4134,9 +4133,10 @@ static int sctp_getsockopt_disable_fragments(struct sock *sk, int len,
 static int sctp_getsockopt_events(struct sock *sk, int len, char __user *optval,
 				  int __user *optlen)
 {
-	if (len < sizeof(struct sctp_event_subscribe))
+	if (len <= 0)
 		return -EINVAL;
-	len = sizeof(struct sctp_event_subscribe);
+	if (len > sizeof(struct sctp_event_subscribe))
+		len = sizeof(struct sctp_event_subscribe);
 	if (put_user(len, optlen))
 		return -EFAULT;
 	if (copy_to_user(optval, &sctp_sk(sk)->subscribe, len))
@@ -4171,13 +4171,15 @@ static int sctp_getsockopt_autoclose(struct sock *sk, int len, char __user *optv
 }
 
 /* Helper routine to branch off an association to a new socket.  */
-SCTP_STATIC int sctp_do_peeloff(struct sctp_association *asoc,
-				struct socket **sockp)
+int sctp_do_peeloff(struct sock *sk, sctp_assoc_t id, struct socket **sockp)
 {
-	struct sock *sk = asoc->base.sk;
+	struct sctp_association *asoc = sctp_id2assoc(sk, id);
 	struct socket *sock;
 	struct sctp_af *af;
 	int err = 0;
+
+	if (!asoc)
+		return -EINVAL;
 
 	/* An association cannot be branched off from an already peeled-off
 	 * socket, nor is this supported for tcp style sockets.
@@ -4207,13 +4209,13 @@ SCTP_STATIC int sctp_do_peeloff(struct sctp_association *asoc,
 
 	return err;
 }
+EXPORT_SYMBOL(sctp_do_peeloff);
 
 static int sctp_getsockopt_peeloff(struct sock *sk, int len, char __user *optval, int __user *optlen)
 {
 	sctp_peeloff_arg_t peeloff;
 	struct socket *newsock;
 	int retval = 0;
-	struct sctp_association *asoc;
 
 	if (len < sizeof(sctp_peeloff_arg_t))
 		return -EINVAL;
@@ -4221,15 +4223,7 @@ static int sctp_getsockopt_peeloff(struct sock *sk, int len, char __user *optval
 	if (copy_from_user(&peeloff, optval, len))
 		return -EFAULT;
 
-	asoc = sctp_id2assoc(sk, peeloff.associd);
-	if (!asoc) {
-		retval = -EINVAL;
-		goto out;
-	}
-
-	SCTP_DEBUG_PRINTK("%s: sk: %p asoc: %p\n", __func__, sk, asoc);
-
-	retval = sctp_do_peeloff(asoc, &newsock);
+	retval = sctp_do_peeloff(sk, peeloff.associd, &newsock);
 	if (retval < 0)
 		goto out;
 
@@ -4240,8 +4234,8 @@ static int sctp_getsockopt_peeloff(struct sock *sk, int len, char __user *optval
 		goto out;
 	}
 
-	SCTP_DEBUG_PRINTK("%s: sk: %p asoc: %p newsk: %p sd: %d\n",
-			  __func__, sk, asoc, newsock->sk, retval);
+	SCTP_DEBUG_PRINTK("%s: sk: %p newsk: %p sd: %d\n",
+			  __func__, sk, newsock->sk, retval);
 
 	/* Return the fd mapped to the new socket.  */
 	peeloff.sd = retval;
@@ -5846,10 +5840,8 @@ SCTP_STATIC int sctp_listen_start(struct sock *sk, int backlog)
 	if (!sctp_sk(sk)->hmac && sctp_hmac_alg) {
 		tfm = crypto_alloc_hash(sctp_hmac_alg, 0, CRYPTO_ALG_ASYNC);
 		if (IS_ERR(tfm)) {
-			if (net_ratelimit()) {
-				pr_info("failed to load transform for %s: %ld\n",
-					sctp_hmac_alg, PTR_ERR(tfm));
-			}
+			net_info_ratelimited("failed to load transform for %s: %ld\n",
+					     sctp_hmac_alg, PTR_ERR(tfm));
 			return -ENOSYS;
 		}
 		sctp_sk(sk)->hmac = tfm;
@@ -6840,7 +6832,7 @@ struct proto sctp_prot = {
 	.sockets_allocated = &sctp_sockets_allocated,
 };
 
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if IS_ENABLED(CONFIG_IPV6)
 
 struct proto sctpv6_prot = {
 	.name		= "SCTPv6",
@@ -6871,4 +6863,4 @@ struct proto sctpv6_prot = {
 	.memory_allocated = &sctp_memory_allocated,
 	.sockets_allocated = &sctp_sockets_allocated,
 };
-#endif /* defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE) */
+#endif /* IS_ENABLED(CONFIG_IPV6) */

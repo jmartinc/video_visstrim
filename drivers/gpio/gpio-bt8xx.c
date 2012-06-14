@@ -223,9 +223,6 @@ static int bt8xxgpio_probe(struct pci_dev *dev,
 		goto err_release_mem;
 	}
 
-	printk(KERN_INFO "bt8xxgpio: Abusing BT8xx card for GPIOs %d to %d\n",
-	       bg->gpio.base, bg->gpio.base + BT8XXGPIO_NR_GPIOS - 1);
-
 	return 0;
 
 err_release_mem:
@@ -331,17 +328,7 @@ static struct pci_driver bt8xxgpio_pci_driver = {
 	.resume		= bt8xxgpio_resume,
 };
 
-static int __init bt8xxgpio_init(void)
-{
-	return pci_register_driver(&bt8xxgpio_pci_driver);
-}
-module_init(bt8xxgpio_init)
-
-static void __exit bt8xxgpio_exit(void)
-{
-	pci_unregister_driver(&bt8xxgpio_pci_driver);
-}
-module_exit(bt8xxgpio_exit)
+module_pci_driver(bt8xxgpio_pci_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michael Buesch");

@@ -50,6 +50,13 @@
  *
  * 7.17
  *  - add FUSE_FLOCK_LOCKS and FUSE_RELEASE_FLOCK_UNLOCK
+ *
+ * 7.18
+ *  - add FUSE_IOCTL_DIR flag
+ *  - add FUSE_NOTIFY_DELETE
+ *
+ * 7.19
+ *  - add FUSE_FALLOCATE
  */
 
 #ifndef _LINUX_FUSE_H
@@ -81,7 +88,7 @@
 #define FUSE_KERNEL_VERSION 7
 
 /** Minor version number of this interface */
-#define FUSE_KERNEL_MINOR_VERSION 17
+#define FUSE_KERNEL_MINOR_VERSION 19
 
 /** The node ID of the root inode */
 #define FUSE_ROOT_ID 1
@@ -214,6 +221,7 @@ struct fuse_file_lock {
  * FUSE_IOCTL_UNRESTRICTED: not restricted to well-formed ioctls, retry allowed
  * FUSE_IOCTL_RETRY: retry with new iovecs
  * FUSE_IOCTL_32BIT: 32bit ioctl
+ * FUSE_IOCTL_DIR: is a directory
  *
  * FUSE_IOCTL_MAX_IOV: maximum of in_iovecs + out_iovecs
  */
@@ -221,6 +229,7 @@ struct fuse_file_lock {
 #define FUSE_IOCTL_UNRESTRICTED	(1 << 1)
 #define FUSE_IOCTL_RETRY	(1 << 2)
 #define FUSE_IOCTL_32BIT	(1 << 3)
+#define FUSE_IOCTL_DIR		(1 << 4)
 
 #define FUSE_IOCTL_MAX_IOV	256
 
@@ -272,6 +281,7 @@ enum fuse_opcode {
 	FUSE_POLL          = 40,
 	FUSE_NOTIFY_REPLY  = 41,
 	FUSE_BATCH_FORGET  = 42,
+	FUSE_FALLOCATE     = 43,
 
 	/* CUSE specific operations */
 	CUSE_INIT          = 4096,
@@ -283,6 +293,7 @@ enum fuse_notify_code {
 	FUSE_NOTIFY_INVAL_ENTRY = 3,
 	FUSE_NOTIFY_STORE = 4,
 	FUSE_NOTIFY_RETRIEVE = 5,
+	FUSE_NOTIFY_DELETE = 6,
 	FUSE_NOTIFY_CODE_MAX,
 };
 
@@ -564,6 +575,14 @@ struct fuse_notify_poll_wakeup_out {
 	__u64	kh;
 };
 
+struct fuse_fallocate_in {
+	__u64	fh;
+	__u64	offset;
+	__u64	length;
+	__u32	mode;
+	__u32	padding;
+};
+
 struct fuse_in_header {
 	__u32	len;
 	__u32	opcode;
@@ -586,7 +605,7 @@ struct fuse_dirent {
 	__u64	off;
 	__u32	namelen;
 	__u32	type;
-	char name[0];
+	char name[];
 };
 
 #define FUSE_NAME_OFFSET offsetof(struct fuse_dirent, name)
@@ -602,6 +621,13 @@ struct fuse_notify_inval_inode_out {
 
 struct fuse_notify_inval_entry_out {
 	__u64	parent;
+	__u32	namelen;
+	__u32	padding;
+};
+
+struct fuse_notify_delete_out {
+	__u64	parent;
+	__u64	child;
 	__u32	namelen;
 	__u32	padding;
 };

@@ -63,7 +63,7 @@ ret_from_signal:
 	jra	ret_from_exception
 
 ENTRY(system_call)
-	SAVE_ALL
+	SAVE_ALL_SYS
 
 	/* save top of frame*/
 	pea	%sp@
@@ -115,7 +115,7 @@ Lsignal_return:
 	subql	#4,%sp			/* dummy return address*/
 	SAVE_SWITCH_STACK
 	pea	%sp@(SWITCH_STACK_SIZE)
-	bsrw	do_signal
+	bsrw	do_notify_resume
 	addql	#4,%sp
 	RESTORE_SWITCH_STACK
 	addql	#4,%sp
@@ -125,7 +125,7 @@ Lsignal_return:
  * This is the main interrupt handler, responsible for calling do_IRQ()
  */
 inthandler:
-	SAVE_ALL
+	SAVE_ALL_INT
 	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and.l	#0x3ff, %d0
 	lsr.l   #0x02,  %d0

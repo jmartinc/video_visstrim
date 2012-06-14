@@ -7,6 +7,7 @@
  */
 
 #include <linux/device.h>
+#include <linux/export.h>
 #include <linux/platform_device.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
@@ -60,7 +61,7 @@ static struct physmap_flash_data ezbrd_flash_data = {
 
 static struct resource ezbrd_flash_resource = {
 	.start = 0x20000000,
-#if defined(CONFIG_SPI_BFIN) || defined(CONFIG_SPI_BFIN_MODULE)
+#if defined(CONFIG_SPI_BFIN5XX) || defined(CONFIG_SPI_BFIN5XX_MODULE)
 	.end   = 0x202fffff,
 #else
 	.end   = 0x203fffff,
@@ -121,6 +122,8 @@ static struct bfin_mii_bus_platform_data bfin_mii_bus_data = {
 #if defined(CONFIG_NET_DSA_KSZ8893M) || defined(CONFIG_NET_DSA_KSZ8893M_MODULE)
 	.phy_mask = 0xfff7, /* Only probe the port phy connect to the on chip MAC */
 #endif
+	.vlan1_mask = 1,
+	.vlan2_mask = 2,
 };
 
 static struct platform_device bfin_mii_bus = {
@@ -291,7 +294,7 @@ static struct spi_board_info bfin_spi_board_info[] __initdata = {
 };
 
 /* SPI controller data */
-#if defined(CONFIG_SPI_BFIN) || defined(CONFIG_SPI_BFIN_MODULE)
+#if defined(CONFIG_SPI_BFIN5XX) || defined(CONFIG_SPI_BFIN5XX_MODULE)
 /* SPI (0) */
 static struct bfin5xx_spi_master bfin_spi0_info = {
 	.num_chipselect = 6,
@@ -372,8 +375,13 @@ static struct resource bfin_uart0_resources[] = {
 		.flags = IORESOURCE_MEM,
 	},
 	{
+		.start = IRQ_UART0_TX,
+		.end = IRQ_UART0_TX,
+		.flags = IORESOURCE_IRQ,
+	},
+	{
 		.start = IRQ_UART0_RX,
-		.end = IRQ_UART0_RX+1,
+		.end = IRQ_UART0_RX,
 		.flags = IORESOURCE_IRQ,
 	},
 	{
@@ -415,8 +423,13 @@ static struct resource bfin_uart1_resources[] = {
 		.flags = IORESOURCE_MEM,
 	},
 	{
+		.start = IRQ_UART1_TX,
+		.end = IRQ_UART1_TX,
+		.flags = IORESOURCE_IRQ,
+	},
+	{
 		.start = IRQ_UART1_RX,
-		.end = IRQ_UART1_RX+1,
+		.end = IRQ_UART1_RX,
 		.flags = IORESOURCE_IRQ,
 	},
 	{
@@ -516,6 +529,8 @@ static struct platform_device bfin_i2s = {
 #endif
 
 #if defined(CONFIG_I2C_BLACKFIN_TWI) || defined(CONFIG_I2C_BLACKFIN_TWI_MODULE)
+static const u16 bfin_twi0_pins[] = {P_TWI0_SCL, P_TWI0_SDA, 0};
+
 static struct resource bfin_twi0_resource[] = {
 	[0] = {
 		.start = TWI0_REGBASE,
@@ -534,6 +549,9 @@ static struct platform_device i2c_bfin_twi_device = {
 	.id = 0,
 	.num_resources = ARRAY_SIZE(bfin_twi0_resource),
 	.resource = bfin_twi0_resource,
+	.dev = {
+		.platform_data = &bfin_twi0_pins,
+	},
 };
 #endif
 
@@ -704,7 +722,7 @@ static struct platform_device *stamp_devices[] __initdata = {
 #endif
 #endif
 
-#if defined(CONFIG_SPI_BFIN) || defined(CONFIG_SPI_BFIN_MODULE)
+#if defined(CONFIG_SPI_BFIN5XX) || defined(CONFIG_SPI_BFIN5XX_MODULE)
 	&bfin_spi0_device,
 	&bfin_spi1_device,
 #endif
@@ -766,7 +784,7 @@ static int __init ezbrd_init(void)
 	spi_register_board_info(bfin_spi_board_info, ARRAY_SIZE(bfin_spi_board_info));
 	/* setup BF518-EZBRD GPIO pin PG11 to AMS2, PG15 to AMS3. */
 	peripheral_request(P_AMS2, "ParaFlash");
-#if !defined(CONFIG_SPI_BFIN) && !defined(CONFIG_SPI_BFIN_MODULE)
+#if !defined(CONFIG_SPI_BFIN5XX) && !defined(CONFIG_SPI_BFIN5XX_MODULE)
 	peripheral_request(P_AMS3, "ParaFlash");
 #endif
 	return 0;
@@ -808,7 +826,7 @@ void native_machine_restart(char *cmd)
 		bfin_reset_boot_spi_cs(P_DEFAULT_BOOT_SPI_CS);
 }
 
-void bfin_get_ether_addr(char *addr)
+int bfin_get_ether_addr(char *addr)
 {
 	/* the MAC is stored in OTP memory page 0xDF */
 	u32 ret;
@@ -821,5 +839,6 @@ void bfin_get_ether_addr(char *addr)
 		for (ret = 0; ret < 6; ++ret)
 			addr[ret] = otp_mac_p[5 - ret];
 	}
+	return 0;
 }
 EXPORT_SYMBOL(bfin_get_ether_addr);

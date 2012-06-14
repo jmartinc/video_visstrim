@@ -26,9 +26,11 @@
 #include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/mutex.h>
+#include <linux/module.h>
 #include <sound/core.h>
 #include "hda_codec.h"
 #include "hda_local.h"
+#include "hda_auto_parser.h"
 
 #define WIDGET_CHIP_CTRL      0x15
 #define WIDGET_DSP_CTRL       0x16
@@ -238,8 +240,7 @@ enum get_set {
 static void init_output(struct hda_codec *codec, hda_nid_t pin, hda_nid_t dac)
 {
 	if (pin) {
-		snd_hda_codec_write(codec, pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_HP);
+		snd_hda_set_pin_ctl(codec, pin, PIN_HP);
 		if (get_wcaps(codec, pin) & AC_WCAP_OUT_AMP)
 			snd_hda_codec_write(codec, pin, 0,
 					    AC_VERB_SET_AMP_GAIN_MUTE,
@@ -253,9 +254,8 @@ static void init_output(struct hda_codec *codec, hda_nid_t pin, hda_nid_t dac)
 static void init_input(struct hda_codec *codec, hda_nid_t pin, hda_nid_t adc)
 {
 	if (pin) {
-		snd_hda_codec_write(codec, pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL,
-				    PIN_VREF80);
+		snd_hda_set_pin_ctl(codec, pin, PIN_IN |
+				    snd_hda_get_default_vref(codec, pin));
 		if (get_wcaps(codec, pin) & AC_WCAP_IN_AMP)
 			snd_hda_codec_write(codec, pin, 0,
 					    AC_VERB_SET_AMP_GAIN_MUTE,
@@ -727,18 +727,19 @@ static int ca0132_hp_switch_put(struct snd_kcontrol *kcontrol,
 
 	err = chipio_read(codec, REG_CODEC_MUTE, &data);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	/* *valp 0 is mute, 1 is unmute */
 	data = (data & 0x7f) | (*valp ? 0 : 0x80);
-	chipio_write(codec, REG_CODEC_MUTE, data);
+	err = chipio_write(codec, REG_CODEC_MUTE, data);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	spec->curr_hp_switch = *valp;
 
+ exit:
 	snd_hda_power_down(codec);
-	return 1;
+	return err < 0 ? err : 1;
 }
 
 static int ca0132_speaker_switch_get(struct snd_kcontrol *kcontrol,
@@ -769,18 +770,19 @@ static int ca0132_speaker_switch_put(struct snd_kcontrol *kcontrol,
 
 	err = chipio_read(codec, REG_CODEC_MUTE, &data);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	/* *valp 0 is mute, 1 is unmute */
 	data = (data & 0xef) | (*valp ? 0 : 0x10);
-	chipio_write(codec, REG_CODEC_MUTE, data);
+	err = chipio_write(codec, REG_CODEC_MUTE, data);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	spec->curr_speaker_switch = *valp;
 
+ exit:
 	snd_hda_power_down(codec);
-	return 1;
+	return err < 0 ? err : 1;
 }
 
 static int ca0132_hp_volume_get(struct snd_kcontrol *kcontrol,
@@ -818,25 +820,26 @@ static int ca0132_hp_volume_put(struct snd_kcontrol *kcontrol,
 
 	err = chipio_read(codec, REG_CODEC_HP_VOL_L, &data);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	val = 31 - left_vol;
 	data = (data & 0xe0) | val;
-	chipio_write(codec, REG_CODEC_HP_VOL_L, data);
+	err = chipio_write(codec, REG_CODEC_HP_VOL_L, data);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	val = 31 - right_vol;
 	data = (data & 0xe0) | val;
-	chipio_write(codec, REG_CODEC_HP_VOL_R, data);
+	err = chipio_write(codec, REG_CODEC_HP_VOL_R, data);
 	if (err < 0)
-		return err;
+		goto exit;
 
 	spec->curr_hp_volume[0] = left_vol;
 	spec->curr_hp_volume[1] = right_vol;
 
+ exit:
 	snd_hda_power_down(codec);
-	return 1;
+	return err < 0 ? err : 1;
 }
 
 static int add_hp_switch(struct hda_codec *codec, hda_nid_t nid)
@@ -935,6 +938,8 @@ static int ca0132_build_controls(struct hda_codec *codec)
 		if (err < 0)
 			return err;
 		err = add_in_volume(codec, spec->dig_in, "IEC958");
+		if (err < 0)
+			return err;
 	}
 	return 0;
 }

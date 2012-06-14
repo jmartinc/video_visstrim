@@ -12,10 +12,13 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
+#include <linux/serial_reg.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/of_serial.h>
 #include <linux/of_platform.h>
 #include <linux/nwpserial.h>
 
@@ -23,6 +26,26 @@ struct of_serial_info {
 	int type;
 	int line;
 };
+
+#ifdef CONFIG_ARCH_TEGRA
+void tegra_serial_handle_break(struct uart_port *p)
+{
+	unsigned int status, tmout = 10000;
+
+	do {
+		status = p->serial_in(p, UART_LSR);
+		if (status & (UART_LSR_FIFOE | UART_LSR_BRK_ERROR_BITS))
+			status = p->serial_in(p, UART_RX);
+		else
+			break;
+		if (--tmout == 0)
+			break;
+		udelay(1);
+	} while (1);
+}
+/* FIXME remove this export when tegra finishes conversion to open firmware */
+EXPORT_SYMBOL_GPL(tegra_serial_handle_break);
+#endif
 
 /*
  * Fill a struct uart_port for a given device node
@@ -83,6 +106,9 @@ static int __devinit of_platform_serial_setup(struct platform_device *ofdev,
 	port->flags = UPF_SHARE_IRQ | UPF_BOOT_AUTOCONF | UPF_IOREMAP
 		| UPF_FIXED_PORT | UPF_FIXED_TYPE;
 	port->dev = &ofdev->dev;
+
+	if (type == PORT_TEGRA)
+		port->handle_break = tegra_serial_handle_break;
 
 	return 0;
 }
@@ -200,17 +226,7 @@ static struct platform_driver of_platform_serial_driver = {
 	.remove = of_platform_serial_remove,
 };
 
-static int __init of_platform_serial_init(void)
-{
-	return platform_driver_register(&of_platform_serial_driver);
-}
-module_init(of_platform_serial_init);
-
-static void __exit of_platform_serial_exit(void)
-{
-	return platform_driver_unregister(&of_platform_serial_driver);
-};
-module_exit(of_platform_serial_exit);
+module_platform_driver(of_platform_serial_driver);
 
 MODULE_AUTHOR("Arnd Bergmann <arnd@arndb.de>");
 MODULE_LICENSE("GPL");

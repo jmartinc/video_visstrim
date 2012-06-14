@@ -34,6 +34,7 @@
 
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
+#include <linux/export.h>
 #include <linux/pci.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_host.h>
@@ -862,6 +863,7 @@ void ata_port_wait_eh(struct ata_port *ap)
 		goto retry;
 	}
 }
+EXPORT_SYMBOL_GPL(ata_port_wait_eh);
 
 static int ata_eh_nr_in_flight(struct ata_port *ap)
 {
@@ -2045,6 +2047,26 @@ static unsigned int ata_eh_speed_down(struct ata_device *dev,
 }
 
 /**
+ *	ata_eh_worth_retry - analyze error and decide whether to retry
+ *	@qc: qc to possibly retry
+ *
+ *	Look at the cause of the error and decide if a retry
+ * 	might be useful or not.  We don't want to retry media errors
+ *	because the drive itself has probably already taken 10-30 seconds
+ *	doing its own internal retries before reporting the failure.
+ */
+static inline int ata_eh_worth_retry(struct ata_queued_cmd *qc)
+{
+	if (qc->flags & AC_ERR_MEDIA)
+		return 0;	/* don't retry media errors */
+	if (qc->flags & ATA_QCFLAG_IO)
+		return 1;	/* otherwise retry anything from fs stack */
+	if (qc->err_mask & AC_ERR_INVALID)
+		return 0;	/* don't retry these */
+	return qc->err_mask != AC_ERR_DEV;  /* retry if not dev error */
+}
+
+/**
  *	ata_eh_link_autopsy - analyze error and determine recovery action
  *	@link: host link to perform autopsy on
  *
@@ -2118,9 +2140,7 @@ static void ata_eh_link_autopsy(struct ata_link *link)
 			qc->err_mask &= ~(AC_ERR_DEV | AC_ERR_OTHER);
 
 		/* determine whether the command is worth retrying */
-		if (qc->flags & ATA_QCFLAG_IO ||
-		    (!(qc->err_mask & AC_ERR_INVALID) &&
-		     qc->err_mask != AC_ERR_DEV))
+		if (ata_eh_worth_retry(qc))
 			qc->flags |= ATA_QCFLAG_RETRY;
 
 		/* accumulate error info */
@@ -2532,8 +2552,7 @@ static int ata_do_reset(struct ata_link *link, ata_reset_fn_t reset,
 	return reset(link, classes, deadline);
 }
 
-static int ata_eh_followup_srst_needed(struct ata_link *link,
-				       int rc, const unsigned int *classes)
+static int ata_eh_followup_srst_needed(struct ata_link *link, int rc)
 {
 	if ((link->flags & ATA_LFLAG_NO_SRST) || ata_link_offline(link))
 		return 0;
@@ -2726,7 +2745,7 @@ int ata_eh_reset(struct ata_link *link, int classify,
 
 		/* perform follow-up SRST if necessary */
 		if (reset == hardreset &&
-		    ata_eh_followup_srst_needed(link, rc, classes)) {
+		    ata_eh_followup_srst_needed(link, rc)) {
 			reset = softreset;
 
 			if (!reset) {
@@ -2883,7 +2902,7 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	    sata_scr_read(link, SCR_STATUS, &sstatus))
 		rc = -ERESTART;
 
-	if (rc == -ERESTART || try >= max_tries) {
+	if (try >= max_tries) {
 		/*
 		 * Thaw host port even if reset failed, so that the port
 		 * can be retried on the next phy event.  This risks
@@ -2907,6 +2926,16 @@ int ata_eh_reset(struct ata_link *link, int classify,
 		while (delta)
 			delta = schedule_timeout_uninterruptible(delta);
 		ata_eh_acquire(ap);
+	}
+
+	/*
+	 * While disks spinup behind PMP, some controllers fail sending SRST.
+	 * They need to be reset - as well as the PMP - before retrying.
+	 */
+	if (rc == -ERESTART) {
+		if (ata_is_host_link(link))
+			ata_eh_thaw_port(ap);
+		goto out;
 	}
 
 	if (try == max_tries - 1) {
@@ -3490,7 +3519,8 @@ static int ata_count_probe_trials_cb(struct ata_ering_entry *ent, void *void_arg
 	u64 now = get_jiffies_64();
 	int *trials = void_arg;
 
-	if (ent->timestamp < now - min(now, interval))
+	if ((ent->eflags & ATA_EFLAG_OLD_ER) ||
+	    (ent->timestamp < now - min(now, interval)))
 		return -1;
 
 	(*trials)++;

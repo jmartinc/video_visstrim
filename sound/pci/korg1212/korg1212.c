@@ -25,7 +25,7 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/firmware.h>
 
@@ -408,7 +408,7 @@ MODULE_FIRMWARE("korg/k1212.dsp");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;     /* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	   /* ID for this card */
-static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE; /* Enable this card */
+static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE; /* Enable this card */
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for Korg 1212 soundcard.");
@@ -2476,22 +2476,11 @@ static void __devexit snd_korg1212_remove(struct pci_dev *pci)
 	pci_set_drvdata(pci, NULL);
 }
 
-static struct pci_driver driver = {
+static struct pci_driver korg1212_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_korg1212_ids,
 	.probe = snd_korg1212_probe,
 	.remove = __devexit_p(snd_korg1212_remove),
 };
 
-static int __init alsa_card_korg1212_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_korg1212_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_korg1212_init)
-module_exit(alsa_card_korg1212_exit)
+module_pci_driver(korg1212_driver);

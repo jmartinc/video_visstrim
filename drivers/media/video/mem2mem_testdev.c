@@ -40,7 +40,7 @@ MODULE_VERSION("0.1.1");
 #define MIN_H 32
 #define MAX_W 640
 #define MAX_H 480
-#define DIM_ALIGN_MASK 0x08 /* 8-alignment for dimensions */
+#define DIM_ALIGN_MASK 7 /* 8-byte alignment for line length */
 
 /* Flags that indicate a format can be used for capture/output */
 #define MEM2MEM_CAPTURE	(1 << 0)
@@ -738,9 +738,10 @@ static const struct v4l2_ioctl_ops m2mtest_ioctl_ops = {
  * Queue operations
  */
 
-static int m2mtest_queue_setup(struct vb2_queue *vq, unsigned int *nbuffers,
-				unsigned int *nplanes, unsigned int sizes[],
-				void *alloc_ctxs[])
+static int m2mtest_queue_setup(struct vb2_queue *vq,
+				const struct v4l2_format *fmt,
+				unsigned int *nbuffers, unsigned int *nplanes,
+				unsigned int sizes[], void *alloc_ctxs[])
 {
 	struct m2mtest_ctx *ctx = vb2_get_drv_priv(vq);
 	struct m2mtest_q_data *q_data;
@@ -793,10 +794,24 @@ static void m2mtest_buf_queue(struct vb2_buffer *vb)
 	v4l2_m2m_buf_queue(ctx->m2m_ctx, vb);
 }
 
+static void m2mtest_wait_prepare(struct vb2_queue *q)
+{
+	struct m2mtest_ctx *ctx = vb2_get_drv_priv(q);
+	m2mtest_unlock(ctx);
+}
+
+static void m2mtest_wait_finish(struct vb2_queue *q)
+{
+	struct m2mtest_ctx *ctx = vb2_get_drv_priv(q);
+	m2mtest_lock(ctx);
+}
+
 static struct vb2_ops m2mtest_qops = {
 	.queue_setup	 = m2mtest_queue_setup,
 	.buf_prepare	 = m2mtest_buf_prepare,
 	.buf_queue	 = m2mtest_buf_queue,
+	.wait_prepare	 = m2mtest_wait_prepare,
+	.wait_finish	 = m2mtest_wait_finish,
 };
 
 static int queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_vq)
@@ -943,6 +958,10 @@ static int m2mtest_probe(struct platform_device *pdev)
 	}
 
 	*vfd = m2mtest_videodev;
+	/* Locking in file operations other than ioctl should be done
+	   by the driver, not the V4L2 core.
+	   This driver needs auditing so that this flag can be removed. */
+	set_bit(V4L2_FL_LOCK_ALL_FOPS, &vfd->flags);
 	vfd->lock = &dev->dev_mutex;
 
 	ret = video_register_device(vfd, VFL_TYPE_GRABBER, 0);

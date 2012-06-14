@@ -8,11 +8,13 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/string.h>
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
+#include <linux/export.h>
 
 #include <linux/usb/musb.h>
 
@@ -124,7 +126,7 @@ static int tusb_set_sync_mode(unsigned sysclk_ps, unsigned fclk_ps)
 	tmp = (t.sync_clk + fclk_ps - 1) / fclk_ps;
 	if (tmp > 4)
 		return -ERANGE;
-	if (tmp <= 0)
+	if (tmp == 0)
 		tmp = 1;
 	t.page_burst_access = (fclk_ps * tmp) / 1000;
 

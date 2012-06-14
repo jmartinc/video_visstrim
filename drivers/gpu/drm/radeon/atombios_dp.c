@@ -63,12 +63,12 @@ static int radeon_process_aux_ch(struct radeon_i2c_chan *chan,
 
 	memset(&args, 0, sizeof(args));
 
-	base = (unsigned char *)rdev->mode_info.atom_context->scratch;
+	base = (unsigned char *)(rdev->mode_info.atom_context->scratch + 1);
 
 	memcpy(base, send, send_bytes);
 
-	args.v1.lpAuxRequest = 0;
-	args.v1.lpDataOut = 16;
+	args.v1.lpAuxRequest = 0 + 4;
+	args.v1.lpDataOut = 16 + 4;
 	args.v1.ucDataOutLen = 0;
 	args.v1.ucChannelID = chan->rec.i2c_id;
 	args.v1.ucDelay = delay / 10;
@@ -283,7 +283,7 @@ int radeon_dp_i2c_aux_ch(struct i2c_adapter *adapter, int mode,
 		}
 	}
 
-	DRM_ERROR("aux i2c too many retries, giving up\n");
+	DRM_DEBUG_KMS("aux i2c too many retries, giving up\n");
 	return -EREMOTEIO;
 }
 
@@ -460,7 +460,7 @@ static int radeon_dp_get_dp_lane_number(struct drm_connector *connector,
 					u8 dpcd[DP_DPCD_SIZE],
 					int pix_clock)
 {
-	int bpp = convert_bpc_to_bpp(connector->display_info.bpc);
+	int bpp = convert_bpc_to_bpp(radeon_get_monitor_bpc(connector));
 	int max_link_rate = dp_get_max_link_rate(dpcd);
 	int max_lane_num = dp_get_max_lane_number(dpcd);
 	int lane_num;
@@ -479,10 +479,11 @@ static int radeon_dp_get_dp_link_clock(struct drm_connector *connector,
 				       u8 dpcd[DP_DPCD_SIZE],
 				       int pix_clock)
 {
-	int bpp = convert_bpc_to_bpp(connector->display_info.bpc);
+	int bpp = convert_bpc_to_bpp(radeon_get_monitor_bpc(connector));
 	int lane_num, max_pix_clock;
 
-	if (radeon_connector_encoder_is_dp_bridge(connector))
+	if (radeon_connector_encoder_get_dp_bridge_encoder_id(connector) ==
+	    ENCODER_OBJECT_ID_NUTMEG)
 		return 270000;
 
 	lane_num = radeon_dp_get_dp_lane_number(connector, dpcd, pix_clock);
@@ -529,6 +530,23 @@ u8 radeon_dp_getsinktype(struct radeon_connector *radeon_connector)
 					 dig_connector->dp_i2c_bus->rec.i2c_id, 0);
 }
 
+static void radeon_dp_probe_oui(struct radeon_connector *radeon_connector)
+{
+	struct radeon_connector_atom_dig *dig_connector = radeon_connector->con_priv;
+	u8 buf[3];
+
+	if (!(dig_connector->dpcd[DP_DOWN_STREAM_PORT_COUNT] & DP_OUI_SUPPORT))
+		return;
+
+	if (radeon_dp_aux_native_read(radeon_connector, DP_SINK_OUI, buf, 3, 0))
+		DRM_DEBUG_KMS("Sink OUI: %02hx%02hx%02hx\n",
+			      buf[0], buf[1], buf[2]);
+
+	if (radeon_dp_aux_native_read(radeon_connector, DP_BRANCH_OUI, buf, 3, 0))
+		DRM_DEBUG_KMS("Branch OUI: %02hx%02hx%02hx\n",
+			      buf[0], buf[1], buf[2]);
+}
+
 bool radeon_dp_getdpcd(struct radeon_connector *radeon_connector)
 {
 	struct radeon_connector_atom_dig *dig_connector = radeon_connector->con_priv;
@@ -542,28 +560,51 @@ bool radeon_dp_getdpcd(struct radeon_connector *radeon_connector)
 		for (i = 0; i < 8; i++)
 			DRM_DEBUG_KMS("%02x ", msg[i]);
 		DRM_DEBUG_KMS("\n");
+
+		radeon_dp_probe_oui(radeon_connector);
+
 		return true;
 	}
 	dig_connector->dpcd[0] = 0;
 	return false;
 }
 
-static void radeon_dp_set_panel_mode(struct drm_encoder *encoder,
-				     struct drm_connector *connector)
+int radeon_dp_get_panel_mode(struct drm_encoder *encoder,
+			     struct drm_connector *connector)
 {
 	struct drm_device *dev = encoder->dev;
 	struct radeon_device *rdev = dev->dev_private;
+	struct radeon_connector *radeon_connector = to_radeon_connector(connector);
 	int panel_mode = DP_PANEL_MODE_EXTERNAL_DP_MODE;
 
 	if (!ASIC_IS_DCE4(rdev))
-		return;
+		return panel_mode;
 
-	if (radeon_connector_encoder_is_dp_bridge(connector))
+	if (radeon_connector_encoder_get_dp_bridge_encoder_id(connector) ==
+	    ENCODER_OBJECT_ID_NUTMEG)
 		panel_mode = DP_PANEL_MODE_INTERNAL_DP1_MODE;
+	else if (radeon_connector_encoder_get_dp_bridge_encoder_id(connector) ==
+		 ENCODER_OBJECT_ID_TRAVIS) {
+		u8 id[6];
+		int i;
+		for (i = 0; i < 6; i++)
+			id[i] = radeon_read_dpcd_reg(radeon_connector, 0x503 + i);
+		if (id[0] == 0x73 &&
+		    id[1] == 0x69 &&
+		    id[2] == 0x76 &&
+		    id[3] == 0x61 &&
+		    id[4] == 0x72 &&
+		    id[5] == 0x54)
+			panel_mode = DP_PANEL_MODE_INTERNAL_DP1_MODE;
+		else
+			panel_mode = DP_PANEL_MODE_INTERNAL_DP2_MODE;
+	} else if (connector->connector_type == DRM_MODE_CONNECTOR_eDP) {
+		u8 tmp = radeon_read_dpcd_reg(radeon_connector, DP_EDP_CONFIGURATION_CAP);
+		if (tmp & 1)
+			panel_mode = DP_PANEL_MODE_INTERNAL_DP2_MODE;
+	}
 
-	atombios_dig_encoder_setup(encoder,
-				   ATOM_ENCODER_CMD_SETUP_PANEL_MODE,
-				   panel_mode);
+	return panel_mode;
 }
 
 void radeon_dp_set_link_config(struct drm_connector *connector,
@@ -701,6 +742,8 @@ static void radeon_dp_set_tp(struct radeon_dp_link_train_info *dp_info, int tp)
 
 static int radeon_dp_link_train_init(struct radeon_dp_link_train_info *dp_info)
 {
+	struct radeon_encoder *radeon_encoder = to_radeon_encoder(dp_info->encoder);
+	struct radeon_encoder_atom_dig *dig = radeon_encoder->enc_priv;
 	u8 tmp;
 
 	/* power up the sink */
@@ -716,11 +759,15 @@ static int radeon_dp_link_train_init(struct radeon_dp_link_train_info *dp_info)
 		radeon_write_dpcd_reg(dp_info->radeon_connector,
 				      DP_DOWNSPREAD_CTRL, 0);
 
-	radeon_dp_set_panel_mode(dp_info->encoder, dp_info->connector);
+	if ((dp_info->connector->connector_type == DRM_MODE_CONNECTOR_eDP) &&
+	    (dig->panel_mode == DP_PANEL_MODE_INTERNAL_DP2_MODE)) {
+		radeon_write_dpcd_reg(dp_info->radeon_connector, DP_EDP_CONFIGURATION_SET, 1);
+	}
 
 	/* set the lane count on the sink */
 	tmp = dp_info->dp_lane_count;
-	if (dp_info->dpcd[0] >= 0x11)
+	if (dp_info->dpcd[DP_DPCD_REV] >= 0x11 &&
+	    dp_info->dpcd[DP_MAX_LANE_COUNT] & DP_ENHANCED_FRAME_CAP)
 		tmp |= DP_LANE_COUNT_ENHANCED_FRAME_EN;
 	radeon_write_dpcd_reg(dp_info->radeon_connector, DP_LANE_COUNT_SET, tmp);
 

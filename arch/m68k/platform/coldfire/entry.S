@@ -54,15 +54,15 @@ sw_usp:
 .globl ret_from_signal
 .globl sys_call_table
 .globl inthandler
-.globl fasthandler
 
 enosys:
 	mov.l	#sys_ni_syscall,%d3
 	bra	1f
 
 ENTRY(system_call)
-	SAVE_ALL
+	SAVE_ALL_SYS
 	move	#0x2000,%sr		/* enable intrs again */
+	GET_CURRENT(%d2)
 
 	cmpl	#NR_syscalls,%d0
 	jcc	enosys
@@ -136,7 +136,7 @@ Luser_return:
 	movel	%sp,%d1			/* get thread_info pointer */
 	andl	#-THREAD_SIZE,%d1	/* at base of kernel stack */
 	movel	%d1,%a0
-	movel	%a0@(TINFO_FLAGS),%d1	/* get thread_info->flags */
+	moveb	%a0@(TINFO_FLAGS+3),%d1	/* thread_info->flags (low 8 bits) */
 	jne	Lwork_to_do		/* still work to do */
 
 Lreturn:
@@ -148,13 +148,11 @@ Lwork_to_do:
 	btst	#TIF_NEED_RESCHED,%d1
 	jne	reschedule
 
-	/* GERG: do we need something here for TRACEing?? */
-
 Lsignal_return:
 	subql	#4,%sp			/* dummy return address */
 	SAVE_SWITCH_STACK
 	pea	%sp@(SWITCH_STACK_SIZE)
-	jsr	do_signal
+	jsr	do_notify_resume
 	addql	#4,%sp
 	RESTORE_SWITCH_STACK
 	addql	#4,%sp
@@ -165,9 +163,8 @@ Lsignal_return:
  * sources). Calls up to high level code to do all the work.
  */
 ENTRY(inthandler)
-	SAVE_ALL
-	moveq	#-1,%d0
-	movel	%d0,%sp@(PT_OFF_ORIG_D0)
+	SAVE_ALL_INT
+	GET_CURRENT(%d2)
 
 	movew	%sp@(PT_OFF_FORMATVEC),%d0 /* put exception # in d0 */
 	andl	#0x03fc,%d0		/* mask out vector only */
@@ -193,7 +190,9 @@ ENTRY(resume)
 	movel	%sp,%a0@(TASK_THREAD+THREAD_KSP) /* save kernel stack pointer */
 	RDUSP					 /* movel %usp,%a3 */
 	movel	%a3,%a0@(TASK_THREAD+THREAD_USP) /* save thread user stack */
-
+#ifdef CONFIG_MMU
+	movel	%a1,%a2				 /* set new current */
+#endif
 	movel	%a1@(TASK_THREAD+THREAD_USP),%a3 /* restore thread user stack */
 	WRUSP					 /* movel %a3,%usp */
 	movel	%a1@(TASK_THREAD+THREAD_KSP),%sp /* restore new kernel stack */

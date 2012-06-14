@@ -123,7 +123,9 @@ static void sel_netport_insert(struct sel_netport *port)
 	if (sel_netport_hash[idx].size == SEL_NETPORT_HASH_BKT_LIMIT) {
 		struct sel_netport *tail;
 		tail = list_entry(
-			rcu_dereference(sel_netport_hash[idx].list.prev),
+			rcu_dereference_protected(
+				sel_netport_hash[idx].list.prev,
+				lockdep_is_held(&sel_netport_lock)),
 			struct sel_netport, list);
 		list_del_rcu(&tail->list);
 		kfree_rcu(tail, rcu);
@@ -232,8 +234,7 @@ static void sel_netport_flush(void)
 	spin_unlock_bh(&sel_netport_lock);
 }
 
-static int sel_netport_avc_callback(u32 event, u32 ssid, u32 tsid,
-				    u16 class, u32 perms, u32 *retained)
+static int sel_netport_avc_callback(u32 event)
 {
 	if (event == AVC_CALLBACK_RESET) {
 		sel_netport_flush();
@@ -255,8 +256,7 @@ static __init int sel_netport_init(void)
 		sel_netport_hash[iter].size = 0;
 	}
 
-	ret = avc_add_callback(sel_netport_avc_callback, AVC_CALLBACK_RESET,
-			       SECSID_NULL, SECSID_NULL, SECCLASS_NULL, 0);
+	ret = avc_add_callback(sel_netport_avc_callback, AVC_CALLBACK_RESET);
 	if (ret != 0)
 		panic("avc_add_callback() failed, error %d\n", ret);
 

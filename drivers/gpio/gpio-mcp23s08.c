@@ -5,6 +5,7 @@
 #include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/mutex.h>
+#include <linux/module.h>
 #include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/spi/spi.h>
@@ -352,7 +353,7 @@ static void mcp23s08_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 			chip->base + t, bank, t, label,
 			(mcp->cache[MCP_IODIR] & mask) ? "in " : "out",
 			(mcp->cache[MCP_GPIO] & mask) ? "hi" : "lo",
-			(mcp->cache[MCP_GPPU] & mask) ? "  " : "up");
+			(mcp->cache[MCP_GPPU] & mask) ? "up" : "  ");
 		/* NOTE:  ignoring the irq-related registers */
 		seq_printf(s, "\n");
 	}

@@ -13,13 +13,13 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
+#include <linux/gpio.h>
 #include <linux/leds.h>
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
-
-#include <asm/gpio.h>
+#include <linux/module.h>
 
 struct gpio_led_data {
 	struct led_classdev cdev;
@@ -121,7 +121,7 @@ static int __devinit create_gpio_led(const struct gpio_led *template,
 	}
 	led_dat->cdev.brightness_set = gpio_led_set;
 	if (template->default_state == LEDS_GPIO_DEFSTATE_KEEP)
-		state = !!gpio_get_value(led_dat->gpio) ^ led_dat->active_low;
+		state = !!gpio_get_value_cansleep(led_dat->gpio) ^ led_dat->active_low;
 	else
 		state = (template->default_state == LEDS_GPIO_DEFSTATE_ON);
 	led_dat->cdev.brightness = state ? LED_FULL : LED_OFF;
@@ -292,21 +292,9 @@ static struct platform_driver gpio_led_driver = {
 	},
 };
 
-MODULE_ALIAS("platform:leds-gpio");
-
-static int __init gpio_led_init(void)
-{
-	return platform_driver_register(&gpio_led_driver);
-}
-
-static void __exit gpio_led_exit(void)
-{
-	platform_driver_unregister(&gpio_led_driver);
-}
-
-module_init(gpio_led_init);
-module_exit(gpio_led_exit);
+module_platform_driver(gpio_led_driver);
 
 MODULE_AUTHOR("Raphael Assenat <raph@8d.com>, Trent Piepho <tpiepho@freescale.com>");
 MODULE_DESCRIPTION("GPIO LED driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:leds-gpio");

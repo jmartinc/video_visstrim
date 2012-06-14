@@ -44,8 +44,8 @@ struct dgram_sock {
 	struct ieee802154_addr src_addr;
 	struct ieee802154_addr dst_addr;
 
-	unsigned bound:1;
-	unsigned want_ack:1;
+	unsigned int bound:1;
+	unsigned int want_ack:1;
 };
 
 static inline struct dgram_sock *dgram_sk(const struct sock *sk)
@@ -206,9 +206,10 @@ static int dgram_sendmsg(struct kiocb *iocb, struct sock *sk,
 		struct msghdr *msg, size_t size)
 {
 	struct net_device *dev;
-	unsigned mtu;
+	unsigned int mtu;
 	struct sk_buff *skb;
 	struct dgram_sock *ro = dgram_sk(sk);
+	int hlen, tlen;
 	int err;
 
 	if (msg->msg_flags & MSG_OOB) {
@@ -229,13 +230,15 @@ static int dgram_sendmsg(struct kiocb *iocb, struct sock *sk,
 	mtu = dev->mtu;
 	pr_debug("name = %s, mtu = %u\n", dev->name, mtu);
 
-	skb = sock_alloc_send_skb(sk, LL_ALLOCATED_SPACE(dev) + size,
+	hlen = LL_RESERVED_SPACE(dev);
+	tlen = dev->needed_tailroom;
+	skb = sock_alloc_send_skb(sk, hlen + tlen + size,
 			msg->msg_flags & MSG_DONTWAIT,
 			&err);
 	if (!skb)
 		goto out_dev;
 
-	skb_reserve(skb, LL_RESERVED_SPACE(dev));
+	skb_reserve(skb, hlen);
 
 	skb_reset_network_header(skb);
 

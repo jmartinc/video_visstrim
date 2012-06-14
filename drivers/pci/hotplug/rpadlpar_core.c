@@ -18,6 +18,7 @@
 #undef DEBUG
 
 #include <linux/init.h>
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
@@ -388,7 +389,7 @@ int dlpar_remove_pci_slot(char *drc_name, struct device_node *dn)
 	BUG_ON(!bus->self);
 	pr_debug("PCI: Now removing bridge device %s\n", pci_name(bus->self));
 	eeh_remove_bus_device(bus->self);
-	pci_remove_bus_device(bus->self);
+	pci_stop_and_remove_bus_device(bus->self);
 
 	return 0;
 }

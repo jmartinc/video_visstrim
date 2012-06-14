@@ -12,15 +12,8 @@
 #define RRF_EMULATE_CDB		0x01
 #define RRF_GOT_LBA		0x02
 
-struct fd_request {
-	struct se_task	fd_task;
-	/* SCSI CDB from iSCSI Command PDU */
-	unsigned char	fd_scsi_cdb[TCM_MAX_COMMAND_SIZE];
-} ____cacheline_aligned;
-
 #define FBDF_HAS_PATH		0x01
 #define FBDF_HAS_SIZE		0x02
-#define FDBD_USE_BUFFERED_IO	0x04
 
 struct fd_dev {
 	u32		fbd_flags;

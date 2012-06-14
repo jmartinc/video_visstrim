@@ -23,8 +23,13 @@
 
 struct device;
 
+enum dmae_pm_state {
+	DMAE_PM_ESTABLISHED,
+	DMAE_PM_BUSY,
+	DMAE_PM_PENDING,
+};
+
 struct sh_dmae_chan {
-	dma_cookie_t completed_cookie;	/* The maximum cookie completed */
 	spinlock_t desc_lock;		/* Descriptor operation lock */
 	struct list_head ld_queue;	/* Link descriptors queue */
 	struct list_head ld_free;	/* Link descriptors free */
@@ -38,6 +43,7 @@ struct sh_dmae_chan {
 	u32 __iomem *base;
 	char dev_id[16];		/* unique name per DMAC of channel */
 	int pm_error;
+	enum dmae_pm_state pm_state;
 };
 
 struct sh_dmae_device {

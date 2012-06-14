@@ -229,7 +229,6 @@ static int dma;
 #include <linux/bitops.h>
 #include <linux/gfp.h>
 
-#include <asm/system.h>
 #include <asm/dma.h>
 #include <asm/io.h>
 
@@ -1014,7 +1013,7 @@ static int __init ltpc_probe_dma(int base, int dma)
 static const struct net_device_ops ltpc_netdev = {
 	.ndo_start_xmit		= ltpc_xmit,
 	.ndo_do_ioctl		= ltpc_ioctl,
-	.ndo_set_multicast_list = set_multicast_list,
+	.ndo_set_rx_mode	= set_multicast_list,
 };
 
 struct net_device * __init ltpc_probe(void)

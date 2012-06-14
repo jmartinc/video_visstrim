@@ -880,6 +880,7 @@ static int dev_set_geometry(struct dm_ioctl *param, size_t param_size)
 	struct hd_geometry geometry;
 	unsigned long indata[4];
 	char *geostr = (char *) param + param->data_start;
+	char dummy;
 
 	md = find_device(param);
 	if (!md)
@@ -891,8 +892,8 @@ static int dev_set_geometry(struct dm_ioctl *param, size_t param_size)
 		goto out;
 	}
 
-	x = sscanf(geostr, "%lu %lu %lu %lu", indata,
-		   indata + 1, indata + 2, indata + 3);
+	x = sscanf(geostr, "%lu %lu %lu %lu%c", indata,
+		   indata + 1, indata + 2, indata + 3, &dummy);
 
 	if (x != 4) {
 		DMWARN("Unable to interpret geometry settings.");
@@ -1215,6 +1216,7 @@ static int table_load(struct dm_ioctl *param, size_t param_size)
 	struct hash_cell *hc;
 	struct dm_table *t;
 	struct mapped_device *md;
+	struct target_type *immutable_target_type;
 
 	md = find_device(param);
 	if (!md)
@@ -1227,6 +1229,16 @@ static int table_load(struct dm_ioctl *param, size_t param_size)
 	r = populate_table(t, param, param_size);
 	if (r) {
 		dm_table_destroy(t);
+		goto out;
+	}
+
+	immutable_target_type = dm_get_immutable_target_type(md);
+	if (immutable_target_type &&
+	    (immutable_target_type != dm_table_get_immutable_target_type(t))) {
+		DMWARN("can't replace immutable target type %s",
+		       immutable_target_type->name);
+		dm_table_destroy(t);
+		r = -EINVAL;
 		goto out;
 	}
 
@@ -1426,7 +1438,7 @@ static int target_message(struct dm_ioctl *param, size_t param_size)
 
 	if (!argc) {
 		DMWARN("Empty message received.");
-		goto out;
+		goto out_argv;
 	}
 
 	table = dm_get_live_table(md);

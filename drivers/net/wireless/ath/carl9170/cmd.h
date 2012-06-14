@@ -50,6 +50,7 @@ int carl9170_echo_test(struct ar9170 *ar, u32 v);
 int carl9170_reboot(struct ar9170 *ar);
 int carl9170_mac_reset(struct ar9170 *ar);
 int carl9170_powersave(struct ar9170 *ar, const bool power_on);
+int carl9170_collect_tally(struct ar9170 *ar);
 int carl9170_bcn_ctrl(struct ar9170 *ar, const unsigned int vif_id,
 		       const u32 mode, const u32 addr, const u32 len);
 
@@ -113,7 +114,7 @@ __regwrite_out :							\
 
 #define carl9170_regwrite_result()					\
 	__err;								\
-} while (0);
+} while (0)
 
 
 #define carl9170_async_regwrite_get_buf()				\
@@ -125,7 +126,7 @@ do {									\
 		__err = -ENOMEM;					\
 		goto __async_regwrite_out;				\
 	}								\
-} while (0);
+} while (0)
 
 #define carl9170_async_regwrite_begin(carl)				\
 do {									\
@@ -168,6 +169,6 @@ __async_regwrite_out:							\
 
 #define carl9170_async_regwrite_result()				\
 	__err;								\
-} while (0);
+} while (0)
 
 #endif /* __CMD_H */

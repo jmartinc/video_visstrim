@@ -27,7 +27,6 @@
  *
  ******************************************************************************/
 
-#include <linux/version.h>
 #include <linux/string.h>
 #include <linux/parser.h>
 #include <linux/timer.h>
@@ -38,9 +37,7 @@
 #include <scsi/scsi_host.h>
 
 #include <target/target_core_base.h>
-#include <target/target_core_device.h>
-#include <target/target_core_transport.h>
-#include <target/target_core_fabric_ops.h>
+#include <target/target_core_backend.h>
 
 #include "target_core_rd.h"
 
@@ -67,9 +64,6 @@ static int rd_attach_hba(struct se_hba *hba, u32 host_id)
 	pr_debug("CORE_HBA[%d] - TCM Ramdisk HBA Driver %s on"
 		" Generic Target Core Stack %s\n", hba->hba_id,
 		RD_HBA_VERSION, TARGET_CORE_MOD_VERSION);
-	pr_debug("CORE_HBA[%d] - Attached Ramdisk HBA: %u to Generic"
-		" MaxSectors: %u\n", hba->hba_id,
-		rd_host->rd_host_id, RD_MAX_SECTORS);
 
 	return 0;
 }
@@ -202,10 +196,7 @@ static int rd_build_device_space(struct rd_dev *rd_dev)
 	return 0;
 }
 
-static void *rd_allocate_virtdevice(
-	struct se_hba *hba,
-	const char *name,
-	int rd_direct)
+static void *rd_allocate_virtdevice(struct se_hba *hba, const char *name)
 {
 	struct rd_dev *rd_dev;
 	struct rd_host *rd_host = hba->hba_ptr;
@@ -217,25 +208,12 @@ static void *rd_allocate_virtdevice(
 	}
 
 	rd_dev->rd_host = rd_host;
-	rd_dev->rd_direct = rd_direct;
 
 	return rd_dev;
 }
 
-static void *rd_MEMCPY_allocate_virtdevice(struct se_hba *hba, const char *name)
-{
-	return rd_allocate_virtdevice(hba, name, 0);
-}
-
-/*	rd_create_virtdevice():
- *
- *
- */
-static struct se_device *rd_create_virtdevice(
-	struct se_hba *hba,
-	struct se_subsystem_dev *se_dev,
-	void *p,
-	int rd_direct)
+static struct se_device *rd_create_virtdevice(struct se_hba *hba,
+		struct se_subsystem_dev *se_dev, void *p)
 {
 	struct se_device *dev;
 	struct se_dev_limits dev_limits;
@@ -250,13 +228,12 @@ static struct se_device *rd_create_virtdevice(
 	if (ret < 0)
 		goto fail;
 
-	snprintf(prod, 16, "RAMDISK-%s", (rd_dev->rd_direct) ? "DR" : "MCP");
-	snprintf(rev, 4, "%s", (rd_dev->rd_direct) ? RD_DR_VERSION :
-						RD_MCP_VERSION);
+	snprintf(prod, 16, "RAMDISK-MCP");
+	snprintf(rev, 4, "%s", RD_MCP_VERSION);
 
 	dev_limits.limits.logical_block_size = RD_BLOCKSIZE;
-	dev_limits.limits.max_hw_sectors = RD_MAX_SECTORS;
-	dev_limits.limits.max_sectors = RD_MAX_SECTORS;
+	dev_limits.limits.max_hw_sectors = UINT_MAX;
+	dev_limits.limits.max_sectors = UINT_MAX;
 	dev_limits.hw_queue_depth = RD_MAX_DEVICE_QUEUE_DEPTH;
 	dev_limits.queue_depth = RD_DEVICE_QUEUE_DEPTH;
 
@@ -267,12 +244,10 @@ static struct se_device *rd_create_virtdevice(
 		goto fail;
 
 	rd_dev->rd_dev_id = rd_host->rd_host_dev_id_count++;
-	rd_dev->rd_queue_depth = dev->queue_depth;
 
-	pr_debug("CORE_RD[%u] - Added TCM %s Ramdisk Device ID: %u of"
+	pr_debug("CORE_RD[%u] - Added TCM MEMCPY Ramdisk Device ID: %u of"
 		" %u pages in %u tables, %lu total bytes\n",
-		rd_host->rd_host_id, (!rd_dev->rd_direct) ? "MEMCPY" :
-		"DIRECT", rd_dev->rd_dev_id, rd_dev->rd_page_count,
+		rd_host->rd_host_id, rd_dev->rd_dev_id, rd_dev->rd_page_count,
 		rd_dev->sg_table_count,
 		(unsigned long)(rd_dev->rd_page_count * PAGE_SIZE));
 
@@ -283,18 +258,6 @@ fail:
 	return ERR_PTR(ret);
 }
 
-static struct se_device *rd_MEMCPY_create_virtdevice(
-	struct se_hba *hba,
-	struct se_subsystem_dev *se_dev,
-	void *p)
-{
-	return rd_create_virtdevice(hba, se_dev, p, 0);
-}
-
-/*	rd_free_device(): (Part of se_subsystem_api_t template)
- *
- *
- */
 static void rd_free_device(void *p)
 {
 	struct rd_dev *rd_dev = p;
@@ -303,29 +266,6 @@ static void rd_free_device(void *p)
 	kfree(rd_dev);
 }
 
-static inline struct rd_request *RD_REQ(struct se_task *task)
-{
-	return container_of(task, struct rd_request, rd_task);
-}
-
-static struct se_task *
-rd_alloc_task(unsigned char *cdb)
-{
-	struct rd_request *rd_req;
-
-	rd_req = kzalloc(sizeof(struct rd_request), GFP_KERNEL);
-	if (!rd_req) {
-		pr_err("Unable to allocate struct rd_request\n");
-		return NULL;
-	}
-
-	return &rd_req->rd_task;
-}
-
-/*	rd_get_sg_table():
- *
- *
- */
 static struct rd_dev_sg_table *rd_get_sg_table(struct rd_dev *rd_dev, u32 page)
 {
 	u32 i;
@@ -344,277 +284,87 @@ static struct rd_dev_sg_table *rd_get_sg_table(struct rd_dev *rd_dev, u32 page)
 	return NULL;
 }
 
-/*	rd_MEMCPY_read():
- *
- *
- */
-static int rd_MEMCPY_read(struct rd_request *req)
+static int rd_execute_cmd(struct se_cmd *cmd, struct scatterlist *sgl,
+		u32 sgl_nents, enum dma_data_direction data_direction)
 {
-	struct se_task *task = &req->rd_task;
-	struct rd_dev *dev = req->rd_task.se_dev->dev_ptr;
+	struct se_device *se_dev = cmd->se_dev;
+	struct rd_dev *dev = se_dev->dev_ptr;
 	struct rd_dev_sg_table *table;
-	struct scatterlist *sg_d, *sg_s;
-	void *dst, *src;
-	u32 i = 0, j = 0, dst_offset = 0, src_offset = 0;
-	u32 length, page_end = 0, table_sg_end;
-	u32 rd_offset = req->rd_offset;
+	struct scatterlist *rd_sg;
+	struct sg_mapping_iter m;
+	u32 rd_offset;
+	u32 rd_size;
+	u32 rd_page;
+	u32 src_len;
+	u64 tmp;
 
-	table = rd_get_sg_table(dev, req->rd_page);
+	tmp = cmd->t_task_lba * se_dev->se_sub_dev->se_dev_attrib.block_size;
+	rd_offset = do_div(tmp, PAGE_SIZE);
+	rd_page = tmp;
+	rd_size = cmd->data_length;
+
+	table = rd_get_sg_table(dev, rd_page);
 	if (!table)
 		return -EINVAL;
 
-	table_sg_end = (table->page_end_offset - req->rd_page);
-	sg_d = task->task_sg;
-	sg_s = &table->sg_table[req->rd_page - table->page_start_offset];
+	rd_sg = &table->sg_table[rd_page - table->page_start_offset];
 
-	pr_debug("RD[%u]: Read LBA: %llu, Size: %u Page: %u, Offset:"
-		" %u\n", dev->rd_dev_id, task->task_lba, req->rd_size,
-		req->rd_page, req->rd_offset);
+	pr_debug("RD[%u]: %s LBA: %llu, Size: %u Page: %u, Offset: %u\n",
+			dev->rd_dev_id,
+			data_direction == DMA_FROM_DEVICE ? "Read" : "Write",
+			cmd->t_task_lba, rd_size, rd_page, rd_offset);
 
-	src_offset = rd_offset;
+	src_len = PAGE_SIZE - rd_offset;
+	sg_miter_start(&m, sgl, sgl_nents,
+			data_direction == DMA_FROM_DEVICE ?
+				SG_MITER_TO_SG : SG_MITER_FROM_SG);
+	while (rd_size) {
+		u32 len;
+		void *rd_addr;
 
-	while (req->rd_size) {
-		if ((sg_d[i].length - dst_offset) <
-		    (sg_s[j].length - src_offset)) {
-			length = (sg_d[i].length - dst_offset);
+		sg_miter_next(&m);
+		len = min((u32)m.length, src_len);
+		m.consumed = len;
 
-			pr_debug("Step 1 - sg_d[%d]: %p length: %d"
-				" offset: %u sg_s[%d].length: %u\n", i,
-				&sg_d[i], sg_d[i].length, sg_d[i].offset, j,
-				sg_s[j].length);
-			pr_debug("Step 1 - length: %u dst_offset: %u"
-				" src_offset: %u\n", length, dst_offset,
-				src_offset);
+		rd_addr = sg_virt(rd_sg) + rd_offset;
 
-			if (length > req->rd_size)
-				length = req->rd_size;
+		if (data_direction == DMA_FROM_DEVICE)
+			memcpy(m.addr, rd_addr, len);
+		else
+			memcpy(rd_addr, m.addr, len);
 
-			dst = sg_virt(&sg_d[i++]) + dst_offset;
-			BUG_ON(!dst);
-
-			src = sg_virt(&sg_s[j]) + src_offset;
-			BUG_ON(!src);
-
-			dst_offset = 0;
-			src_offset = length;
-			page_end = 0;
-		} else {
-			length = (sg_s[j].length - src_offset);
-
-			pr_debug("Step 2 - sg_d[%d]: %p length: %d"
-				" offset: %u sg_s[%d].length: %u\n", i,
-				&sg_d[i], sg_d[i].length, sg_d[i].offset,
-				j, sg_s[j].length);
-			pr_debug("Step 2 - length: %u dst_offset: %u"
-				" src_offset: %u\n", length, dst_offset,
-				src_offset);
-
-			if (length > req->rd_size)
-				length = req->rd_size;
-
-			dst = sg_virt(&sg_d[i]) + dst_offset;
-			BUG_ON(!dst);
-
-			if (sg_d[i].length == length) {
-				i++;
-				dst_offset = 0;
-			} else
-				dst_offset = length;
-
-			src = sg_virt(&sg_s[j++]) + src_offset;
-			BUG_ON(!src);
-
-			src_offset = 0;
-			page_end = 1;
-		}
-
-		memcpy(dst, src, length);
-
-		pr_debug("page: %u, remaining size: %u, length: %u,"
-			" i: %u, j: %u\n", req->rd_page,
-			(req->rd_size - length), length, i, j);
-
-		req->rd_size -= length;
-		if (!req->rd_size)
-			return 0;
-
-		if (!page_end)
+		rd_size -= len;
+		if (!rd_size)
 			continue;
 
-		if (++req->rd_page <= table->page_end_offset) {
-			pr_debug("page: %u in same page table\n",
-				req->rd_page);
+		src_len -= len;
+		if (src_len) {
+			rd_offset += len;
 			continue;
 		}
 
-		pr_debug("getting new page table for page: %u\n",
-				req->rd_page);
+		/* rd page completed, next one please */
+		rd_page++;
+		rd_offset = 0;
+		src_len = PAGE_SIZE;
+		if (rd_page <= table->page_end_offset) {
+			rd_sg++;
+			continue;
+		}
 
-		table = rd_get_sg_table(dev, req->rd_page);
-		if (!table)
+		table = rd_get_sg_table(dev, rd_page);
+		if (!table) {
+			sg_miter_stop(&m);
 			return -EINVAL;
-
-		sg_s = &table->sg_table[j = 0];
-	}
-
-	return 0;
-}
-
-/*	rd_MEMCPY_write():
- *
- *
- */
-static int rd_MEMCPY_write(struct rd_request *req)
-{
-	struct se_task *task = &req->rd_task;
-	struct rd_dev *dev = req->rd_task.se_dev->dev_ptr;
-	struct rd_dev_sg_table *table;
-	struct scatterlist *sg_d, *sg_s;
-	void *dst, *src;
-	u32 i = 0, j = 0, dst_offset = 0, src_offset = 0;
-	u32 length, page_end = 0, table_sg_end;
-	u32 rd_offset = req->rd_offset;
-
-	table = rd_get_sg_table(dev, req->rd_page);
-	if (!table)
-		return -EINVAL;
-
-	table_sg_end = (table->page_end_offset - req->rd_page);
-	sg_d = &table->sg_table[req->rd_page - table->page_start_offset];
-	sg_s = task->task_sg;
-
-	pr_debug("RD[%d] Write LBA: %llu, Size: %u, Page: %u,"
-		" Offset: %u\n", dev->rd_dev_id, task->task_lba, req->rd_size,
-		req->rd_page, req->rd_offset);
-
-	dst_offset = rd_offset;
-
-	while (req->rd_size) {
-		if ((sg_s[i].length - src_offset) <
-		    (sg_d[j].length - dst_offset)) {
-			length = (sg_s[i].length - src_offset);
-
-			pr_debug("Step 1 - sg_s[%d]: %p length: %d"
-				" offset: %d sg_d[%d].length: %u\n", i,
-				&sg_s[i], sg_s[i].length, sg_s[i].offset,
-				j, sg_d[j].length);
-			pr_debug("Step 1 - length: %u src_offset: %u"
-				" dst_offset: %u\n", length, src_offset,
-				dst_offset);
-
-			if (length > req->rd_size)
-				length = req->rd_size;
-
-			src = sg_virt(&sg_s[i++]) + src_offset;
-			BUG_ON(!src);
-
-			dst = sg_virt(&sg_d[j]) + dst_offset;
-			BUG_ON(!dst);
-
-			src_offset = 0;
-			dst_offset = length;
-			page_end = 0;
-		} else {
-			length = (sg_d[j].length - dst_offset);
-
-			pr_debug("Step 2 - sg_s[%d]: %p length: %d"
-				" offset: %d sg_d[%d].length: %u\n", i,
-				&sg_s[i], sg_s[i].length, sg_s[i].offset,
-				j, sg_d[j].length);
-			pr_debug("Step 2 - length: %u src_offset: %u"
-				" dst_offset: %u\n", length, src_offset,
-				dst_offset);
-
-			if (length > req->rd_size)
-				length = req->rd_size;
-
-			src = sg_virt(&sg_s[i]) + src_offset;
-			BUG_ON(!src);
-
-			if (sg_s[i].length == length) {
-				i++;
-				src_offset = 0;
-			} else
-				src_offset = length;
-
-			dst = sg_virt(&sg_d[j++]) + dst_offset;
-			BUG_ON(!dst);
-
-			dst_offset = 0;
-			page_end = 1;
 		}
 
-		memcpy(dst, src, length);
-
-		pr_debug("page: %u, remaining size: %u, length: %u,"
-			" i: %u, j: %u\n", req->rd_page,
-			(req->rd_size - length), length, i, j);
-
-		req->rd_size -= length;
-		if (!req->rd_size)
-			return 0;
-
-		if (!page_end)
-			continue;
-
-		if (++req->rd_page <= table->page_end_offset) {
-			pr_debug("page: %u in same page table\n",
-				req->rd_page);
-			continue;
-		}
-
-		pr_debug("getting new page table for page: %u\n",
-				req->rd_page);
-
-		table = rd_get_sg_table(dev, req->rd_page);
-		if (!table)
-			return -EINVAL;
-
-		sg_d = &table->sg_table[j = 0];
+		/* since we increment, the first sg entry is correct */
+		rd_sg = table->sg_table;
 	}
+	sg_miter_stop(&m);
 
+	target_complete_cmd(cmd, SAM_STAT_GOOD);
 	return 0;
-}
-
-/*	rd_MEMCPY_do_task(): (Part of se_subsystem_api_t template)
- *
- *
- */
-static int rd_MEMCPY_do_task(struct se_task *task)
-{
-	struct se_device *dev = task->se_dev;
-	struct rd_request *req = RD_REQ(task);
-	unsigned long long lba;
-	int ret;
-
-	req->rd_page = (task->task_lba * dev->se_sub_dev->se_dev_attrib.block_size) / PAGE_SIZE;
-	lba = task->task_lba;
-	req->rd_offset = (do_div(lba,
-			  (PAGE_SIZE / dev->se_sub_dev->se_dev_attrib.block_size))) *
-			   dev->se_sub_dev->se_dev_attrib.block_size;
-	req->rd_size = task->task_size;
-
-	if (task->task_data_direction == DMA_FROM_DEVICE)
-		ret = rd_MEMCPY_read(req);
-	else
-		ret = rd_MEMCPY_write(req);
-
-	if (ret != 0)
-		return ret;
-
-	task->task_scsi_status = GOOD;
-	transport_complete_task(task, 1);
-
-	return PYX_TRANSPORT_SENT_TO_TRANSPORT;
-}
-
-/*	rd_free_task(): (Part of se_subsystem_api_t template)
- *
- *
- */
-static void rd_free_task(struct se_task *task)
-{
-	kfree(RD_REQ(task));
 }
 
 enum {
@@ -643,7 +393,7 @@ static ssize_t rd_set_configfs_dev_params(
 
 	orig = opts;
 
-	while ((ptr = strsep(&opts, ",")) != NULL) {
+	while ((ptr = strsep(&opts, ",\n")) != NULL) {
 		if (!*ptr)
 			continue;
 
@@ -683,24 +433,12 @@ static ssize_t rd_show_configfs_dev_params(
 	char *b)
 {
 	struct rd_dev *rd_dev = se_dev->se_dev_su_ptr;
-	ssize_t bl = sprintf(b, "TCM RamDisk ID: %u  RamDisk Makeup: %s\n",
-			rd_dev->rd_dev_id, (rd_dev->rd_direct) ?
-			"rd_direct" : "rd_mcp");
+	ssize_t bl = sprintf(b, "TCM RamDisk ID: %u  RamDisk Makeup: rd_mcp\n",
+			rd_dev->rd_dev_id);
 	bl += sprintf(b + bl, "        PAGES/PAGE_SIZE: %u*%lu"
 			"  SG_table_count: %u\n", rd_dev->rd_page_count,
 			PAGE_SIZE, rd_dev->sg_table_count);
 	return bl;
-}
-
-/*	rd_get_cdb(): (Part of se_subsystem_api_t template)
- *
- *
- */
-static unsigned char *rd_get_cdb(struct se_task *task)
-{
-	struct rd_request *req = RD_REQ(task);
-
-	return req->rd_scsi_cdb;
 }
 
 static u32 rd_get_device_rev(struct se_device *dev)
@@ -727,16 +465,13 @@ static struct se_subsystem_api rd_mcp_template = {
 	.transport_type		= TRANSPORT_PLUGIN_VHBA_VDEV,
 	.attach_hba		= rd_attach_hba,
 	.detach_hba		= rd_detach_hba,
-	.allocate_virtdevice	= rd_MEMCPY_allocate_virtdevice,
-	.create_virtdevice	= rd_MEMCPY_create_virtdevice,
+	.allocate_virtdevice	= rd_allocate_virtdevice,
+	.create_virtdevice	= rd_create_virtdevice,
 	.free_device		= rd_free_device,
-	.alloc_task		= rd_alloc_task,
-	.do_task		= rd_MEMCPY_do_task,
-	.free_task		= rd_free_task,
+	.execute_cmd		= rd_execute_cmd,
 	.check_configfs_dev_params = rd_check_configfs_dev_params,
 	.set_configfs_dev_params = rd_set_configfs_dev_params,
 	.show_configfs_dev_params = rd_show_configfs_dev_params,
-	.get_cdb		= rd_get_cdb,
 	.get_device_rev		= rd_get_device_rev,
 	.get_device_type	= rd_get_device_type,
 	.get_blocks		= rd_get_blocks,

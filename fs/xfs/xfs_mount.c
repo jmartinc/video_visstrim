@@ -22,6 +22,7 @@
 #include "xfs_log.h"
 #include "xfs_inum.h"
 #include "xfs_trans.h"
+#include "xfs_trans_priv.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
 #include "xfs_dir2.h"
@@ -37,14 +38,10 @@
 #include "xfs_rtalloc.h"
 #include "xfs_bmap.h"
 #include "xfs_error.h"
-#include "xfs_rw.h"
 #include "xfs_quota.h"
 #include "xfs_fsops.h"
 #include "xfs_utils.h"
 #include "xfs_trace.h"
-
-
-STATIC void	xfs_unmountfs_wait(xfs_mount_t *);
 
 
 #ifdef HAVE_PERCPU_SB
@@ -161,7 +158,7 @@ xfs_uuid_mount(
 
  out_duplicate:
 	mutex_unlock(&xfs_uuid_table_mutex);
-	xfs_warn(mp, "Filesystem has duplicate UUID - can't mount");
+	xfs_warn(mp, "Filesystem has duplicate UUID %pU - can't mount", uuid);
 	return XFS_ERROR(EINVAL);
 }
 
@@ -556,9 +553,11 @@ out_unwind:
 
 void
 xfs_sb_from_disk(
-	xfs_sb_t	*to,
+	struct xfs_mount	*mp,
 	xfs_dsb_t	*from)
 {
+	struct xfs_sb *to = &mp->m_sb;
+
 	to->sb_magicnum = be32_to_cpu(from->sb_magicnum);
 	to->sb_blocksize = be32_to_cpu(from->sb_blocksize);
 	to->sb_dblocks = be64_to_cpu(from->sb_dblocks);
@@ -684,8 +683,8 @@ xfs_readsb(xfs_mount_t *mp, int flags)
 	sector_size = xfs_getsize_buftarg(mp->m_ddev_targp);
 
 reread:
-	bp = xfs_buf_read_uncached(mp, mp->m_ddev_targp,
-					XFS_SB_DADDR, sector_size, 0);
+	bp = xfs_buf_read_uncached(mp->m_ddev_targp, XFS_SB_DADDR,
+					BTOBB(sector_size), 0);
 	if (!bp) {
 		if (loud)
 			xfs_warn(mp, "SB buffer read failed");
@@ -696,7 +695,7 @@ reread:
 	 * Initialize the mount structure from the superblock.
 	 * But first do some basic consistency checking.
 	 */
-	xfs_sb_from_disk(&mp->m_sb, XFS_BUF_TO_SBP(bp));
+	xfs_sb_from_disk(mp, XFS_BUF_TO_SBP(bp));
 	error = xfs_mount_validate_sb(mp, &(mp->m_sb), flags);
 	if (error) {
 		if (loud)
@@ -1033,9 +1032,9 @@ xfs_check_sizes(xfs_mount_t *mp)
 		xfs_warn(mp, "filesystem size mismatch detected");
 		return XFS_ERROR(EFBIG);
 	}
-	bp = xfs_buf_read_uncached(mp, mp->m_ddev_targp,
+	bp = xfs_buf_read_uncached(mp->m_ddev_targp,
 					d - XFS_FSS_TO_BB(mp, 1),
-					BBTOB(XFS_FSS_TO_BB(mp, 1)), 0);
+					XFS_FSS_TO_BB(mp, 1), 0);
 	if (!bp) {
 		xfs_warn(mp, "last sector read failed");
 		return EIO;
@@ -1048,9 +1047,9 @@ xfs_check_sizes(xfs_mount_t *mp)
 			xfs_warn(mp, "log size mismatch detected");
 			return XFS_ERROR(EFBIG);
 		}
-		bp = xfs_buf_read_uncached(mp, mp->m_logdev_targp,
+		bp = xfs_buf_read_uncached(mp->m_logdev_targp,
 					d - XFS_FSB_TO_BB(mp, 1),
-					XFS_FSB_TO_B(mp, 1), 0);
+					XFS_FSB_TO_BB(mp, 1), 0);
 		if (!bp) {
 			xfs_warn(mp, "log device read failed");
 			return EIO;
@@ -1289,7 +1288,7 @@ xfs_mountfs(
 			      XFS_FSB_TO_BB(mp, sbp->sb_logblocks));
 	if (error) {
 		xfs_warn(mp, "log mount failed");
-		goto out_free_perag;
+		goto out_fail_wait;
 	}
 
 	/*
@@ -1316,7 +1315,7 @@ xfs_mountfs(
 	     !mp->m_sb.sb_inprogress) {
 		error = xfs_initialize_perag_data(mp, sbp->sb_agcount);
 		if (error)
-			goto out_free_perag;
+			goto out_fail_wait;
 	}
 
 	/*
@@ -1440,6 +1439,10 @@ xfs_mountfs(
 	IRELE(rip);
  out_log_dealloc:
 	xfs_log_unmount(mp);
+ out_fail_wait:
+	if (mp->m_logdev_targp && mp->m_logdev_targp != mp->m_ddev_targp)
+		xfs_wait_buftarg(mp->m_logdev_targp);
+	xfs_wait_buftarg(mp->m_ddev_targp);
  out_free_perag:
 	xfs_free_perag(mp);
  out_remove_uuid:
@@ -1476,15 +1479,15 @@ xfs_unmountfs(
 	xfs_log_force(mp, XFS_LOG_SYNC);
 
 	/*
-	 * Do a delwri reclaim pass first so that as many dirty inodes are
-	 * queued up for IO as possible. Then flush the buffers before making
-	 * a synchronous path to catch all the remaining inodes are reclaimed.
-	 * This makes the reclaim process as quick as possible by avoiding
-	 * synchronous writeout and blocking on inodes already in the delwri
-	 * state as much as possible.
+	 * Flush all pending changes from the AIL.
 	 */
-	xfs_reclaim_inodes(mp, 0);
-	XFS_bflush(mp->m_ddev_targp);
+	xfs_ail_push_all_sync(mp->m_ail);
+
+	/*
+	 * And reclaim all inodes.  At this point there should be no dirty
+	 * inode, and none should be pinned or locked, but use synchronous
+	 * reclaim just to be sure.
+	 */
 	xfs_reclaim_inodes(mp, SYNC_WAIT);
 
 	xfs_qm_unmount(mp);
@@ -1495,11 +1498,6 @@ xfs_unmountfs(
 	 * will skip pinned buffers.
 	 */
 	xfs_log_force(mp, XFS_LOG_SYNC);
-
-	xfs_binval(mp->m_ddev_targp);
-	if (mp->m_rtdev_targp) {
-		xfs_binval(mp->m_rtdev_targp);
-	}
 
 	/*
 	 * Unreserve any blocks we have so that when we unmount we don't account
@@ -1525,8 +1523,14 @@ xfs_unmountfs(
 	if (error)
 		xfs_warn(mp, "Unable to update superblock counters. "
 				"Freespace may not be correct on next mount.");
-	xfs_unmountfs_writesb(mp);
-	xfs_unmountfs_wait(mp); 		/* wait for async bufs */
+
+	/*
+	 * At this point we might have modified the superblock again and thus
+	 * added an item to the AIL, thus flush it again.
+	 */
+	xfs_ail_push_all_sync(mp->m_ail);
+	xfs_wait_buftarg(mp->m_ddev_targp);
+
 	xfs_log_unmount_write(mp);
 	xfs_log_unmount(mp);
 	xfs_uuid_unmount(mp);
@@ -1535,16 +1539,6 @@ xfs_unmountfs(
 	xfs_errortag_clearall(mp, 0);
 #endif
 	xfs_free_perag(mp);
-}
-
-STATIC void
-xfs_unmountfs_wait(xfs_mount_t *mp)
-{
-	if (mp->m_logdev_targp != mp->m_ddev_targp)
-		xfs_wait_buftarg(mp->m_logdev_targp);
-	if (mp->m_rtdev_targp)
-		xfs_wait_buftarg(mp->m_rtdev_targp);
-	xfs_wait_buftarg(mp->m_ddev_targp);
 }
 
 int
@@ -1592,37 +1586,6 @@ xfs_log_sbcount(xfs_mount_t *mp)
 	xfs_mod_sb(tp, XFS_SB_IFREE | XFS_SB_ICOUNT | XFS_SB_FDBLOCKS);
 	xfs_trans_set_sync(tp);
 	error = xfs_trans_commit(tp, 0);
-	return error;
-}
-
-int
-xfs_unmountfs_writesb(xfs_mount_t *mp)
-{
-	xfs_buf_t	*sbp;
-	int		error = 0;
-
-	/*
-	 * skip superblock write if fs is read-only, or
-	 * if we are doing a forced umount.
-	 */
-	if (!((mp->m_flags & XFS_MOUNT_RDONLY) ||
-		XFS_FORCED_SHUTDOWN(mp))) {
-
-		sbp = xfs_getsb(mp, 0);
-
-		XFS_BUF_UNDONE(sbp);
-		XFS_BUF_UNREAD(sbp);
-		XFS_BUF_UNDELAYWRITE(sbp);
-		XFS_BUF_WRITE(sbp);
-		XFS_BUF_UNASYNC(sbp);
-		ASSERT(sbp->b_target == mp->m_ddev_targp);
-		xfsbdstrat(mp, sbp);
-		error = xfs_buf_iowait(sbp);
-		if (error)
-			xfs_ioerror_alert("xfs_unmountfs_writesb",
-					  mp, sbp, XFS_BUF_ADDR(sbp));
-		xfs_buf_relse(sbp);
-	}
 	return error;
 }
 

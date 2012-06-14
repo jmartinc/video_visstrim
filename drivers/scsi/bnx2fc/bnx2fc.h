@@ -58,11 +58,11 @@
 
 #include "57xx_hsi_bnx2fc.h"
 #include "bnx2fc_debug.h"
-#include "../../net/cnic_if.h"
+#include "../../net/ethernet/broadcom/cnic_if.h"
 #include "bnx2fc_constants.h"
 
 #define BNX2FC_NAME		"bnx2fc"
-#define BNX2FC_VERSION		"1.0.4"
+#define BNX2FC_VERSION		"1.0.11"
 
 #define PFX			"bnx2fc: "
 
@@ -81,7 +81,7 @@
 #define BNX2FC_RQ_WQES_MAX	16
 #define BNX2FC_CQ_WQES_MAX	(BNX2FC_SQ_WQES_MAX + BNX2FC_RQ_WQES_MAX)
 
-#define BNX2FC_NUM_MAX_SESS	128
+#define BNX2FC_NUM_MAX_SESS	1024
 #define BNX2FC_NUM_MAX_SESS_LOG	(ilog2(BNX2FC_NUM_MAX_SESS))
 
 #define BNX2FC_MAX_OUTSTANDING_CMNDS	2048
@@ -114,6 +114,8 @@
 #define BNX2FC_HASH_TBL_CHUNK_SIZE	(16 * 1024)
 
 #define BNX2FC_MAX_SEQS			255
+#define BNX2FC_MAX_RETRY_CNT		3
+#define BNX2FC_MAX_RPORT_RETRY_CNT	255
 
 #define BNX2FC_READ			(1 << 1)
 #define BNX2FC_WRITE			(1 << 0)
@@ -121,8 +123,10 @@
 #define BNX2FC_MIN_XID			0
 #define BNX2FC_MAX_XID			\
 			(BNX2FC_MAX_OUTSTANDING_CMNDS + BNX2FC_ELSTM_XIDS - 1)
+#define FCOE_MAX_NUM_XIDS		0x2000
 #define FCOE_MIN_XID			(BNX2FC_MAX_XID + 1)
-#define FCOE_MAX_XID			(FCOE_MIN_XID + 4095)
+#define FCOE_MAX_XID			(FCOE_MIN_XID + FCOE_MAX_NUM_XIDS - 1)
+#define FCOE_XIDS_PER_CPU		(FCOE_MIN_XID + (512 * nr_cpu_ids) - 1)
 #define BNX2FC_MAX_LUN			0xFFFF
 #define BNX2FC_MAX_FCP_TGT		256
 #define BNX2FC_MAX_CMD_LEN		16
@@ -144,6 +148,9 @@
 #define SRR_RETRY_COUNT			5
 #define REC_RETRY_COUNT			1
 #define BNX2FC_NUM_ERR_BITS		63
+
+#define BNX2FC_RELOGIN_WAIT_TIME	200
+#define BNX2FC_RELOGIN_WAIT_CNT		10
 
 /* bnx2fc driver uses only one instance of fcoe_percpu_s */
 extern struct fcoe_percpu_s bnx2fc_global;
@@ -221,12 +228,16 @@ struct bnx2fc_interface {
 	struct packet_type fip_packet_type;
 	struct workqueue_struct *timer_work_queue;
 	struct kref kref;
-	struct fcoe_ctlr ctlr;
 	u8 vlan_enabled;
 	int vlan_id;
+	bool enabled;
 };
 
-#define bnx2fc_from_ctlr(fip) container_of(fip, struct bnx2fc_interface, ctlr)
+#define bnx2fc_from_ctlr(x)			\
+	((struct bnx2fc_interface *)((x) + 1))
+
+#define bnx2fc_to_ctlr(x)					\
+	((struct fcoe_ctlr *)(((struct fcoe_ctlr *)(x)) - 1))
 
 struct bnx2fc_lport {
 	struct list_head list;

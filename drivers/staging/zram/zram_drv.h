@@ -18,7 +18,7 @@
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
 
-#include "xvmalloc.h"
+#include "../zsmalloc/zsmalloc.h"
 
 /*
  * Some arbitrary value. This is just to catch
@@ -47,11 +47,11 @@ static const unsigned default_disksize_perc_ram = 25;
  * Pages that compress to size greater than this are stored
  * uncompressed in memory.
  */
-static const unsigned max_zpage_size = PAGE_SIZE / 4 * 3;
+static const size_t max_zpage_size = PAGE_SIZE / 4 * 3;
 
 /*
  * NOTE: max_zpage_size must be less than or equal to:
- *   XV_MAX_ALLOC_SIZE - sizeof(struct zobj_header)
+ *   ZS_MAX_ALLOC_SIZE - sizeof(struct zobj_header)
  * otherwise, xv_malloc() would always return failure.
  */
 
@@ -81,8 +81,8 @@ enum zram_pageflags {
 
 /* Allocated for each disk page */
 struct table {
-	struct page *page;
-	u16 offset;
+	void *handle;
+	u16 size;	/* object size (excluding header) */
 	u8 count;	/* object ref count (not yet used) */
 	u8 flags;
 } __attribute__((aligned(4)));
@@ -102,7 +102,7 @@ struct zram_stats {
 };
 
 struct zram {
-	struct xv_pool *mem_pool;
+	struct zs_pool *mem_pool;
 	void *compress_workmem;
 	void *compress_buffer;
 	struct table *table;
@@ -112,8 +112,8 @@ struct zram {
 	struct request_queue *queue;
 	struct gendisk *disk;
 	int init_done;
-	/* Prevent concurrent execution of device init and reset */
-	struct mutex init_lock;
+	/* Prevent concurrent execution of device init, reset and R/W request */
+	struct rw_semaphore init_lock;
 	/*
 	 * This is the limit on amount of *uncompressed* worth of data
 	 * we can store in a disk.
@@ -123,13 +123,13 @@ struct zram {
 	struct zram_stats stats;
 };
 
-extern struct zram *devices;
-extern unsigned int num_devices;
+extern struct zram *zram_devices;
+unsigned int zram_get_num_devices(void);
 #ifdef CONFIG_SYSFS
 extern struct attribute_group zram_disk_attr_group;
 #endif
 
 extern int zram_init_device(struct zram *zram);
-extern void zram_reset_device(struct zram *zram);
+extern void __zram_reset_device(struct zram *zram);
 
 #endif

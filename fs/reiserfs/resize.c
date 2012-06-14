@@ -13,8 +13,7 @@
 #include <linux/vmalloc.h>
 #include <linux/string.h>
 #include <linux/errno.h>
-#include <linux/reiserfs_fs.h>
-#include <linux/reiserfs_fs_sb.h>
+#include "reiserfs.h"
 #include <linux/buffer_head.h>
 
 int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
@@ -111,15 +110,13 @@ int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
 		/* allocate additional bitmap blocks, reallocate array of bitmap
 		 * block pointers */
 		bitmap =
-		    vmalloc(sizeof(struct reiserfs_bitmap_info) * bmap_nr_new);
+		    vzalloc(sizeof(struct reiserfs_bitmap_info) * bmap_nr_new);
 		if (!bitmap) {
 			/* Journal bitmaps are still supersized, but the memory isn't
 			 * leaked, so I guess it's ok */
 			printk("reiserfs_resize: unable to allocate memory.\n");
 			return -ENOMEM;
 		}
-		memset(bitmap, 0,
-		       sizeof(struct reiserfs_bitmap_info) * bmap_nr_new);
 		for (i = 0; i < bmap_nr; i++)
 			bitmap[i] = old_bitmap[i];
 
@@ -203,7 +200,6 @@ int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
 					  (bmap_nr_new - bmap_nr)));
 	PUT_SB_BLOCK_COUNT(s, block_count_new);
 	PUT_SB_BMAP_NR(s, bmap_would_wrap(bmap_nr_new) ? : bmap_nr_new);
-	s->s_dirt = 1;
 
 	journal_mark_dirty(&th, s, SB_BUFFER_WITH_SB(s));
 

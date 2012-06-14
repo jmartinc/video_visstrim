@@ -12,6 +12,7 @@
 #include <linux/pci.h>
 #include <linux/moduleparam.h>
 #include <linux/pci_ids.h>
+#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include "ctatc.h"
@@ -31,7 +32,7 @@ module_param(multiple, uint, S_IRUGO);
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 static unsigned int subsystem[SNDRV_CARDS];
 
 module_param_array(index, int, NULL, 0444);
@@ -153,15 +154,4 @@ static struct pci_driver ct_driver = {
 #endif
 };
 
-static int __init ct_card_init(void)
-{
-	return pci_register_driver(&ct_driver);
-}
-
-static void __exit ct_card_exit(void)
-{
-	pci_unregister_driver(&ct_driver);
-}
-
-module_init(ct_card_init)
-module_exit(ct_card_exit)
+module_pci_driver(ct_driver);

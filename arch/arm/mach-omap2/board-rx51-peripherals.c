@@ -15,6 +15,7 @@
 #include <linux/input/matrix_keypad.h>
 #include <linux/spi/spi.h>
 #include <linux/wl12xx.h>
+#include <linux/spi/tsc2005.h>
 #include <linux/i2c.h>
 #include <linux/i2c/twl.h>
 #include <linux/clk.h>
@@ -24,10 +25,11 @@
 #include <linux/gpio_keys.h>
 #include <linux/mmc/host.h>
 #include <linux/power/isp1704_charger.h>
+#include <asm/system_info.h>
 
 #include <plat/mcspi.h>
 #include <plat/board.h>
-#include <plat/common.h>
+#include "common.h"
 #include <plat/dma.h>
 #include <plat/gpmc.h>
 #include <plat/onenand.h>
@@ -42,6 +44,7 @@
 #include <linux/leds-lp5523.h>
 
 #include <../drivers/staging/iio/light/tsl2563.h>
+#include <linux/lis3lv02d.h>
 
 #include "mux.h"
 #include "hsmmc.h"
@@ -58,6 +61,12 @@
 
 #define RX51_USB_TRANSCEIVER_RST_GPIO	67
 
+#define RX51_TSC2005_RESET_GPIO         104
+#define RX51_TSC2005_IRQ_GPIO           100
+
+#define LIS302_IRQ1_GPIO 181
+#define LIS302_IRQ2_GPIO 180  /* Not yet in use */
+
 /* list all spi devices here */
 enum {
 	RX51_SPI_WL1251,
@@ -66,6 +75,78 @@ enum {
 };
 
 static struct wl12xx_platform_data wl1251_pdata;
+static struct tsc2005_platform_data tsc2005_pdata;
+
+#if defined(CONFIG_SENSORS_LIS3_I2C) || defined(CONFIG_SENSORS_LIS3_I2C_MODULE)
+static int lis302_setup(void)
+{
+	int err;
+	int irq1 = LIS302_IRQ1_GPIO;
+	int irq2 = LIS302_IRQ2_GPIO;
+
+	/* gpio for interrupt pin 1 */
+	err = gpio_request(irq1, "lis3lv02dl_irq1");
+	if (err) {
+		printk(KERN_ERR "lis3lv02dl: gpio request failed\n");
+		goto out;
+	}
+
+	/* gpio for interrupt pin 2 */
+	err = gpio_request(irq2, "lis3lv02dl_irq2");
+	if (err) {
+		gpio_free(irq1);
+		printk(KERN_ERR "lis3lv02dl: gpio request failed\n");
+		goto out;
+	}
+
+	gpio_direction_input(irq1);
+	gpio_direction_input(irq2);
+
+out:
+	return err;
+}
+
+static int lis302_release(void)
+{
+	gpio_free(LIS302_IRQ1_GPIO);
+	gpio_free(LIS302_IRQ2_GPIO);
+
+	return 0;
+}
+
+static struct lis3lv02d_platform_data rx51_lis3lv02d_data = {
+	.click_flags    = LIS3_CLICK_SINGLE_X | LIS3_CLICK_SINGLE_Y |
+			  LIS3_CLICK_SINGLE_Z,
+	/* Limits are 0.5g * value */
+	.click_thresh_x = 8,
+	.click_thresh_y = 8,
+	.click_thresh_z = 10,
+	/* Click must be longer than time limit */
+	.click_time_limit = 9,
+	/* Kind of debounce filter */
+	.click_latency    = 50,
+
+	/* Limits for all axis. millig-value / 18 to get HW values */
+	.wakeup_flags = LIS3_WAKEUP_X_HI | LIS3_WAKEUP_Y_HI,
+	.wakeup_thresh = 800 / 18,
+	.wakeup_flags2 = LIS3_WAKEUP_Z_HI ,
+	.wakeup_thresh2 = 900 / 18,
+
+	.hipass_ctrl = LIS3_HIPASS1_DISABLE | LIS3_HIPASS2_DISABLE,
+
+	/* Interrupt line 2 for click detection, line 1 for thresholds */
+	.irq_cfg = LIS3_IRQ2_CLICK | LIS3_IRQ1_FF_WU_12,
+
+	.axis_x = LIS3_DEV_X,
+	.axis_y = LIS3_INV_DEV_Y,
+	.axis_z = LIS3_INV_DEV_Z,
+	.setup_resources = lis302_setup,
+	.release_resources = lis302_release,
+	.st_min_limits = {-32, 3, 3},
+	.st_max_limits = {-3, 32, 32},
+	.irq2 = OMAP_GPIO_IRQ(LIS302_IRQ2_GPIO),
+};
+#endif
 
 #if defined(CONFIG_SENSORS_TSL2563) || defined(CONFIG_SENSORS_TSL2563_MODULE)
 static struct tsl2563_platform_data rx51_tsl2563_platform_data = {
@@ -133,17 +214,14 @@ static struct lp5523_platform_data rx51_lp5523_platform_data = {
 
 static struct omap2_mcspi_device_config wl1251_mcspi_config = {
 	.turbo_mode	= 0,
-	.single_channel	= 1,
 };
 
 static struct omap2_mcspi_device_config mipid_mcspi_config = {
 	.turbo_mode	= 0,
-	.single_channel	= 1,
 };
 
 static struct omap2_mcspi_device_config tsc2005_mcspi_config = {
 	.turbo_mode	= 0,
-	.single_channel	= 1,
 };
 
 static struct spi_board_info rx51_peripherals_spi_board_info[] __initdata = {
@@ -167,10 +245,9 @@ static struct spi_board_info rx51_peripherals_spi_board_info[] __initdata = {
 		.modalias		= "tsc2005",
 		.bus_num		= 1,
 		.chip_select		= 0,
-		/* .irq = OMAP_GPIO_IRQ(RX51_TSC2005_IRQ_GPIO),*/
 		.max_speed_hz		= 6000000,
 		.controller_data	= &tsc2005_mcspi_config,
-		/* .platform_data = &tsc2005_config,*/
+		.platform_data		= &tsc2005_pdata,
 	},
 };
 
@@ -193,7 +270,7 @@ static struct platform_device rx51_charger_device = {
 static void __init rx51_charger_init(void)
 {
 	WARN_ON(gpio_request_one(RX51_USB_TRANSCEIVER_RST_GPIO,
-		GPIOF_OUT_INIT_LOW, "isp1704_reset"));
+		GPIOF_OUT_INIT_HIGH, "isp1704_reset"));
 
 	platform_device_register(&rx51_charger_device);
 }
@@ -870,11 +947,11 @@ static struct twl4030_power_data rx51_t2scripts_data __initdata = {
 	.resource_config = twl4030_rconfig,
 };
 
-struct twl4030_vibra_data rx51_vibra_data __initdata = {
+static struct twl4030_vibra_data rx51_vibra_data __initdata = {
 	.coexist	= 0,
 };
 
-struct twl4030_audio_data rx51_audio_data __initdata = {
+static struct twl4030_audio_data rx51_audio_data __initdata = {
 	.audio_mclk	= 26000000,
 	.vibra		= &rx51_vibra_data,
 };
@@ -900,7 +977,6 @@ static struct twl4030_platform_data rx51_twldata __initdata = {
 };
 
 static struct tpa6130a2_platform_data rx51_tpa6130a2_data __initdata_or_module = {
-	.id			= TPA6130A2,
 	.power_gpio		= 98,
 };
 
@@ -941,9 +1017,22 @@ static struct i2c_board_info __initdata rx51_peripherals_i2c_board_info_2[] = {
 	},
 #endif
 	{
+		I2C_BOARD_INFO("bq27200", 0x55),
+	},
+	{
 		I2C_BOARD_INFO("tpa6130a2", 0x60),
 		.platform_data = &rx51_tpa6130a2_data,
 	}
+};
+
+static struct i2c_board_info __initdata rx51_peripherals_i2c_board_info_3[] = {
+#if defined(CONFIG_SENSORS_LIS3_I2C) || defined(CONFIG_SENSORS_LIS3_I2C_MODULE)
+	{
+		I2C_BOARD_INFO("lis3lv02d", 0x1d),
+		.platform_data = &rx51_lis3lv02d_data,
+		.irq = OMAP_GPIO_IRQ(LIS302_IRQ1_GPIO),
+	},
+#endif
 };
 
 static int __init rx51_i2c_init(void)
@@ -967,7 +1056,8 @@ static int __init rx51_i2c_init(void)
 	omap_pmic_init(1, 2200, "twl5030", INT_34XX_SYS_NIRQ, &rx51_twldata);
 	omap_register_i2c_bus(2, 100, rx51_peripherals_i2c_board_info_2,
 			      ARRAY_SIZE(rx51_peripherals_i2c_board_info_2));
-	omap_register_i2c_bus(3, 400, NULL, 0);
+	omap_register_i2c_bus(3, 400, rx51_peripherals_i2c_board_info_3,
+			      ARRAY_SIZE(rx51_peripherals_i2c_board_info_3));
 	return 0;
 }
 
@@ -1087,6 +1177,47 @@ error:
 	 */
 }
 
+static struct tsc2005_platform_data tsc2005_pdata = {
+	.ts_pressure_max	= 2048,
+	.ts_pressure_fudge	= 2,
+	.ts_x_max		= 4096,
+	.ts_x_fudge		= 4,
+	.ts_y_max		= 4096,
+	.ts_y_fudge		= 7,
+	.ts_x_plate_ohm		= 280,
+	.esd_timeout_ms		= 8000,
+};
+
+static struct gpio rx51_tsc2005_gpios[] __initdata = {
+	{ RX51_TSC2005_IRQ_GPIO,   GPIOF_IN,		"tsc2005 IRQ"	},
+	{ RX51_TSC2005_RESET_GPIO, GPIOF_OUT_INIT_HIGH,	"tsc2005 reset"	},
+};
+
+static void rx51_tsc2005_set_reset(bool enable)
+{
+	gpio_set_value(RX51_TSC2005_RESET_GPIO, enable);
+}
+
+static void __init rx51_init_tsc2005(void)
+{
+	int r;
+
+	omap_mux_init_gpio(RX51_TSC2005_RESET_GPIO, OMAP_PIN_OUTPUT);
+	omap_mux_init_gpio(RX51_TSC2005_IRQ_GPIO, OMAP_PIN_INPUT_PULLUP);
+
+	r = gpio_request_array(rx51_tsc2005_gpios,
+			       ARRAY_SIZE(rx51_tsc2005_gpios));
+	if (r < 0) {
+		printk(KERN_ERR "tsc2005 board initialization failed\n");
+		tsc2005_pdata.esd_timeout_ms = 0;
+		return;
+	}
+
+	tsc2005_pdata.set_reset = rx51_tsc2005_set_reset;
+	rx51_peripherals_spi_board_info[RX51_SPI_TSC2005].irq =
+				gpio_to_irq(RX51_TSC2005_IRQ_GPIO);
+}
+
 void __init rx51_peripherals_init(void)
 {
 	rx51_i2c_init();
@@ -1095,13 +1226,14 @@ void __init rx51_peripherals_init(void)
 	board_smc91x_init();
 	rx51_add_gpio_keys();
 	rx51_init_wl1251();
+	rx51_init_tsc2005();
 	rx51_init_si4713();
 	spi_register_board_info(rx51_peripherals_spi_board_info,
 				ARRAY_SIZE(rx51_peripherals_spi_board_info));
 
 	partition = omap_mux_get("core");
 	if (partition)
-		omap2_hsmmc_init(mmc);
+		omap_hsmmc_init(mmc);
 
 	rx51_charger_init();
 }

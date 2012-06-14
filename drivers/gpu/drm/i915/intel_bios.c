@@ -1,5 +1,5 @@
 /*
- * Copyright © 2006 Intel Corporation
+ * Copyright Â© 2006 Intel Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -24,6 +24,7 @@
  *    Eric Anholt <eric@anholt.net>
  *
  */
+#include <linux/dmi.h>
 #include <drm/drm_dp_helper.h>
 #include "drmP.h"
 #include "drm.h"
@@ -173,6 +174,28 @@ get_lvds_dvo_timing(const struct bdb_lvds_lfp_data *lvds_lfp_data,
 	return (struct lvds_dvo_timing *)(entry + dvo_timing_offset);
 }
 
+/* get lvds_fp_timing entry
+ * this function may return NULL if the corresponding entry is invalid
+ */
+static const struct lvds_fp_timing *
+get_lvds_fp_timing(const struct bdb_header *bdb,
+		   const struct bdb_lvds_lfp_data *data,
+		   const struct bdb_lvds_lfp_data_ptrs *ptrs,
+		   int index)
+{
+	size_t data_ofs = (const u8 *)data - (const u8 *)bdb;
+	u16 data_size = ((const u16 *)data)[-1]; /* stored in header */
+	size_t ofs;
+
+	if (index >= ARRAY_SIZE(ptrs->ptr))
+		return NULL;
+	ofs = ptrs->ptr[index].fp_timing_offset;
+	if (ofs < data_ofs ||
+	    ofs + sizeof(struct lvds_fp_timing) > data_ofs + data_size)
+		return NULL;
+	return (const struct lvds_fp_timing *)((const u8 *)bdb + ofs);
+}
+
 /* Try to find integrated panel data */
 static void
 parse_lfp_panel_data(struct drm_i915_private *dev_priv,
@@ -182,6 +205,7 @@ parse_lfp_panel_data(struct drm_i915_private *dev_priv,
 	const struct bdb_lvds_lfp_data *lvds_lfp_data;
 	const struct bdb_lvds_lfp_data_ptrs *lvds_lfp_data_ptrs;
 	const struct lvds_dvo_timing *panel_dvo_timing;
+	const struct lvds_fp_timing *fp_timing;
 	struct drm_display_mode *panel_fixed_mode;
 	int i, downclock;
 
@@ -243,6 +267,19 @@ parse_lfp_panel_data(struct drm_i915_private *dev_priv,
 			      "Normal Clock %dKHz, downclock %dKHz\n",
 			      panel_fixed_mode->clock, 10*downclock);
 	}
+
+	fp_timing = get_lvds_fp_timing(bdb, lvds_lfp_data,
+				       lvds_lfp_data_ptrs,
+				       lvds_options->panel_type);
+	if (fp_timing) {
+		/* check the resolution, just to be sure */
+		if (fp_timing->x_res == panel_fixed_mode->hdisplay &&
+		    fp_timing->y_res == panel_fixed_mode->vdisplay) {
+			dev_priv->bios_lvds_val = fp_timing->lvds_reg_val;
+			DRM_DEBUG_KMS("VBT initial LVDS value %x\n",
+				      dev_priv->bios_lvds_val);
+		}
+	}
 }
 
 /* Try to find sdvo panel data */
@@ -255,6 +292,11 @@ parse_sdvo_panel_data(struct drm_i915_private *dev_priv,
 	int index;
 
 	index = i915_vbt_sdvo_panel_type;
+	if (index == -2) {
+		DRM_DEBUG_KMS("Ignore SDVO panel mode from BIOS VBT tables.\n");
+		return;
+	}
+
 	if (index == -1) {
 		struct bdb_sdvo_lvds_options *sdvo_lvds_options;
 
@@ -309,6 +351,13 @@ parse_general_features(struct drm_i915_private *dev_priv,
 		dev_priv->lvds_use_ssc = general->enable_ssc;
 		dev_priv->lvds_ssc_freq =
 			intel_bios_ssc_frequency(dev, general->ssc_freq);
+		dev_priv->display_clock_mode = general->display_clock_mode;
+		DRM_DEBUG_KMS("BDB_GENERAL_FEATURES int_tv_support %d int_crt_support %d lvds_use_ssc %d lvds_ssc_freq %d display_clock_mode %d\n",
+			      dev_priv->int_tv_support,
+			      dev_priv->int_crt_support,
+			      dev_priv->lvds_use_ssc,
+			      dev_priv->lvds_ssc_freq,
+			      dev_priv->display_clock_mode);
 	}
 }
 
@@ -324,11 +373,11 @@ parse_general_definitions(struct drm_i915_private *dev_priv,
 		if (block_size >= sizeof(*general)) {
 			int bus_pin = general->crt_ddc_gmbus_pin;
 			DRM_DEBUG_KMS("crt_ddc_bus_pin: %d\n", bus_pin);
-			if (bus_pin >= 1 && bus_pin <= 6)
+			if (intel_gmbus_is_port_valid(bus_pin))
 				dev_priv->crt_ddc_pin = bus_pin;
 		} else {
 			DRM_DEBUG_KMS("BDB_GD too small (%d). Invalid.\n",
-				  block_size);
+				      block_size);
 		}
 	}
 }
@@ -381,7 +430,7 @@ parse_sdvo_device_mapping(struct drm_i915_private *dev_priv,
 		if (p_child->dvo_port != DEVICE_PORT_DVOB &&
 			p_child->dvo_port != DEVICE_PORT_DVOC) {
 			/* skip the incorrect SDVO port */
-			DRM_DEBUG_KMS("Incorrect SDVO port. Skip it \n");
+			DRM_DEBUG_KMS("Incorrect SDVO port. Skip it\n");
 			continue;
 		}
 		DRM_DEBUG_KMS("the SDVO device with slave addr %2x is found on"
@@ -396,15 +445,13 @@ parse_sdvo_device_mapping(struct drm_i915_private *dev_priv,
 			p_mapping->dvo_wiring = p_child->dvo_wiring;
 			p_mapping->ddc_pin = p_child->ddc_pin;
 			p_mapping->i2c_pin = p_child->i2c_pin;
-			p_mapping->i2c_speed = p_child->i2c_speed;
 			p_mapping->initialized = 1;
-			DRM_DEBUG_KMS("SDVO device: dvo=%x, addr=%x, wiring=%d, ddc_pin=%d, i2c_pin=%d, i2c_speed=%d\n",
+			DRM_DEBUG_KMS("SDVO device: dvo=%x, addr=%x, wiring=%d, ddc_pin=%d, i2c_pin=%d\n",
 				      p_mapping->dvo_port,
 				      p_mapping->slave_addr,
 				      p_mapping->dvo_wiring,
 				      p_mapping->ddc_pin,
-				      p_mapping->i2c_pin,
-				      p_mapping->i2c_speed);
+				      p_mapping->i2c_pin);
 		} else {
 			DRM_DEBUG_KMS("Maybe one SDVO port is shared by "
 					 "two SDVO device.\n");
@@ -564,10 +611,10 @@ parse_device_mapping(struct drm_i915_private *dev_priv,
 		count++;
 	}
 	if (!count) {
-		DRM_DEBUG_KMS("no child dev is parsed from VBT \n");
+		DRM_DEBUG_KMS("no child dev is parsed from VBT\n");
 		return;
 	}
-	dev_priv->child_dev = kzalloc(sizeof(*p_child) * count, GFP_KERNEL);
+	dev_priv->child_dev = kcalloc(count, sizeof(*p_child), GFP_KERNEL);
 	if (!dev_priv->child_dev) {
 		DRM_DEBUG_KMS("No memory space for child device\n");
 		return;
@@ -610,11 +657,31 @@ init_vbt_defaults(struct drm_i915_private *dev_priv)
 	/* Default to using SSC */
 	dev_priv->lvds_use_ssc = 1;
 	dev_priv->lvds_ssc_freq = intel_bios_ssc_frequency(dev, 1);
-	DRM_DEBUG("Set default to SSC at %dMHz\n", dev_priv->lvds_ssc_freq);
+	DRM_DEBUG_KMS("Set default to SSC at %dMHz\n", dev_priv->lvds_ssc_freq);
 
 	/* eDP data */
 	dev_priv->edp.bpp = 18;
 }
+
+static int __init intel_no_opregion_vbt_callback(const struct dmi_system_id *id)
+{
+	DRM_DEBUG_KMS("Falling back to manually reading VBT from "
+		      "VBIOS ROM for %s\n",
+		      id->ident);
+	return 1;
+}
+
+static const struct dmi_system_id intel_no_opregion_vbt[] = {
+	{
+		.callback = intel_no_opregion_vbt_callback,
+		.ident = "ThinkCentre A57",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "97027RG"),
+		},
+	},
+	{ }
+};
 
 /**
  * intel_parse_bios - find VBT and initialize settings from the BIOS
@@ -636,10 +703,10 @@ intel_parse_bios(struct drm_device *dev)
 	init_vbt_defaults(dev_priv);
 
 	/* XXX Should this validation be moved to intel_opregion.c? */
-	if (dev_priv->opregion.vbt) {
+	if (!dmi_check_system(intel_no_opregion_vbt) && dev_priv->opregion.vbt) {
 		struct vbt_header *vbt = dev_priv->opregion.vbt;
 		if (memcmp(vbt->signature, "$VBT", 4) == 0) {
-			DRM_DEBUG_DRIVER("Using VBT from OpRegion: %20s\n",
+			DRM_DEBUG_KMS("Using VBT from OpRegion: %20s\n",
 					 vbt->signature);
 			bdb = (struct bdb_header *)((char *)vbt + vbt->bdb_offset);
 		} else
@@ -664,7 +731,7 @@ intel_parse_bios(struct drm_device *dev)
 		}
 
 		if (!vbt) {
-			DRM_ERROR("VBT signature missing\n");
+			DRM_DEBUG_DRIVER("VBT signature missing\n");
 			pci_unmap_rom(pdev, bios);
 			return -1;
 		}

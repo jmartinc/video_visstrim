@@ -553,6 +553,7 @@ struct mv_host_priv {
 
 #if defined(CONFIG_HAVE_CLK)
 	struct clk		*clk;
+	struct clk              **port_clks;
 #endif
 	/*
 	 * These consistent DMA memory pools give us guaranteed
@@ -3988,7 +3989,7 @@ static int mv_create_dma_pools(struct mv_host_priv *hpriv, struct device *dev)
 }
 
 static void mv_conf_mbus_windows(struct mv_host_priv *hpriv,
-				 struct mbus_dram_target_info *dram)
+				 const struct mbus_dram_target_info *dram)
 {
 	int i;
 
@@ -3998,7 +3999,7 @@ static void mv_conf_mbus_windows(struct mv_host_priv *hpriv,
 	}
 
 	for (i = 0; i < dram->num_cs; i++) {
-		struct mbus_dram_window *cs = dram->cs + i;
+		const struct mbus_dram_window *cs = dram->cs + i;
 
 		writel(((cs->size - 1) & 0xffff0000) |
 			(cs->mbus_attr << 8) |
@@ -4019,12 +4020,17 @@ static void mv_conf_mbus_windows(struct mv_host_priv *hpriv,
 static int mv_platform_probe(struct platform_device *pdev)
 {
 	const struct mv_sata_platform_data *mv_platform_data;
+	const struct mbus_dram_target_info *dram;
 	const struct ata_port_info *ppi[] =
 	    { &mv_port_info[chip_soc], NULL };
 	struct ata_host *host;
 	struct mv_host_priv *hpriv;
 	struct resource *res;
-	int n_ports, rc;
+	int n_ports = 0;
+	int rc;
+#if defined(CONFIG_HAVE_CLK)
+	int port;
+#endif
 
 	ata_print_version_once(&pdev->dev, DRV_VERSION);
 
@@ -4052,6 +4058,13 @@ static int mv_platform_probe(struct platform_device *pdev)
 
 	if (!host || !hpriv)
 		return -ENOMEM;
+#if defined(CONFIG_HAVE_CLK)
+	hpriv->port_clks = devm_kzalloc(&pdev->dev,
+					sizeof(struct clk *) * n_ports,
+					GFP_KERNEL);
+	if (!hpriv->port_clks)
+		return -ENOMEM;
+#endif
 	host->private_data = hpriv;
 	hpriv->n_ports = n_ports;
 	hpriv->board_idx = chip_soc;
@@ -4064,16 +4077,25 @@ static int mv_platform_probe(struct platform_device *pdev)
 #if defined(CONFIG_HAVE_CLK)
 	hpriv->clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(hpriv->clk))
-		dev_notice(&pdev->dev, "cannot get clkdev\n");
+		dev_notice(&pdev->dev, "cannot get optional clkdev\n");
 	else
-		clk_enable(hpriv->clk);
+		clk_prepare_enable(hpriv->clk);
+
+	for (port = 0; port < n_ports; port++) {
+		char port_number[16];
+		sprintf(port_number, "%d", port);
+		hpriv->port_clks[port] = clk_get(&pdev->dev, port_number);
+		if (!IS_ERR(hpriv->port_clks[port]))
+			clk_prepare_enable(hpriv->port_clks[port]);
+	}
 #endif
 
 	/*
 	 * (Re-)program MBUS remapping windows if we are asked to.
 	 */
-	if (mv_platform_data->dram != NULL)
-		mv_conf_mbus_windows(hpriv, mv_platform_data->dram);
+	dram = mv_mbus_dram_info();
+	if (dram)
+		mv_conf_mbus_windows(hpriv, dram);
 
 	rc = mv_create_dma_pools(hpriv, &pdev->dev);
 	if (rc)
@@ -4087,13 +4109,22 @@ static int mv_platform_probe(struct platform_device *pdev)
 	dev_info(&pdev->dev, "slots %u ports %d\n",
 		 (unsigned)MV_MAX_Q_DEPTH, host->n_ports);
 
-	return ata_host_activate(host, platform_get_irq(pdev, 0), mv_interrupt,
-				 IRQF_SHARED, &mv6_sht);
+	rc = ata_host_activate(host, platform_get_irq(pdev, 0), mv_interrupt,
+			       IRQF_SHARED, &mv6_sht);
+	if (!rc)
+		return 0;
+
 err:
 #if defined(CONFIG_HAVE_CLK)
 	if (!IS_ERR(hpriv->clk)) {
-		clk_disable(hpriv->clk);
+		clk_disable_unprepare(hpriv->clk);
 		clk_put(hpriv->clk);
+	}
+	for (port = 0; port < n_ports; port++) {
+		if (!IS_ERR(hpriv->port_clks[port])) {
+			clk_disable_unprepare(hpriv->port_clks[port]);
+			clk_put(hpriv->port_clks[port]);
+		}
 	}
 #endif
 
@@ -4110,17 +4141,23 @@ err:
  */
 static int __devexit mv_platform_remove(struct platform_device *pdev)
 {
-	struct device *dev = &pdev->dev;
-	struct ata_host *host = dev_get_drvdata(dev);
+	struct ata_host *host = platform_get_drvdata(pdev);
 #if defined(CONFIG_HAVE_CLK)
 	struct mv_host_priv *hpriv = host->private_data;
+	int port;
 #endif
 	ata_host_detach(host);
 
 #if defined(CONFIG_HAVE_CLK)
 	if (!IS_ERR(hpriv->clk)) {
-		clk_disable(hpriv->clk);
+		clk_disable_unprepare(hpriv->clk);
 		clk_put(hpriv->clk);
+	}
+	for (port = 0; port < host->n_ports; port++) {
+		if (!IS_ERR(hpriv->port_clks[port])) {
+			clk_disable_unprepare(hpriv->port_clks[port]);
+			clk_put(hpriv->port_clks[port]);
+		}
 	}
 #endif
 	return 0;
@@ -4129,7 +4166,7 @@ static int __devexit mv_platform_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM
 static int mv_platform_suspend(struct platform_device *pdev, pm_message_t state)
 {
-	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+	struct ata_host *host = platform_get_drvdata(pdev);
 	if (host)
 		return ata_host_suspend(host, state);
 	else
@@ -4138,18 +4175,19 @@ static int mv_platform_suspend(struct platform_device *pdev, pm_message_t state)
 
 static int mv_platform_resume(struct platform_device *pdev)
 {
-	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+	struct ata_host *host = platform_get_drvdata(pdev);
+	const struct mbus_dram_target_info *dram;
 	int ret;
 
 	if (host) {
 		struct mv_host_priv *hpriv = host->private_data;
-		const struct mv_sata_platform_data *mv_platform_data = \
-			pdev->dev.platform_data;
+
 		/*
 		 * (Re-)program MBUS remapping windows if we are asked to.
 		 */
-		if (mv_platform_data->dram != NULL)
-			mv_conf_mbus_windows(hpriv, mv_platform_data->dram);
+		dram = mv_mbus_dram_info();
+		if (dram)
+			mv_conf_mbus_windows(hpriv, dram);
 
 		/* initialize adapter */
 		ret = mv_init_host(host);
@@ -4353,7 +4391,7 @@ static int mv_pci_init_one(struct pci_dev *pdev,
 #ifdef CONFIG_PM
 static int mv_pci_device_resume(struct pci_dev *pdev)
 {
-	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+	struct ata_host *host = pci_get_drvdata(pdev);
 	int rc;
 
 	rc = ata_pci_device_do_resume(pdev);

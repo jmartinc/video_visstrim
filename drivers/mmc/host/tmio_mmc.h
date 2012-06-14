@@ -20,8 +20,8 @@
 #include <linux/mmc/tmio.h>
 #include <linux/mutex.h>
 #include <linux/pagemap.h>
-#include <linux/spinlock.h>
 #include <linux/scatterlist.h>
+#include <linux/spinlock.h>
 
 /* Definitions for values the CTRL_SDIO_STATUS register can take. */
 #define TMIO_SDIO_STAT_IOIRQ	0x0001
@@ -47,15 +47,13 @@ struct tmio_mmc_host {
 	struct mmc_request      *mrq;
 	struct mmc_data         *data;
 	struct mmc_host         *mmc;
-	unsigned int		sdio_irq_enabled;
+
+	/* Controller power state */
+	bool			power;
 
 	/* Callbacks for clock / power control */
 	void (*set_pwr)(struct platform_device *host, int state);
 	void (*set_clk_div)(struct platform_device *host, int state);
-
-	int			pm_error;
-	/* recognise system-wide suspend in runtime PM methods */
-	bool			pm_global;
 
 	/* pio related stuff */
 	struct scatterlist      *sg_ptr;
@@ -79,9 +77,14 @@ struct tmio_mmc_host {
 	struct delayed_work	delayed_reset_work;
 	struct work_struct	done;
 
+	/* Cache IRQ mask */
+	u32			sdcard_irq_mask;
+	u32			sdio_irq_mask;
+
 	spinlock_t		lock;		/* protect host private data */
 	unsigned long		last_req_ts;
 	struct mutex		ios_lock;	/* protect set_ios() context */
+	bool			native_hotplug;
 };
 
 int tmio_mmc_host_probe(struct tmio_mmc_host **host,
@@ -93,18 +96,21 @@ void tmio_mmc_do_data_irq(struct tmio_mmc_host *host);
 void tmio_mmc_enable_mmc_irqs(struct tmio_mmc_host *host, u32 i);
 void tmio_mmc_disable_mmc_irqs(struct tmio_mmc_host *host, u32 i);
 irqreturn_t tmio_mmc_irq(int irq, void *devid);
+irqreturn_t tmio_mmc_sdcard_irq(int irq, void *devid);
+irqreturn_t tmio_mmc_card_detect_irq(int irq, void *devid);
+irqreturn_t tmio_mmc_sdio_irq(int irq, void *devid);
 
 static inline char *tmio_mmc_kmap_atomic(struct scatterlist *sg,
 					 unsigned long *flags)
 {
 	local_irq_save(*flags);
-	return kmap_atomic(sg_page(sg), KM_BIO_SRC_IRQ) + sg->offset;
+	return kmap_atomic(sg_page(sg)) + sg->offset;
 }
 
 static inline void tmio_mmc_kunmap_atomic(struct scatterlist *sg,
 					  unsigned long *flags, void *virt)
 {
-	kunmap_atomic(virt - sg->offset, KM_BIO_SRC_IRQ);
+	kunmap_atomic(virt - sg->offset);
 	local_irq_restore(*flags);
 }
 
@@ -113,6 +119,7 @@ void tmio_mmc_start_dma(struct tmio_mmc_host *host, struct mmc_data *data);
 void tmio_mmc_enable_dma(struct tmio_mmc_host *host, bool enable);
 void tmio_mmc_request_dma(struct tmio_mmc_host *host, struct tmio_mmc_data *pdata);
 void tmio_mmc_release_dma(struct tmio_mmc_host *host);
+void tmio_mmc_abort_dma(struct tmio_mmc_host *host);
 #else
 static inline void tmio_mmc_start_dma(struct tmio_mmc_host *host,
 			       struct mmc_data *data)
@@ -131,6 +138,10 @@ static inline void tmio_mmc_request_dma(struct tmio_mmc_host *host,
 }
 
 static inline void tmio_mmc_release_dma(struct tmio_mmc_host *host)
+{
+}
+
+static inline void tmio_mmc_abort_dma(struct tmio_mmc_host *host)
 {
 }
 #endif

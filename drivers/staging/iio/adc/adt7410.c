@@ -13,9 +13,11 @@
 #include <linux/sysfs.h>
 #include <linux/list.h>
 #include <linux/i2c.h>
+#include <linux/module.h>
 
-#include "../iio.h"
-#include "../sysfs.h"
+#include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
+#include <linux/iio/events.h>
 
 /*
  * ADT7410 registers definition
@@ -142,7 +144,7 @@ static ssize_t adt7410_show_mode(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	u8 config;
 
@@ -165,7 +167,7 @@ static ssize_t adt7410_store_mode(struct device *dev,
 		const char *buf,
 		size_t len)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	u16 config;
 	int ret;
@@ -209,7 +211,7 @@ static ssize_t adt7410_show_resolution(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	int ret;
 	int bits;
@@ -231,7 +233,7 @@ static ssize_t adt7410_store_resolution(struct device *dev,
 		const char *buf,
 		size_t len)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	unsigned long data;
 	u16 config;
@@ -267,7 +269,7 @@ static ssize_t adt7410_show_id(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	u8 id;
 	int ret;
@@ -317,7 +319,7 @@ static ssize_t adt7410_show_value(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	u8 status;
 	u16 data;
@@ -365,19 +367,19 @@ static irqreturn_t adt7410_event_handler(int irq, void *private)
 		return IRQ_HANDLED;
 
 	if (status & ADT7410_STAT_T_HIGH)
-		iio_push_event(indio_dev, 0,
+		iio_push_event(indio_dev,
 			       IIO_UNMOD_EVENT_CODE(IIO_TEMP, 0,
 						    IIO_EV_TYPE_THRESH,
 						    IIO_EV_DIR_RISING),
 			       timestamp);
 	if (status & ADT7410_STAT_T_LOW)
-		iio_push_event(indio_dev, 0,
+		iio_push_event(indio_dev,
 			       IIO_UNMOD_EVENT_CODE(IIO_TEMP, 0,
 						    IIO_EV_TYPE_THRESH,
 						    IIO_EV_DIR_FALLING),
 			       timestamp);
 	if (status & ADT7410_STAT_T_CRIT)
-		iio_push_event(indio_dev, 0,
+		iio_push_event(indio_dev,
 			       IIO_UNMOD_EVENT_CODE(IIO_TEMP, 0,
 						    IIO_EV_TYPE_THRESH,
 						    IIO_EV_DIR_RISING),
@@ -390,7 +392,7 @@ static ssize_t adt7410_show_event_mode(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	int ret;
 
@@ -409,7 +411,7 @@ static ssize_t adt7410_set_event_mode(struct device *dev,
 		const char *buf,
 		size_t len)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	u16 config;
 	int ret;
@@ -442,7 +444,7 @@ static ssize_t adt7410_show_fault_queue(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	int ret;
 
@@ -458,7 +460,7 @@ static ssize_t adt7410_set_fault_queue(struct device *dev,
 		const char *buf,
 		size_t len)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	unsigned long data;
 	int ret;
@@ -488,7 +490,7 @@ static inline ssize_t adt7410_show_t_bound(struct device *dev,
 		u8 bound_reg,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	u16 data;
 	int ret;
@@ -506,7 +508,7 @@ static inline ssize_t adt7410_set_t_bound(struct device *dev,
 		const char *buf,
 		size_t len)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	long tmp1, tmp2;
 	u16 data;
@@ -626,7 +628,7 @@ static ssize_t adt7410_show_t_hyst(struct device *dev,
 		struct device_attribute *attr,
 		char *buf)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	int ret;
 	u8 t_hyst;
@@ -643,7 +645,7 @@ static inline ssize_t adt7410_set_t_hyst(struct device *dev,
 		const char *buf,
 		size_t len)
 {
-	struct iio_dev *dev_info = dev_get_drvdata(dev);
+	struct iio_dev *dev_info = dev_to_iio_dev(dev);
 	struct adt7410_chip_info *chip = iio_priv(dev_info);
 	int ret;
 	unsigned long data;
@@ -691,31 +693,19 @@ static struct attribute *adt7410_event_int_attributes[] = {
 	&iio_dev_attr_fault_queue.dev_attr.attr,
 	&iio_dev_attr_t_alarm_high.dev_attr.attr,
 	&iio_dev_attr_t_alarm_low.dev_attr.attr,
-	&iio_dev_attr_t_hyst.dev_attr.attr,
-	NULL,
-};
-
-static struct attribute *adt7410_event_ct_attributes[] = {
-	&iio_dev_attr_event_mode.dev_attr.attr,
-	&iio_dev_attr_available_event_modes.dev_attr.attr,
-	&iio_dev_attr_fault_queue.dev_attr.attr,
 	&iio_dev_attr_t_crit.dev_attr.attr,
 	&iio_dev_attr_t_hyst.dev_attr.attr,
 	NULL,
 };
 
-static struct attribute_group adt7410_event_attribute_group[ADT7410_IRQS] = {
-	{
-		.attrs = adt7410_event_int_attributes,
-	}, {
-		.attrs = adt7410_event_ct_attributes,
-	}
+static struct attribute_group adt7410_event_attribute_group = {
+	.attrs = adt7410_event_int_attributes,
+	.name = "events",
 };
 
 static const struct iio_info adt7410_info = {
 	.attrs = &adt7410_attribute_group,
-	.num_interrupt_lines = ADT7410_IRQS,
-	.event_attrs = adt7410_event_attribute_group,
+	.event_attrs = &adt7410_event_attribute_group,
 	.driver_module = THIS_MODULE,
 };
 
@@ -731,7 +721,7 @@ static int __devinit adt7410_probe(struct i2c_client *client,
 	int ret = 0;
 	unsigned long *adt7410_platform_data = client->dev.platform_data;
 
-	indio_dev = iio_allocate_device(sizeof(*chip));
+	indio_dev = iio_device_alloc(sizeof(*chip));
 	if (indio_dev == NULL) {
 		ret = -ENOMEM;
 		goto error_ret;
@@ -747,10 +737,6 @@ static int __devinit adt7410_probe(struct i2c_client *client,
 	indio_dev->info = &adt7410_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
-	ret = iio_device_register(indio_dev);
-	if (ret)
-		goto error_free_dev;
-
 	/* CT critcal temperature event. line 0 */
 	if (client->irq) {
 		ret = request_threaded_irq(client->irq,
@@ -760,7 +746,7 @@ static int __devinit adt7410_probe(struct i2c_client *client,
 					   id->name,
 					   indio_dev);
 		if (ret)
-			goto error_unreg_dev;
+			goto error_free_dev;
 	}
 
 	/* INT bound temperature alarm event. line 1 */
@@ -797,6 +783,9 @@ static int __devinit adt7410_probe(struct i2c_client *client,
 			goto error_unreg_int_irq;
 		}
 	}
+	ret = iio_device_register(indio_dev);
+	if (ret)
+		goto error_unreg_int_irq;
 
 	dev_info(&client->dev, "%s temperature sensor registered.\n",
 			 id->name);
@@ -807,10 +796,8 @@ error_unreg_int_irq:
 	free_irq(adt7410_platform_data[0], indio_dev);
 error_unreg_ct_irq:
 	free_irq(client->irq, indio_dev);
-error_unreg_dev:
-	iio_device_unregister(indio_dev);
 error_free_dev:
-	iio_free_device(indio_dev);
+	iio_device_free(indio_dev);
 error_ret:
 	return ret;
 }
@@ -820,11 +807,12 @@ static int __devexit adt7410_remove(struct i2c_client *client)
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	unsigned long *adt7410_platform_data = client->dev.platform_data;
 
+	iio_device_unregister(indio_dev);
 	if (adt7410_platform_data[0])
 		free_irq(adt7410_platform_data[0], indio_dev);
 	if (client->irq)
 		free_irq(client->irq, indio_dev);
-	iio_device_unregister(indio_dev);
+	iio_device_free(indio_dev);
 
 	return 0;
 }
@@ -844,21 +832,9 @@ static struct i2c_driver adt7410_driver = {
 	.remove = __devexit_p(adt7410_remove),
 	.id_table = adt7410_id,
 };
-
-static __init int adt7410_init(void)
-{
-	return i2c_add_driver(&adt7410_driver);
-}
-
-static __exit void adt7410_exit(void)
-{
-	i2c_del_driver(&adt7410_driver);
-}
+module_i2c_driver(adt7410_driver);
 
 MODULE_AUTHOR("Sonic Zhang <sonic.zhang@analog.com>");
 MODULE_DESCRIPTION("Analog Devices ADT7410 digital"
 			" temperature sensor driver");
 MODULE_LICENSE("GPL v2");
-
-module_init(adt7410_init);
-module_exit(adt7410_exit);

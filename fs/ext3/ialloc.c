@@ -12,21 +12,10 @@
  *        David S. Miller (davem@caip.rutgers.edu), 1995
  */
 
-#include <linux/time.h>
-#include <linux/fs.h>
-#include <linux/jbd.h>
-#include <linux/ext3_fs.h>
-#include <linux/ext3_jbd.h>
-#include <linux/stat.h>
-#include <linux/string.h>
 #include <linux/quotaops.h>
-#include <linux/buffer_head.h>
 #include <linux/random.h>
-#include <linux/bitops.h>
-#include <trace/events/ext3.h>
 
-#include <asm/byteorder.h>
-
+#include "ext3.h"
 #include "xattr.h"
 #include "acl.h"
 
@@ -178,42 +167,6 @@ error_return:
 }
 
 /*
- * There are two policies for allocating an inode.  If the new inode is
- * a directory, then a forward search is made for a block group with both
- * free space and a low directory-to-inode ratio; if that fails, then of
- * the groups with above-average free space, that group with the fewest
- * directories already is chosen.
- *
- * For other inodes, search forward from the parent directory\'s block
- * group to find a free inode.
- */
-static int find_group_dir(struct super_block *sb, struct inode *parent)
-{
-	int ngroups = EXT3_SB(sb)->s_groups_count;
-	unsigned int freei, avefreei;
-	struct ext3_group_desc *desc, *best_desc = NULL;
-	int group, best_group = -1;
-
-	freei = percpu_counter_read_positive(&EXT3_SB(sb)->s_freeinodes_counter);
-	avefreei = freei / ngroups;
-
-	for (group = 0; group < ngroups; group++) {
-		desc = ext3_get_group_desc (sb, group, NULL);
-		if (!desc || !desc->bg_free_inodes_count)
-			continue;
-		if (le16_to_cpu(desc->bg_free_inodes_count) < avefreei)
-			continue;
-		if (!best_desc ||
-		    (le16_to_cpu(desc->bg_free_blocks_count) >
-		     le16_to_cpu(best_desc->bg_free_blocks_count))) {
-			best_group = group;
-			best_desc = desc;
-		}
-	}
-	return best_group;
-}
-
-/*
  * Orlov's allocator for directories.
  *
  * We always try to spread first-level directories.
@@ -227,8 +180,7 @@ static int find_group_dir(struct super_block *sb, struct inode *parent)
  * It's OK to put directory into a group unless
  * it has too many directories already (max_dirs) or
  * it has too few free inodes left (min_inodes) or
- * it has too few free blocks left (min_blocks) or
- * it's already running too large debt (max_debt).
+ * it has too few free blocks left (min_blocks).
  * Parent's group is preferred, if it doesn't satisfy these
  * conditions we search cyclically through the rest. If none
  * of the groups look good we just look for a group with more
@@ -238,21 +190,16 @@ static int find_group_dir(struct super_block *sb, struct inode *parent)
  * when we allocate an inode, within 0--255.
  */
 
-#define INODE_COST 64
-#define BLOCK_COST 256
-
 static int find_group_orlov(struct super_block *sb, struct inode *parent)
 {
 	int parent_group = EXT3_I(parent)->i_block_group;
 	struct ext3_sb_info *sbi = EXT3_SB(sb);
-	struct ext3_super_block *es = sbi->s_es;
 	int ngroups = sbi->s_groups_count;
 	int inodes_per_group = EXT3_INODES_PER_GROUP(sb);
 	unsigned int freei, avefreei;
 	ext3_fsblk_t freeb, avefreeb;
-	ext3_fsblk_t blocks_per_dir;
 	unsigned int ndirs;
-	int max_debt, max_dirs, min_inodes;
+	int max_dirs, min_inodes;
 	ext3_grpblk_t min_blocks;
 	int group = -1, i;
 	struct ext3_group_desc *desc;
@@ -289,19 +236,9 @@ static int find_group_orlov(struct super_block *sb, struct inode *parent)
 		goto fallback;
 	}
 
-	blocks_per_dir = (le32_to_cpu(es->s_blocks_count) - freeb) / ndirs;
-
 	max_dirs = ndirs / ngroups + inodes_per_group / 16;
 	min_inodes = avefreei - inodes_per_group / 4;
 	min_blocks = avefreeb - EXT3_BLOCKS_PER_GROUP(sb) / 4;
-
-	max_debt = EXT3_BLOCKS_PER_GROUP(sb) / max(blocks_per_dir, (ext3_fsblk_t)BLOCK_COST);
-	if (max_debt * INODE_COST > inodes_per_group)
-		max_debt = inodes_per_group / INODE_COST;
-	if (max_debt > 255)
-		max_debt = 255;
-	if (max_debt == 0)
-		max_debt = 1;
 
 	for (i = 0; i < ngroups; i++) {
 		group = (parent_group + i) % ngroups;
@@ -407,7 +344,7 @@ static int find_group_other(struct super_block *sb, struct inode *parent)
  * group to find a free inode.
  */
 struct inode *ext3_new_inode(handle_t *handle, struct inode * dir,
-			     const struct qstr *qstr, int mode)
+			     const struct qstr *qstr, umode_t mode)
 {
 	struct super_block *sb;
 	struct buffer_head *bitmap_bh = NULL;
@@ -436,12 +373,9 @@ struct inode *ext3_new_inode(handle_t *handle, struct inode * dir,
 
 	sbi = EXT3_SB(sb);
 	es = sbi->s_es;
-	if (S_ISDIR(mode)) {
-		if (test_opt (sb, OLDALLOC))
-			group = find_group_dir(sb, dir);
-		else
-			group = find_group_orlov(sb, dir);
-	} else
+	if (S_ISDIR(mode))
+		group = find_group_orlov(sb, dir);
+	else
 		group = find_group_other(sb, dir);
 
 	err = -ENOSPC;
@@ -564,8 +498,12 @@ got:
 	if (IS_DIRSYNC(inode))
 		handle->h_sync = 1;
 	if (insert_inode_locked(inode) < 0) {
-		err = -EINVAL;
-		goto fail_drop;
+		/*
+		 * Likely a bitmap corruption causing inode to be allocated
+		 * twice.
+		 */
+		err = -EIO;
+		goto fail;
 	}
 	spin_lock(&sbi->s_next_gen_lock);
 	inode->i_generation = sbi->s_next_generation++;
@@ -621,7 +559,7 @@ fail_free_drop:
 fail_drop:
 	dquot_drop(inode);
 	inode->i_flags |= S_NOQUOTA;
-	inode->i_nlink = 0;
+	clear_nlink(inode);
 	unlock_new_inode(inode);
 	iput(inode);
 	brelse(bitmap_bh);

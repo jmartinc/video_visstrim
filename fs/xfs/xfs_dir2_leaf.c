@@ -20,7 +20,6 @@
 #include "xfs_types.h"
 #include "xfs_bit.h"
 #include "xfs_log.h"
-#include "xfs_inum.h"
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
@@ -888,12 +887,10 @@ xfs_dir2_leaf_getdents(
 				 * we already have in the table.
 				 */
 				nmap = map_size - map_valid;
-				error = xfs_bmapi(NULL, dp,
-					map_off,
+				error = xfs_bmapi_read(dp, map_off,
 					xfs_dir2_byte_to_da(mp,
 						XFS_DIR2_LEAF_OFFSET) - map_off,
-					XFS_BMAPI_METADATA, NULL, 0,
-					&map[map_valid], &nmap, NULL);
+					&map[map_valid], &nmap, 0);
 				/*
 				 * Don't know if we should ignore this or
 				 * try to return an error.

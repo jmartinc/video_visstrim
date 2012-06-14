@@ -4,16 +4,14 @@
  * Board data for the U8500 UIB, also known as the New UIB
  * License terms: GNU General Public License (GPL), version 2
  */
-
+#include <linux/gpio.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/i2c.h>
-#include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/mfd/tc3589x.h>
 #include <linux/input/matrix_keypad.h>
 
-#include <mach/gpio.h>
 #include <mach/irqs.h>
 
 #include "board-mop500.h"

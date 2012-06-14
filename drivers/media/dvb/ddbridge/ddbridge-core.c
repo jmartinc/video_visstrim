@@ -31,7 +31,6 @@
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
 #include <linux/timer.h>
-#include <linux/version.h>
 #include <linux/i2c.h>
 #include <linux/swab.h>
 #include <linux/vmalloc.h>
@@ -578,9 +577,10 @@ static int demod_attach_drxk(struct ddb_input *input)
 	struct drxk_config config;
 
 	memset(&config, 0, sizeof(config));
+	config.microcode_name = "drxk_a3.mc";
 	config.adr = 0x29 + (input->nr & 1);
 
-	fe = input->fe = dvb_attach(drxk_attach, &config, i2c, &input->fe2);
+	fe = input->fe = dvb_attach(drxk_attach, &config, i2c);
 	if (!input->fe) {
 		printk(KERN_ERR "No DRXK found!\n");
 		return -ENODEV;
@@ -1480,7 +1480,7 @@ static const struct file_operations ddb_fops = {
 	.open           = ddb_open,
 };
 
-static char *ddb_devnode(struct device *device, mode_t *mode)
+static char *ddb_devnode(struct device *device, umode_t *mode)
 {
 	struct ddb *dev = dev_get_drvdata(device);
 
@@ -1695,7 +1695,7 @@ static struct pci_driver ddb_pci_driver = {
 	.name        = "DDBridge",
 	.id_table    = ddb_id_tbl,
 	.probe       = ddb_probe,
-	.remove      = ddb_remove,
+	.remove      = __devexit_p(ddb_remove),
 };
 
 static __init int module_init_ddbridge(void)

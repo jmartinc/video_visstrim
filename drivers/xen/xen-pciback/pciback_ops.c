@@ -10,7 +10,6 @@
 #include <linux/sched.h>
 #include "pciback.h"
 
-#define DRV_NAME	"xen-pciback"
 int verbose_request;
 module_param(verbose_request, int, 0644);
 
@@ -235,7 +234,7 @@ int xen_pcibk_enable_msix(struct xen_pcibk_device *pdev,
 	if (dev_data)
 		dev_data->ack_intr = 0;
 
-	return result;
+	return result > 0 ? 0 : result;
 }
 
 static

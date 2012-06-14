@@ -203,8 +203,13 @@ static struct resource bfin_uart0_resources[] = {
 	 .flags = IORESOURCE_MEM,
 	 },
 	{
+	 .start = IRQ_UART_TX,
+	 .end = IRQ_UART_TX,
+	 .flags = IORESOURCE_IRQ,
+	 },
+	{
 	 .start = IRQ_UART_RX,
-	 .end = IRQ_UART_RX + 1,
+	 .end = IRQ_UART_RX,
 	 .flags = IORESOURCE_IRQ,
 	 },
 	{
@@ -242,8 +247,6 @@ static struct platform_device bfin_uart0_device = {
 #endif
 
 #if defined(CONFIG_MTD_NAND_PLATFORM) || defined(CONFIG_MTD_NAND_PLATFORM_MODULE)
-
-const char *part_probes[] = { "cmdlinepart", NULL };
 
 static struct mtd_partition bfin_plat_nand_partitions[] = {
 	{
@@ -284,7 +287,6 @@ static struct platform_nand_data bfin_plat_nand_data = {
 	.chip = {
 		 .nr_chips = 1,
 		 .chip_delay = 30,
-		 .part_probe_types = part_probes,
 		 .partitions = bfin_plat_nand_partitions,
 		 .nr_partitions = ARRAY_SIZE(bfin_plat_nand_partitions),
 		 },
@@ -367,7 +369,7 @@ static struct bfin5xx_spi_chip data_flash_chip_info = {
 };
 #endif
 
-#if defined(CONFIG_SPI_BFIN) || defined(CONFIG_SPI_BFIN_MODULE)
+#if defined(CONFIG_SPI_BFIN5XX) || defined(CONFIG_SPI_BFIN5XX_MODULE)
 /* SPI (0) */
 static struct resource bfin_spi0_resource[] = {
 	[0] = {
@@ -470,7 +472,7 @@ static struct platform_device bfin_dpmc = {
 static struct platform_device *acvilon_devices[] __initdata = {
 	&bfin_dpmc,
 
-#if defined(CONFIG_SPI_BFIN) || defined(CONFIG_SPI_BFIN_MODULE)
+#if defined(CONFIG_SPI_BFIN5XX) || defined(CONFIG_SPI_BFIN5XX_MODULE)
 	&bfin_spi0_device,
 #endif
 

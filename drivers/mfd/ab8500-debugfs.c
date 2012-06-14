@@ -8,11 +8,12 @@
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/platform_device.h>
 
 #include <linux/mfd/abx500.h>
-#include <linux/mfd/ab8500.h>
+#include <linux/mfd/abx500/ab8500.h>
 
 static u32 debug_bank;
 static u32 debug_address;
@@ -607,10 +608,16 @@ static int __devexit ab8500_debug_remove(struct platform_device *plf)
 	return 0;
 }
 
+static const struct of_device_id ab8500_debug_match[] = {
+        { .compatible = "stericsson,ab8500-debug", },
+        {}
+};
+
 static struct platform_driver ab8500_debug_driver = {
 	.driver = {
 		.name = "ab8500-debug",
 		.owner = THIS_MODULE,
+		.of_match_table = ab8500_debug_match,
 	},
 	.probe  = ab8500_debug_probe,
 	.remove = __devexit_p(ab8500_debug_remove)

@@ -134,32 +134,48 @@
  * Semantics:
  * Virtual registers are all word size.
  * READ registers are read-only; writes are either ignored or return an error.
- * RESET registers are read/write. Reading returns zero (used for detection),
- * writing any value causes the associated history to be reset.
+ * RESET registers are read/write. Reading reset registers returns zero
+ * (used for detection), writing any value causes the associated history to be
+ * reset.
+ * Virtual registers have to be handled in device specific driver code. Chip
+ * driver code returns non-negative register values if a virtual register is
+ * supported, or a negative error code if not. The chip driver may return
+ * -ENODATA or any other error code in this case, though an error code other
+ * than -ENODATA is handled more efficiently and thus preferred. Either case,
+ * the calling PMBus core code will abort if the chip driver returns an error
+ * code when reading or writing virtual registers.
  */
 #define PMBUS_VIRT_BASE			0x100
-#define PMBUS_VIRT_READ_TEMP_MIN	(PMBUS_VIRT_BASE + 0)
-#define PMBUS_VIRT_READ_TEMP_MAX	(PMBUS_VIRT_BASE + 1)
-#define PMBUS_VIRT_RESET_TEMP_HISTORY	(PMBUS_VIRT_BASE + 2)
-#define PMBUS_VIRT_READ_VIN_AVG		(PMBUS_VIRT_BASE + 3)
-#define PMBUS_VIRT_READ_VIN_MIN		(PMBUS_VIRT_BASE + 4)
-#define PMBUS_VIRT_READ_VIN_MAX		(PMBUS_VIRT_BASE + 5)
-#define PMBUS_VIRT_RESET_VIN_HISTORY	(PMBUS_VIRT_BASE + 6)
-#define PMBUS_VIRT_READ_IIN_AVG		(PMBUS_VIRT_BASE + 7)
-#define PMBUS_VIRT_READ_IIN_MIN		(PMBUS_VIRT_BASE + 8)
-#define PMBUS_VIRT_READ_IIN_MAX		(PMBUS_VIRT_BASE + 9)
-#define PMBUS_VIRT_RESET_IIN_HISTORY	(PMBUS_VIRT_BASE + 10)
-#define PMBUS_VIRT_READ_PIN_AVG		(PMBUS_VIRT_BASE + 11)
-#define PMBUS_VIRT_READ_PIN_MAX		(PMBUS_VIRT_BASE + 12)
-#define PMBUS_VIRT_RESET_PIN_HISTORY	(PMBUS_VIRT_BASE + 13)
-#define PMBUS_VIRT_READ_VOUT_AVG	(PMBUS_VIRT_BASE + 14)
-#define PMBUS_VIRT_READ_VOUT_MIN	(PMBUS_VIRT_BASE + 15)
-#define PMBUS_VIRT_READ_VOUT_MAX	(PMBUS_VIRT_BASE + 16)
-#define PMBUS_VIRT_RESET_VOUT_HISTORY	(PMBUS_VIRT_BASE + 17)
-#define PMBUS_VIRT_READ_IOUT_AVG	(PMBUS_VIRT_BASE + 18)
-#define PMBUS_VIRT_READ_IOUT_MIN	(PMBUS_VIRT_BASE + 19)
-#define PMBUS_VIRT_READ_IOUT_MAX	(PMBUS_VIRT_BASE + 20)
-#define PMBUS_VIRT_RESET_IOUT_HISTORY	(PMBUS_VIRT_BASE + 21)
+#define PMBUS_VIRT_READ_TEMP_AVG	(PMBUS_VIRT_BASE + 0)
+#define PMBUS_VIRT_READ_TEMP_MIN	(PMBUS_VIRT_BASE + 1)
+#define PMBUS_VIRT_READ_TEMP_MAX	(PMBUS_VIRT_BASE + 2)
+#define PMBUS_VIRT_RESET_TEMP_HISTORY	(PMBUS_VIRT_BASE + 3)
+#define PMBUS_VIRT_READ_VIN_AVG		(PMBUS_VIRT_BASE + 4)
+#define PMBUS_VIRT_READ_VIN_MIN		(PMBUS_VIRT_BASE + 5)
+#define PMBUS_VIRT_READ_VIN_MAX		(PMBUS_VIRT_BASE + 6)
+#define PMBUS_VIRT_RESET_VIN_HISTORY	(PMBUS_VIRT_BASE + 7)
+#define PMBUS_VIRT_READ_IIN_AVG		(PMBUS_VIRT_BASE + 8)
+#define PMBUS_VIRT_READ_IIN_MIN		(PMBUS_VIRT_BASE + 9)
+#define PMBUS_VIRT_READ_IIN_MAX		(PMBUS_VIRT_BASE + 10)
+#define PMBUS_VIRT_RESET_IIN_HISTORY	(PMBUS_VIRT_BASE + 11)
+#define PMBUS_VIRT_READ_PIN_AVG		(PMBUS_VIRT_BASE + 12)
+#define PMBUS_VIRT_READ_PIN_MAX		(PMBUS_VIRT_BASE + 13)
+#define PMBUS_VIRT_RESET_PIN_HISTORY	(PMBUS_VIRT_BASE + 14)
+#define PMBUS_VIRT_READ_POUT_AVG	(PMBUS_VIRT_BASE + 15)
+#define PMBUS_VIRT_READ_POUT_MAX	(PMBUS_VIRT_BASE + 16)
+#define PMBUS_VIRT_RESET_POUT_HISTORY	(PMBUS_VIRT_BASE + 17)
+#define PMBUS_VIRT_READ_VOUT_AVG	(PMBUS_VIRT_BASE + 18)
+#define PMBUS_VIRT_READ_VOUT_MIN	(PMBUS_VIRT_BASE + 19)
+#define PMBUS_VIRT_READ_VOUT_MAX	(PMBUS_VIRT_BASE + 20)
+#define PMBUS_VIRT_RESET_VOUT_HISTORY	(PMBUS_VIRT_BASE + 21)
+#define PMBUS_VIRT_READ_IOUT_AVG	(PMBUS_VIRT_BASE + 22)
+#define PMBUS_VIRT_READ_IOUT_MIN	(PMBUS_VIRT_BASE + 23)
+#define PMBUS_VIRT_READ_IOUT_MAX	(PMBUS_VIRT_BASE + 24)
+#define PMBUS_VIRT_RESET_IOUT_HISTORY	(PMBUS_VIRT_BASE + 25)
+#define PMBUS_VIRT_READ_TEMP2_AVG	(PMBUS_VIRT_BASE + 26)
+#define PMBUS_VIRT_READ_TEMP2_MIN	(PMBUS_VIRT_BASE + 27)
+#define PMBUS_VIRT_READ_TEMP2_MAX	(PMBUS_VIRT_BASE + 28)
+#define PMBUS_VIRT_RESET_TEMP2_HISTORY	(PMBUS_VIRT_BASE + 29)
 
 /*
  * CAPABILITY
@@ -320,6 +336,12 @@ struct pmbus_driver_info {
 	 * The following functions map manufacturing specific register values
 	 * to PMBus standard register values. Specify only if mapping is
 	 * necessary.
+	 * Functions return the register value (read) or zero (write) if
+	 * successful. A return value of -ENODATA indicates that there is no
+	 * manufacturer specific register, but that a standard PMBus register
+	 * may exist. Any other negative return value indicates that the
+	 * register does not exist, and that no attempt should be made to read
+	 * the standard register.
 	 */
 	int (*read_byte_data)(struct i2c_client *client, int page, int reg);
 	int (*read_word_data)(struct i2c_client *client, int page, int reg);

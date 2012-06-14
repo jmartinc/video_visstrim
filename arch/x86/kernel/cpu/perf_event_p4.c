@@ -7,9 +7,13 @@
  *  For licencing details see kernel-base/COPYING
  */
 
-#ifdef CONFIG_CPU_SUP_INTEL
+#include <linux/perf_event.h>
 
 #include <asm/perf_event_p4.h>
+#include <asm/hardirq.h>
+#include <asm/apic.h>
+
+#include "perf_event.h"
 
 #define P4_CNTR_LIMIT 3
 /*
@@ -1001,8 +1005,6 @@ static int p4_pmu_handle_irq(struct pt_regs *regs)
 	int idx, handled = 0;
 	u64 val;
 
-	perf_sample_data_init(&data, 0);
-
 	cpuc = &__get_cpu_var(cpu_hw_events);
 
 	for (idx = 0; idx < x86_pmu.num_counters; idx++) {
@@ -1030,10 +1032,12 @@ static int p4_pmu_handle_irq(struct pt_regs *regs)
 		handled += overflow;
 
 		/* event overflow for sure */
-		data.period = event->hw.last_period;
+		perf_sample_data_init(&data, 0, hwc->last_period);
 
 		if (!x86_perf_event_set_period(event))
 			continue;
+
+
 		if (perf_event_overflow(event, &data, regs))
 			x86_pmu_stop(event, 0);
 	}
@@ -1264,8 +1268,19 @@ reserve:
 	}
 
 done:
-	return num ? -ENOSPC : 0;
+	return num ? -EINVAL : 0;
 }
+
+PMU_FORMAT_ATTR(cccr, "config:0-31" );
+PMU_FORMAT_ATTR(escr, "config:32-62");
+PMU_FORMAT_ATTR(ht,   "config:63"   );
+
+static struct attribute *intel_p4_formats_attr[] = {
+	&format_attr_cccr.attr,
+	&format_attr_escr.attr,
+	&format_attr_ht.attr,
+	NULL,
+};
 
 static __initconst const struct x86_pmu p4_pmu = {
 	.name			= "Netburst P4/Xeon",
@@ -1301,9 +1316,11 @@ static __initconst const struct x86_pmu p4_pmu = {
 	 * the former idea is taken from OProfile code
 	 */
 	.perfctr_second_write	= 1,
+
+	.format_attrs		= intel_p4_formats_attr,
 };
 
-static __init int p4_pmu_init(void)
+__init int p4_pmu_init(void)
 {
 	unsigned int low, high;
 
@@ -1326,5 +1343,3 @@ static __init int p4_pmu_init(void)
 
 	return 0;
 }
-
-#endif /* CONFIG_CPU_SUP_INTEL */

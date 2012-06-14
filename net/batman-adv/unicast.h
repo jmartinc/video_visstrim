@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2011 B.A.T.M.A.N. contributors:
+ * Copyright (C) 2010-2012 B.A.T.M.A.N. contributors:
  *
  * Andreas Langer
  *
@@ -24,7 +24,7 @@
 
 #include "packet.h"
 
-#define FRAG_TIMEOUT 10000	/* purge frag list entrys after time in ms */
+#define FRAG_TIMEOUT 10000	/* purge frag list entries after time in ms */
 #define FRAG_BUFFER_SIZE 6	/* number of list elements in buffer */
 
 int frag_reassemble_skb(struct sk_buff *skb, struct bat_priv *bat_priv,

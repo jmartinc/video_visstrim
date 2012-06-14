@@ -24,6 +24,7 @@
  *
  */
 
+#include <linux/module.h>
 #include <net/ip6_checksum.h>
 
 #include "vmxnet3_int.h"
@@ -536,11 +537,8 @@ vmxnet3_tq_create(struct vmxnet3_tx_queue *tq,
 
 	tq->buf_info = kcalloc(tq->tx_ring.size, sizeof(tq->buf_info[0]),
 			       GFP_KERNEL);
-	if (!tq->buf_info) {
-		printk(KERN_ERR "%s: failed to allocate tx bufinfo\n",
-		       adapter->netdev->name);
+	if (!tq->buf_info)
 		goto err;
-	}
 
 	return 0;
 
@@ -635,7 +633,7 @@ vmxnet3_rq_alloc_rx_buf(struct vmxnet3_rx_queue *rq, u32 ring_idx,
 
 	dev_dbg(&adapter->netdev->dev,
 		"alloc_rx_buf: %d allocated, next2fill %u, next2comp "
-		"%u, uncommited %u\n", num_allocated, ring->next2fill,
+		"%u, uncommitted %u\n", num_allocated, ring->next2fill,
 		ring->next2comp, rq->uncommitted[ring_idx]);
 
 	/* so that the device can distinguish a full ring and an empty ring */
@@ -654,10 +652,11 @@ vmxnet3_append_frag(struct sk_buff *skb, struct Vmxnet3_RxCompDesc *rcd,
 
 	BUG_ON(skb_shinfo(skb)->nr_frags >= MAX_SKB_FRAGS);
 
-	frag->page = rbi->page;
+	__skb_frag_set_page(frag, rbi->page);
 	frag->page_offset = 0;
-	frag->size = rcd->len;
-	skb->data_len += frag->size;
+	skb_frag_size_set(frag, rcd->len);
+	skb->data_len += rcd->len;
+	skb->truesize += PAGE_SIZE;
 	skb_shinfo(skb)->nr_frags++;
 }
 
@@ -744,21 +743,21 @@ vmxnet3_map_pkt(struct sk_buff *skb, struct vmxnet3_tx_ctx *ctx,
 	}
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-		struct skb_frag_struct *frag = &skb_shinfo(skb)->frags[i];
+		const struct skb_frag_struct *frag = &skb_shinfo(skb)->frags[i];
 
 		tbi = tq->buf_info + tq->tx_ring.next2fill;
 		tbi->map_type = VMXNET3_MAP_PAGE;
-		tbi->dma_addr = pci_map_page(adapter->pdev, frag->page,
-					     frag->page_offset, frag->size,
-					     PCI_DMA_TODEVICE);
+		tbi->dma_addr = skb_frag_dma_map(&adapter->pdev->dev, frag,
+						 0, skb_frag_size(frag),
+						 DMA_TO_DEVICE);
 
-		tbi->len = frag->size;
+		tbi->len = skb_frag_size(frag);
 
 		gdesc = tq->tx_ring.base + tq->tx_ring.next2fill;
 		BUG_ON(gdesc->txd.gen == tq->tx_ring.gen);
 
 		gdesc->txd.addr = cpu_to_le64(tbi->dma_addr);
-		gdesc->dword[2] = cpu_to_le32(dw2 | frag->size);
+		gdesc->dword[2] = cpu_to_le32(dw2 | skb_frag_size(frag));
 		gdesc->dword[3] = 0;
 
 		dev_dbg(&adapter->netdev->dev,
@@ -814,35 +813,27 @@ vmxnet3_parse_and_copy_hdr(struct sk_buff *skb, struct vmxnet3_tx_queue *tq,
 
 	if (ctx->mss) {	/* TSO */
 		ctx->eth_ip_hdr_size = skb_transport_offset(skb);
-		ctx->l4_hdr_size = ((struct tcphdr *)
-				   skb_transport_header(skb))->doff * 4;
+		ctx->l4_hdr_size = tcp_hdrlen(skb);
 		ctx->copy_size = ctx->eth_ip_hdr_size + ctx->l4_hdr_size;
 	} else {
 		if (skb->ip_summed == CHECKSUM_PARTIAL) {
 			ctx->eth_ip_hdr_size = skb_checksum_start_offset(skb);
 
 			if (ctx->ipv4) {
-				struct iphdr *iph = (struct iphdr *)
-						    skb_network_header(skb);
+				const struct iphdr *iph = ip_hdr(skb);
+
 				if (iph->protocol == IPPROTO_TCP)
-					ctx->l4_hdr_size = ((struct tcphdr *)
-					   skb_transport_header(skb))->doff * 4;
+					ctx->l4_hdr_size = tcp_hdrlen(skb);
 				else if (iph->protocol == IPPROTO_UDP)
-					/*
-					 * Use tcp header size so that bytes to
-					 * be copied are more than required by
-					 * the device.
-					 */
-					ctx->l4_hdr_size =
-							sizeof(struct tcphdr);
+					ctx->l4_hdr_size = sizeof(struct udphdr);
 				else
 					ctx->l4_hdr_size = 0;
 			} else {
 				/* for simplicity, don't copy L4 headers */
 				ctx->l4_hdr_size = 0;
 			}
-			ctx->copy_size = ctx->eth_ip_hdr_size +
-					 ctx->l4_hdr_size;
+			ctx->copy_size = min(ctx->eth_ip_hdr_size +
+					 ctx->l4_hdr_size, skb->len);
 		} else {
 			ctx->eth_ip_hdr_size = 0;
 			ctx->l4_hdr_size = 0;
@@ -879,14 +870,17 @@ static void
 vmxnet3_prepare_tso(struct sk_buff *skb,
 		    struct vmxnet3_tx_ctx *ctx)
 {
-	struct tcphdr *tcph = (struct tcphdr *)skb_transport_header(skb);
+	struct tcphdr *tcph = tcp_hdr(skb);
+
 	if (ctx->ipv4) {
-		struct iphdr *iph = (struct iphdr *)skb_network_header(skb);
+		struct iphdr *iph = ip_hdr(skb);
+
 		iph->check = 0;
 		tcph->check = ~csum_tcpudp_magic(iph->saddr, iph->daddr, 0,
 						 IPPROTO_TCP, 0);
 	} else {
-		struct ipv6hdr *iph = (struct ipv6hdr *)skb_network_header(skb);
+		struct ipv6hdr *iph = ipv6_hdr(skb);
+
 		tcph->check = ~csum_ipv6_magic(&iph->saddr, &iph->daddr, 0,
 					       IPPROTO_TCP, 0);
 	}
@@ -1277,7 +1271,6 @@ vmxnet3_rq_rx_complete(struct vmxnet3_rx_queue *rq,
 		skb = ctx->skb;
 		if (rcd->eop) {
 			skb->len += skb->data_len;
-			skb->truesize += skb->data_len;
 
 			vmxnet3_rx_csum(adapter, skb,
 					(union Vmxnet3_GenericDesc *)rcd);
@@ -1518,11 +1511,9 @@ vmxnet3_rq_create(struct vmxnet3_rx_queue *rq, struct vmxnet3_adapter *adapter)
 	sz = sizeof(struct vmxnet3_rx_buf_info) * (rq->rx_ring[0].size +
 						   rq->rx_ring[1].size);
 	bi = kzalloc(sz, GFP_KERNEL);
-	if (!bi) {
-		printk(KERN_ERR "%s: failed to allocate rx bufinfo\n",
-		       adapter->netdev->name);
+	if (!bi)
 		goto err;
-	}
+
 	rq->buf_info[0] = bi;
 	rq->buf_info[1] = bi + rq->rx_ring[0].size;
 
@@ -1925,7 +1916,7 @@ vmxnet3_restore_vlan(struct vmxnet3_adapter *adapter)
 }
 
 
-static void
+static int
 vmxnet3_vlan_rx_add_vid(struct net_device *netdev, u16 vid)
 {
 	struct vmxnet3_adapter *adapter = netdev_priv(netdev);
@@ -1942,10 +1933,12 @@ vmxnet3_vlan_rx_add_vid(struct net_device *netdev, u16 vid)
 	}
 
 	set_bit(vid, adapter->active_vlans);
+
+	return 0;
 }
 
 
-static void
+static int
 vmxnet3_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
 {
 	struct vmxnet3_adapter *adapter = netdev_priv(netdev);
@@ -1962,6 +1955,8 @@ vmxnet3_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
 	}
 
 	clear_bit(vid, adapter->active_vlans);
+
+	return 0;
 }
 
 
@@ -2162,7 +2157,8 @@ vmxnet3_setup_driver_shared(struct vmxnet3_adapter *adapter)
 		rssConf->indTableSize = VMXNET3_RSS_IND_TABLE_SIZE;
 		get_random_bytes(&rssConf->hashKey[0], rssConf->hashKeySize);
 		for (i = 0; i < rssConf->indTableSize; i++)
-			rssConf->indTable[i] = i % adapter->num_rx_queues;
+			rssConf->indTable[i] = ethtool_rxfh_indir_default(
+				i, adapter->num_rx_queues);
 
 		devRead->rssConfDesc.confVer = 1;
 		devRead->rssConfDesc.confLen = sizeof(*rssConf);
@@ -2703,8 +2699,8 @@ vmxnet3_acquire_msix_vectors(struct vmxnet3_adapter *adapter,
 			adapter->intr.num_intrs = vectors;
 			return 0;
 		} else if (err < 0) {
-			printk(KERN_ERR "Failed to enable MSI-X for %s, error"
-			       " %d\n",	adapter->netdev->name, err);
+			netdev_err(adapter->netdev,
+				   "Failed to enable MSI-X, error: %d\n", err);
 			vectors = 0;
 		} else if (err < vector_threshold) {
 			break;
@@ -2712,15 +2708,15 @@ vmxnet3_acquire_msix_vectors(struct vmxnet3_adapter *adapter,
 			/* If fails to enable required number of MSI-x vectors
 			 * try enabling minimum number of vectors required.
 			 */
+			netdev_err(adapter->netdev,
+				   "Failed to enable %d MSI-X, trying %d instead\n",
+				    vectors, vector_threshold);
 			vectors = vector_threshold;
-			printk(KERN_ERR "Failed to enable %d MSI-X for %s, try"
-			       " %d instead\n", vectors, adapter->netdev->name,
-			       vector_threshold);
 		}
 	}
 
-	printk(KERN_INFO "Number of MSI-X interrupts which can be allocatedi"
-	       " are lower than min threshold required.\n");
+	netdev_info(adapter->netdev,
+		    "Number of MSI-X interrupts which can be allocated are lower than min threshold required.\n");
 	return err;
 }
 
@@ -2786,8 +2782,9 @@ vmxnet3_alloc_intr_resources(struct vmxnet3_adapter *adapter)
 			return;
 
 		/* If we cannot allocate MSIx vectors use only one rx queue */
-		printk(KERN_INFO "Failed to enable MSI-X for %s, error %d."
-		       "#rx queues : 1, try MSI\n", adapter->netdev->name, err);
+		netdev_info(adapter->netdev,
+			    "Failed to enable MSI-X, error %d . Limiting #rx queues to 1, try MSI.\n",
+			    err);
 
 		adapter->intr.type = VMXNET3_IT_MSI;
 	}
@@ -2876,7 +2873,7 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 		.ndo_set_features = vmxnet3_set_features,
 		.ndo_get_stats64 = vmxnet3_get_stats64,
 		.ndo_tx_timeout = vmxnet3_tx_timeout,
-		.ndo_set_multicast_list = vmxnet3_set_mc,
+		.ndo_set_rx_mode = vmxnet3_set_mc,
 		.ndo_vlan_rx_add_vid = vmxnet3_vlan_rx_add_vid,
 		.ndo_vlan_rx_kill_vid = vmxnet3_vlan_rx_kill_vid,
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -2917,11 +2914,8 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 	printk(KERN_INFO "# of Tx queues : %d, # of Rx queues : %d\n",
 	       num_tx_queues, num_rx_queues);
 
-	if (!netdev) {
-		printk(KERN_ERR "Failed to alloc ethernet device for adapter "
-			"%s\n",	pci_name(pdev));
+	if (!netdev)
 		return -ENOMEM;
-	}
 
 	pci_set_drvdata(pdev, netdev);
 	adapter = netdev_priv(netdev);
@@ -2958,8 +2952,6 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 
 	adapter->pm_conf = kmalloc(sizeof(struct Vmxnet3_PMConf), GFP_KERNEL);
 	if (adapter->pm_conf == NULL) {
-		printk(KERN_ERR "Failed to allocate memory for %s\n",
-			pci_name(pdev));
 		err = -ENOMEM;
 		goto err_alloc_pm;
 	}
@@ -2968,8 +2960,6 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 
 	adapter->rss_conf = kmalloc(sizeof(struct UPT1_RSSConf), GFP_KERNEL);
 	if (adapter->rss_conf == NULL) {
-		printk(KERN_ERR "Failed to allocate memory for %s\n",
-		       pci_name(pdev));
 		err = -ENOMEM;
 		goto err_alloc_rss;
 	}

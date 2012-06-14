@@ -8,7 +8,6 @@
  *	it under the terms of the GNU General Public License as published by
  *	the Free Software Foundation; either version 2 of the License, or
  *	(at your option) any later version.
- *
  */
 
 #include <linux/kernel.h>
@@ -16,7 +15,6 @@
 #include <linux/errno.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/version.h>
 #include <linux/videodev2.h>
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
@@ -41,7 +39,7 @@ uvc_send_response(struct uvc_device *uvc, struct uvc_request_data *data)
 	if (data->length < 0)
 		return usb_ep_set_halt(cdev->gadget->ep0);
 
-	req->length = min(uvc->event_length, data->length);
+	req->length = min_t(unsigned int, uvc->event_length, data->length);
 	req->zero = data->length < uvc->event_length;
 	req->dma = DMA_ADDR_INVALID;
 
@@ -298,7 +296,7 @@ uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		if (sub->type < UVC_EVENT_FIRST || sub->type > UVC_EVENT_LAST)
 			return -EINVAL;
 
-		return v4l2_event_subscribe(&handle->vfh, arg, 2);
+		return v4l2_event_subscribe(&handle->vfh, arg, 2, NULL);
 	}
 
 	case VIDIOC_UNSUBSCRIBE_EVENT:

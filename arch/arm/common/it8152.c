@@ -25,6 +25,7 @@
 #include <linux/ioport.h>
 #include <linux/irq.h>
 #include <linux/io.h>
+#include <linux/export.h>
 
 #include <asm/mach/pci.h>
 #include <asm/hardware/it8152.h>
@@ -221,7 +222,7 @@ static int it8152_pci_write_config(struct pci_bus *bus,
 	return PCIBIOS_SUCCESSFUL;
 }
 
-static struct pci_ops it8152_ops = {
+struct pci_ops it8152_ops = {
 	.read = it8152_pci_read_config,
 	.write = it8152_pci_write_config,
 };
@@ -298,8 +299,8 @@ int __init it8152_pci_setup(int nr, struct pci_sys_data *sys)
 		goto err1;
 	}
 
-	sys->resource[0] = &it8152_io;
-	sys->resource[1] = &it8152_mem;
+	pci_add_resource_offset(&sys->resources, &it8152_io, sys->io_offset);
+	pci_add_resource_offset(&sys->resources, &it8152_mem, sys->mem_offset);
 
 	if (platform_notify || platform_notify_remove) {
 		printk(KERN_ERR "PCI: Can't use platform_notify\n");
@@ -319,13 +320,9 @@ err0:
 	return -EBUSY;
 }
 
-/*
- * If we set up a device for bus mastering, we need to check the latency
- * timer as we don't have even crappy BIOSes to set it properly.
- * The implementation is from arch/i386/pci/i386.c
- */
-unsigned int pcibios_max_latency = 255;
-
+/* ITE bridge requires setting latency timer to avoid early bus access
+   termination by PCI bus master devices
+*/
 void pcibios_set_master(struct pci_dev *dev)
 {
 	u8 lat;
@@ -348,10 +345,5 @@ void pcibios_set_master(struct pci_dev *dev)
 	pci_write_config_byte(dev, PCI_LATENCY_TIMER, lat);
 }
 
-
-struct pci_bus * __init it8152_pci_scan_bus(int nr, struct pci_sys_data *sys)
-{
-	return pci_scan_bus(nr, &it8152_ops, sys);
-}
 
 EXPORT_SYMBOL(dma_set_coherent_mask);

@@ -327,7 +327,7 @@ static int __devinit mpc5121_rtc_probe(struct platform_device *op)
 	dev_set_drvdata(&op->dev, rtc);
 
 	rtc->irq = irq_of_parse_and_map(op->dev.of_node, 1);
-	err = request_irq(rtc->irq, mpc5121_rtc_handler, IRQF_DISABLED,
+	err = request_irq(rtc->irq, mpc5121_rtc_handler, 0,
 						"mpc5121-rtc", &op->dev);
 	if (err) {
 		dev_err(&op->dev, "%s: could not request irq: %i\n",
@@ -337,7 +337,7 @@ static int __devinit mpc5121_rtc_probe(struct platform_device *op)
 
 	rtc->irq_periodic = irq_of_parse_and_map(op->dev.of_node, 0);
 	err = request_irq(rtc->irq_periodic, mpc5121_rtc_handler_upd,
-				IRQF_DISABLED, "mpc5121-rtc_upd", &op->dev);
+				0, "mpc5121-rtc_upd", &op->dev);
 	if (err) {
 		dev_err(&op->dev, "%s: could not request irq: %i\n",
 						__func__, rtc->irq_periodic);
@@ -364,6 +364,7 @@ static int __devinit mpc5121_rtc_probe(struct platform_device *op)
 		err = PTR_ERR(rtc->rtc);
 		goto out_free_irq;
 	}
+	rtc->rtc->uie_unsupported = 1;
 
 	return 0;
 
@@ -418,17 +419,7 @@ static struct platform_driver mpc5121_rtc_driver = {
 	.remove = __devexit_p(mpc5121_rtc_remove),
 };
 
-static int __init mpc5121_rtc_init(void)
-{
-	return platform_driver_register(&mpc5121_rtc_driver);
-}
-module_init(mpc5121_rtc_init);
-
-static void __exit mpc5121_rtc_exit(void)
-{
-	platform_driver_unregister(&mpc5121_rtc_driver);
-}
-module_exit(mpc5121_rtc_exit);
+module_platform_driver(mpc5121_rtc_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("John Rigby <jcrigby@gmail.com>");

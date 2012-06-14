@@ -33,7 +33,7 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/gameport.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/mutex.h>
 
 #include <sound/core.h>
@@ -83,12 +83,12 @@ MODULE_SUPPORTED_DEVICE("{{Ensoniq,AudioPCI ES1371/73},"
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable switches */
+static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable switches */
 #ifdef SUPPORT_JOYSTICK
 #ifdef CHIP1371
 static int joystick_port[SNDRV_CARDS];
 #else
-static int joystick[SNDRV_CARDS];
+static bool joystick[SNDRV_CARDS];
 #endif
 #endif
 #ifdef CHIP1371
@@ -2488,7 +2488,7 @@ static void __devexit snd_audiopci_remove(struct pci_dev *pci)
 	pci_set_drvdata(pci, NULL);
 }
 
-static struct pci_driver driver = {
+static struct pci_driver ens137x_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_audiopci_ids,
 	.probe = snd_audiopci_probe,
@@ -2499,15 +2499,4 @@ static struct pci_driver driver = {
 #endif
 };
 	
-static int __init alsa_card_ens137x_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_ens137x_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_ens137x_init)
-module_exit(alsa_card_ens137x_exit)
+module_pci_driver(ens137x_driver);

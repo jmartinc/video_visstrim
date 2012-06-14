@@ -41,8 +41,12 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
+#include <net/mac80211.h>
 #include <asm/unaligned.h>
 
+#include "ath5k.h"
 #include "base.h"
 #include "reg.h"
 
@@ -132,15 +136,14 @@ ath5k_add_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 			ah->num_ap_vifs++;
 		else if (avf->opmode == NL80211_IFTYPE_ADHOC)
 			ah->num_adhoc_vifs++;
+		else if (avf->opmode == NL80211_IFTYPE_MESH_POINT)
+			ah->num_mesh_vifs++;
 	}
 
 	/* Any MAC address is fine, all others are included through the
 	 * filter.
 	 */
-	memcpy(&ah->lladdr, vif->addr, ETH_ALEN);
 	ath5k_hw_set_lladdr(ah, vif->addr);
-
-	memcpy(&avf->lladdr, vif->addr, ETH_ALEN);
 
 	ath5k_update_bssid_mask_and_opmode(ah, vif);
 	ret = 0;
@@ -176,6 +179,8 @@ ath5k_remove_interface(struct ieee80211_hw *hw,
 		ah->num_ap_vifs--;
 	else if (avf->opmode == NL80211_IFTYPE_ADHOC)
 		ah->num_adhoc_vifs--;
+	else if (avf->opmode == NL80211_IFTYPE_MESH_POINT)
+		ah->num_mesh_vifs--;
 
 	ath5k_update_bssid_mask_and_opmode(ah, NULL);
 	mutex_unlock(&ah->lock);
@@ -484,6 +489,14 @@ ath5k_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	if (ath5k_modparam_nohwcrypt)
 		return -EOPNOTSUPP;
 
+	if (vif->type == NL80211_IFTYPE_ADHOC &&
+	    (key->cipher == WLAN_CIPHER_SUITE_TKIP ||
+	     key->cipher == WLAN_CIPHER_SUITE_CCMP) &&
+	    !(key->flags & IEEE80211_KEY_FLAG_PAIRWISE)) {
+		/* don't program group keys when using IBSS_RSN */
+		return -EOPNOTSUPP;
+	}
+
 	switch (key->cipher) {
 	case WLAN_CIPHER_SUITE_WEP40:
 	case WLAN_CIPHER_SUITE_WEP104:
@@ -564,7 +577,7 @@ ath5k_get_stats(struct ieee80211_hw *hw,
 
 
 static int
-ath5k_conf_tx(struct ieee80211_hw *hw, u16 queue,
+ath5k_conf_tx(struct ieee80211_hw *hw, struct ieee80211_vif *vif, u16 queue,
 	      const struct ieee80211_tx_queue_params *params)
 {
 	struct ath5k_hw *ah = hw->priv;
@@ -603,7 +616,7 @@ ath5k_conf_tx(struct ieee80211_hw *hw, u16 queue,
 
 
 static u64
-ath5k_get_tsf(struct ieee80211_hw *hw)
+ath5k_get_tsf(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 {
 	struct ath5k_hw *ah = hw->priv;
 
@@ -612,7 +625,7 @@ ath5k_get_tsf(struct ieee80211_hw *hw)
 
 
 static void
-ath5k_set_tsf(struct ieee80211_hw *hw, u64 tsf)
+ath5k_set_tsf(struct ieee80211_hw *hw, struct ieee80211_vif *vif, u64 tsf)
 {
 	struct ath5k_hw *ah = hw->priv;
 
@@ -621,7 +634,7 @@ ath5k_set_tsf(struct ieee80211_hw *hw, u64 tsf)
 
 
 static void
-ath5k_reset_tsf(struct ieee80211_hw *hw)
+ath5k_reset_tsf(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 {
 	struct ath5k_hw *ah = hw->priv;
 

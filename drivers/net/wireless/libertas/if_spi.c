@@ -21,7 +21,7 @@
 
 #include <linux/hardirq.h>
 #include <linux/interrupt.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <linux/firmware.h>
 #include <linux/jiffies.h>
 #include <linux/list.h>
@@ -531,10 +531,6 @@ static int if_spi_prog_helper_firmware(struct if_spi_card *card,
 		goto out;
 	err = spu_write_u16(card, IF_SPI_CARD_INT_CAUSE_REG,
 				IF_SPI_CIC_CMD_DOWNLOAD_OVER);
-		goto out;
-
-	lbs_deb_spi("waiting for helper to boot...\n");
-
 out:
 	if (err)
 		pr_err("failed to load helper firmware (err=%d)\n", err);
@@ -999,6 +995,7 @@ static int if_spi_host_to_card(struct lbs_private *priv,
 		spin_unlock_irqrestore(&card->buffer_lock, flags);
 		break;
 	default:
+		kfree(packet);
 		netdev_err(priv->dev, "can't transfer buffer of type %d\n",
 			   type);
 		err = -EINVAL;
@@ -1067,9 +1064,8 @@ static int if_spi_init_card(struct if_spi_card *card)
 			goto out;
 		}
 
-		err = lbs_get_firmware(&card->spi->dev, NULL, NULL,
-					card->card_id, &fw_table[0], &helper,
-					&mainfw);
+		err = lbs_get_firmware(&card->spi->dev, card->card_id,
+					&fw_table[0], &helper, &mainfw);
 		if (err) {
 			netdev_err(priv->dev, "failed to find firmware (%d)\n",
 				   err);
@@ -1098,10 +1094,8 @@ static int if_spi_init_card(struct if_spi_card *card)
 		goto out;
 
 out:
-	if (helper)
-		release_firmware(helper);
-	if (mainfw)
-		release_firmware(mainfw);
+	release_firmware(helper);
+	release_firmware(mainfw);
 
 	lbs_deb_leave_args(LBS_DEB_SPI, "err %d\n", err);
 
@@ -1294,7 +1288,6 @@ static struct spi_driver libertas_spi_driver = {
 	.remove = __devexit_p(libertas_spi_remove),
 	.driver = {
 		.name	= "libertas_spi",
-		.bus	= &spi_bus_type,
 		.owner	= THIS_MODULE,
 		.pm	= &if_spi_pm_ops,
 	},

@@ -256,8 +256,8 @@ static int fwnet_header_rebuild(struct sk_buff *skb)
 	if (get_unaligned_be16(&h->h_proto) == ETH_P_IP)
 		return arp_find((unsigned char *)&h->h_dest, skb);
 
-	fw_notify("%s: unable to resolve type %04x addresses\n",
-		  skb->dev->name, be16_to_cpu(h->h_proto));
+	dev_notice(&skb->dev->dev, "unable to resolve type %04x addresses\n",
+		   be16_to_cpu(h->h_proto));
 	return 0;
 }
 
@@ -369,7 +369,7 @@ static struct fwnet_fragment_info *fwnet_frag_new(
 
 	new = kmalloc(sizeof(*new), GFP_ATOMIC);
 	if (!new) {
-		fw_error("out of memory\n");
+		dev_err(&pd->skb->dev->dev, "out of memory\n");
 		return NULL;
 	}
 
@@ -414,7 +414,7 @@ fail_w_fi:
 fail_w_new:
 	kfree(new);
 fail:
-	fw_error("out of memory\n");
+	dev_err(&net->dev, "out of memory\n");
 
 	return NULL;
 }
@@ -502,11 +502,7 @@ static struct fwnet_peer *fwnet_peer_find_by_node_id(struct fwnet_device *dev,
 static unsigned fwnet_max_payload(unsigned max_rec, unsigned speed)
 {
 	max_rec = min(max_rec, speed + 8);
-	max_rec = min(max_rec, 0xbU); /* <= 4096 */
-	if (max_rec < 8) {
-		fw_notify("max_rec %x out of range\n", max_rec);
-		max_rec = 8;
-	}
+	max_rec = clamp(max_rec, 8U, 11U); /* 512...4096 */
 
 	return (1 << (max_rec + 1)) - RFC2374_FRAG_HDR_SIZE;
 }
@@ -558,7 +554,7 @@ static int fwnet_finish_incoming_packet(struct net_device *net,
 		sspd = arp1394->sspd;
 		/* Sanity check.  OS X 10.3 PPC reportedly sends 131. */
 		if (sspd > SCODE_3200) {
-			fw_notify("sspd %x out of range\n", sspd);
+			dev_notice(&net->dev, "sspd %x out of range\n", sspd);
 			sspd = SCODE_3200;
 		}
 		max_payload = fwnet_max_payload(arp1394->max_rec, sspd);
@@ -578,8 +574,9 @@ static int fwnet_finish_incoming_packet(struct net_device *net,
 		spin_unlock_irqrestore(&dev->lock, flags);
 
 		if (!peer) {
-			fw_notify("No peer for ARP packet from %016llx\n",
-				  (unsigned long long)peer_guid);
+			dev_notice(&net->dev,
+				   "no peer for ARP packet from %016llx\n",
+				   (unsigned long long)peer_guid);
 			goto no_peer;
 		}
 
@@ -695,7 +692,7 @@ static int fwnet_incoming_packet(struct fwnet_device *dev, __be32 *buf, int len,
 
 		skb = dev_alloc_skb(len + net->hard_header_len + 15);
 		if (unlikely(!skb)) {
-			fw_error("out of memory\n");
+			dev_err(&net->dev, "out of memory\n");
 			net->stats.rx_dropped++;
 
 			return -ENOMEM;
@@ -818,7 +815,7 @@ static void fwnet_receive_packet(struct fw_card *card, struct fw_request *r,
 		rcode = RCODE_TYPE_ERROR;
 	else if (fwnet_incoming_packet(dev, payload, length,
 				       source, generation, false) != 0) {
-		fw_error("Incoming packet failure\n");
+		dev_err(&dev->netdev->dev, "incoming packet failure\n");
 		rcode = RCODE_CONFLICT_ERROR;
 	} else
 		rcode = RCODE_COMPLETE;
@@ -885,7 +882,7 @@ static void fwnet_receive_broadcast(struct fw_iso_context *context,
 	if (retval >= 0)
 		fw_iso_context_queue_flush(dev->broadcast_rcv_context);
 	else
-		fw_error("requeue failed\n");
+		dev_err(&dev->netdev->dev, "requeue failed\n");
 }
 
 static struct kmem_cache *fwnet_packet_task_cache;
@@ -940,9 +937,10 @@ static void fwnet_transmit_packet_done(struct fwnet_packet_task *ptask)
 		case RFC2374_HDR_LASTFRAG:
 		case RFC2374_HDR_UNFRAG:
 		default:
-			fw_error("Outstanding packet %x lf %x, header %x,%x\n",
-				 ptask->outstanding_pkts, lf, ptask->hdr.w0,
-				 ptask->hdr.w1);
+			dev_err(&dev->netdev->dev,
+				"outstanding packet %x lf %x, header %x,%x\n",
+				ptask->outstanding_pkts, lf, ptask->hdr.w0,
+				ptask->hdr.w1);
 			BUG();
 
 		case RFC2374_HDR_FIRSTFRAG:
@@ -1014,8 +1012,9 @@ static void fwnet_write_complete(struct fw_card *card, int rcode,
 		fwnet_transmit_packet_failed(ptask);
 
 		if (printk_timed_ratelimit(&j,  1000) || rcode != last_rcode) {
-			fw_error("fwnet_write_complete: "
-				"failed: %x (skipped %d)\n", rcode, errors_skipped);
+			dev_err(&ptask->dev->netdev->dev,
+				"fwnet_write_complete failed: %x (skipped %d)\n",
+				rcode, errors_skipped);
 
 			errors_skipped = 0;
 			last_rcode = rcode;
@@ -1125,17 +1124,12 @@ static int fwnet_broadcast_start(struct fwnet_device *dev)
 	unsigned u;
 
 	if (dev->local_fifo == FWNET_NO_FIFO_ADDR) {
-		/* outside OHCI posted write area? */
-		static const struct fw_address_region region = {
-			.start = 0xffff00000000ULL,
-			.end   = CSR_REGISTER_BASE,
-		};
-
 		dev->handler.length = 4096;
 		dev->handler.address_callback = fwnet_receive_packet;
 		dev->handler.callback_data = dev;
 
-		retval = fw_core_add_address_handler(&dev->handler, &region);
+		retval = fw_core_add_address_handler(&dev->handler,
+					&fw_high_memory_region);
 		if (retval < 0)
 			goto failed_initial;
 
@@ -1548,14 +1542,12 @@ static int fwnet_probe(struct device *_dev)
 	put_unaligned_be64(card->guid, net->dev_addr);
 	put_unaligned_be64(~0ULL, net->broadcast);
 	ret = register_netdev(net);
-	if (ret) {
-		fw_error("Cannot register the driver\n");
+	if (ret)
 		goto out;
-	}
 
 	list_add_tail(&dev->dev_link, &fwnet_device_list);
-	fw_notify("%s: IPv4 over FireWire on device %016llx\n",
-		  net->name, (unsigned long long)card->guid);
+	dev_notice(&net->dev, "IPv4 over IEEE 1394 on card %s\n",
+		   dev_name(card->device));
  have_dev:
 	ret = fwnet_add_peer(dev, unit, device);
 	if (ret && allocated_netdev) {
@@ -1657,7 +1649,7 @@ static const struct ieee1394_device_id fwnet_id_table[] = {
 static struct fw_driver fwnet_driver = {
 	.driver = {
 		.owner  = THIS_MODULE,
-		.name   = "net",
+		.name   = KBUILD_MODNAME,
 		.bus    = &fw_bus_type,
 		.probe  = fwnet_probe,
 		.remove = fwnet_remove,

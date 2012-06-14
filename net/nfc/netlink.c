@@ -21,6 +21,8 @@
  * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": %s: " fmt, __func__
+
 #include <net/genetlink.h>
 #include <linux/nfc.h>
 #include <linux/slab.h>
@@ -31,7 +33,7 @@ static struct genl_multicast_group nfc_genl_event_mcgrp = {
 	.name = NFC_GENL_MCAST_EVENT_NAME,
 };
 
-struct genl_family nfc_genl_family = {
+static struct genl_family nfc_genl_family = {
 	.id = GENL_ID_GENERATE,
 	.hdrsize = 0,
 	.name = NFC_GENL_NAME,
@@ -44,27 +46,40 @@ static const struct nla_policy nfc_genl_policy[NFC_ATTR_MAX + 1] = {
 	[NFC_ATTR_DEVICE_NAME] = { .type = NLA_STRING,
 				.len = NFC_DEVICE_NAME_MAXSIZE },
 	[NFC_ATTR_PROTOCOLS] = { .type = NLA_U32 },
+	[NFC_ATTR_COMM_MODE] = { .type = NLA_U8 },
+	[NFC_ATTR_RF_MODE] = { .type = NLA_U8 },
+	[NFC_ATTR_DEVICE_POWERED] = { .type = NLA_U8 },
 };
 
 static int nfc_genl_send_target(struct sk_buff *msg, struct nfc_target *target,
-					struct netlink_callback *cb, int flags)
+				struct netlink_callback *cb, int flags)
 {
 	void *hdr;
 
-	nfc_dbg("entry");
-
 	hdr = genlmsg_put(msg, NETLINK_CB(cb->skb).pid, cb->nlh->nlmsg_seq,
-				&nfc_genl_family, flags, NFC_CMD_GET_TARGET);
+			  &nfc_genl_family, flags, NFC_CMD_GET_TARGET);
 	if (!hdr)
 		return -EMSGSIZE;
 
 	genl_dump_check_consistent(cb, hdr, &nfc_genl_family);
 
-	NLA_PUT_U32(msg, NFC_ATTR_TARGET_INDEX, target->idx);
-	NLA_PUT_U32(msg, NFC_ATTR_PROTOCOLS,
-				target->supported_protocols);
-	NLA_PUT_U16(msg, NFC_ATTR_TARGET_SENS_RES, target->sens_res);
-	NLA_PUT_U8(msg, NFC_ATTR_TARGET_SEL_RES, target->sel_res);
+	if (nla_put_u32(msg, NFC_ATTR_TARGET_INDEX, target->idx) ||
+	    nla_put_u32(msg, NFC_ATTR_PROTOCOLS, target->supported_protocols) ||
+	    nla_put_u16(msg, NFC_ATTR_TARGET_SENS_RES, target->sens_res) ||
+	    nla_put_u8(msg, NFC_ATTR_TARGET_SEL_RES, target->sel_res))
+		goto nla_put_failure;
+	if (target->nfcid1_len > 0 &&
+	    nla_put(msg, NFC_ATTR_TARGET_NFCID1, target->nfcid1_len,
+		    target->nfcid1))
+		goto nla_put_failure;
+	if (target->sensb_res_len > 0 &&
+	    nla_put(msg, NFC_ATTR_TARGET_SENSB_RES, target->sensb_res_len,
+		    target->sensb_res))
+		goto nla_put_failure;
+	if (target->sensf_res_len > 0 &&
+	    nla_put(msg, NFC_ATTR_TARGET_SENSF_RES, target->sensf_res_len,
+		    target->sensf_res))
+		goto nla_put_failure;
 
 	return genlmsg_end(msg, hdr);
 
@@ -80,9 +95,9 @@ static struct nfc_dev *__get_device_from_cb(struct netlink_callback *cb)
 	u32 idx;
 
 	rc = nlmsg_parse(cb->nlh, GENL_HDRLEN + nfc_genl_family.hdrsize,
-						nfc_genl_family.attrbuf,
-						nfc_genl_family.maxattr,
-						nfc_genl_policy);
+			 nfc_genl_family.attrbuf,
+			 nfc_genl_family.maxattr,
+			 nfc_genl_policy);
 	if (rc < 0)
 		return ERR_PTR(rc);
 
@@ -99,13 +114,11 @@ static struct nfc_dev *__get_device_from_cb(struct netlink_callback *cb)
 }
 
 static int nfc_genl_dump_targets(struct sk_buff *skb,
-				struct netlink_callback *cb)
+				 struct netlink_callback *cb)
 {
 	int i = cb->args[0];
 	struct nfc_dev *dev = (struct nfc_dev *) cb->args[1];
 	int rc;
-
-	nfc_dbg("entry");
 
 	if (!dev) {
 		dev = __get_device_from_cb(cb);
@@ -115,20 +128,20 @@ static int nfc_genl_dump_targets(struct sk_buff *skb,
 		cb->args[1] = (long) dev;
 	}
 
-	spin_lock_bh(&dev->targets_lock);
+	device_lock(&dev->dev);
 
 	cb->seq = dev->targets_generation;
 
 	while (i < dev->n_targets) {
 		rc = nfc_genl_send_target(skb, &dev->targets[i], cb,
-								NLM_F_MULTI);
+					  NLM_F_MULTI);
 		if (rc < 0)
 			break;
 
 		i++;
 	}
 
-	spin_unlock_bh(&dev->targets_lock);
+	device_unlock(&dev->dev);
 
 	cb->args[0] = i;
 
@@ -138,8 +151,6 @@ static int nfc_genl_dump_targets(struct sk_buff *skb,
 static int nfc_genl_dump_targets_done(struct netlink_callback *cb)
 {
 	struct nfc_dev *dev = (struct nfc_dev *) cb->args[1];
-
-	nfc_dbg("entry");
 
 	if (dev)
 		nfc_put_device(dev);
@@ -152,8 +163,6 @@ int nfc_genl_targets_found(struct nfc_dev *dev)
 	struct sk_buff *msg;
 	void *hdr;
 
-	nfc_dbg("entry");
-
 	dev->genl_data.poll_req_pid = 0;
 
 	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_ATOMIC);
@@ -161,15 +170,47 @@ int nfc_genl_targets_found(struct nfc_dev *dev)
 		return -ENOMEM;
 
 	hdr = genlmsg_put(msg, 0, 0, &nfc_genl_family, 0,
-				NFC_EVENT_TARGETS_FOUND);
+			  NFC_EVENT_TARGETS_FOUND);
 	if (!hdr)
 		goto free_msg;
 
-	NLA_PUT_U32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx);
+	if (nla_put_u32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx))
+		goto nla_put_failure;
 
 	genlmsg_end(msg, hdr);
 
 	return genlmsg_multicast(msg, 0, nfc_genl_event_mcgrp.id, GFP_ATOMIC);
+
+nla_put_failure:
+	genlmsg_cancel(msg, hdr);
+free_msg:
+	nlmsg_free(msg);
+	return -EMSGSIZE;
+}
+
+int nfc_genl_target_lost(struct nfc_dev *dev, u32 target_idx)
+{
+	struct sk_buff *msg;
+	void *hdr;
+
+	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+
+	hdr = genlmsg_put(msg, 0, 0, &nfc_genl_family, 0,
+			  NFC_EVENT_TARGET_LOST);
+	if (!hdr)
+		goto free_msg;
+
+	if (nla_put_string(msg, NFC_ATTR_DEVICE_NAME, nfc_device_name(dev)) ||
+	    nla_put_u32(msg, NFC_ATTR_TARGET_INDEX, target_idx))
+		goto nla_put_failure;
+
+	genlmsg_end(msg, hdr);
+
+	genlmsg_multicast(msg, 0, nfc_genl_event_mcgrp.id, GFP_KERNEL);
+
+	return 0;
 
 nla_put_failure:
 	genlmsg_cancel(msg, hdr);
@@ -183,20 +224,20 @@ int nfc_genl_device_added(struct nfc_dev *dev)
 	struct sk_buff *msg;
 	void *hdr;
 
-	nfc_dbg("entry");
-
 	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
 
 	hdr = genlmsg_put(msg, 0, 0, &nfc_genl_family, 0,
-				NFC_EVENT_DEVICE_ADDED);
+			  NFC_EVENT_DEVICE_ADDED);
 	if (!hdr)
 		goto free_msg;
 
-	NLA_PUT_STRING(msg, NFC_ATTR_DEVICE_NAME, nfc_device_name(dev));
-	NLA_PUT_U32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx);
-	NLA_PUT_U32(msg, NFC_ATTR_PROTOCOLS, dev->supported_protocols);
+	if (nla_put_string(msg, NFC_ATTR_DEVICE_NAME, nfc_device_name(dev)) ||
+	    nla_put_u32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx) ||
+	    nla_put_u32(msg, NFC_ATTR_PROTOCOLS, dev->supported_protocols) ||
+	    nla_put_u8(msg, NFC_ATTR_DEVICE_POWERED, dev->dev_up))
+		goto nla_put_failure;
 
 	genlmsg_end(msg, hdr);
 
@@ -216,18 +257,17 @@ int nfc_genl_device_removed(struct nfc_dev *dev)
 	struct sk_buff *msg;
 	void *hdr;
 
-	nfc_dbg("entry");
-
 	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
 
 	hdr = genlmsg_put(msg, 0, 0, &nfc_genl_family, 0,
-				NFC_EVENT_DEVICE_REMOVED);
+			  NFC_EVENT_DEVICE_REMOVED);
 	if (!hdr)
 		goto free_msg;
 
-	NLA_PUT_U32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx);
+	if (nla_put_u32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx))
+		goto nla_put_failure;
 
 	genlmsg_end(msg, hdr);
 
@@ -243,25 +283,25 @@ free_msg:
 }
 
 static int nfc_genl_send_device(struct sk_buff *msg, struct nfc_dev *dev,
-						u32 pid, u32 seq,
-						struct netlink_callback *cb,
-						int flags)
+				u32 pid, u32 seq,
+				struct netlink_callback *cb,
+				int flags)
 {
 	void *hdr;
 
-	nfc_dbg("entry");
-
 	hdr = genlmsg_put(msg, pid, seq, &nfc_genl_family, flags,
-							NFC_CMD_GET_DEVICE);
+			  NFC_CMD_GET_DEVICE);
 	if (!hdr)
 		return -EMSGSIZE;
 
 	if (cb)
 		genl_dump_check_consistent(cb, hdr, &nfc_genl_family);
 
-	NLA_PUT_STRING(msg, NFC_ATTR_DEVICE_NAME, nfc_device_name(dev));
-	NLA_PUT_U32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx);
-	NLA_PUT_U32(msg, NFC_ATTR_PROTOCOLS, dev->supported_protocols);
+	if (nla_put_string(msg, NFC_ATTR_DEVICE_NAME, nfc_device_name(dev)) ||
+	    nla_put_u32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx) ||
+	    nla_put_u32(msg, NFC_ATTR_PROTOCOLS, dev->supported_protocols) ||
+	    nla_put_u8(msg, NFC_ATTR_DEVICE_POWERED, dev->dev_up))
+		goto nla_put_failure;
 
 	return genlmsg_end(msg, hdr);
 
@@ -271,13 +311,11 @@ nla_put_failure:
 }
 
 static int nfc_genl_dump_devices(struct sk_buff *skb,
-				struct netlink_callback *cb)
+				 struct netlink_callback *cb)
 {
 	struct class_dev_iter *iter = (struct class_dev_iter *) cb->args[0];
 	struct nfc_dev *dev = (struct nfc_dev *) cb->args[1];
 	bool first_call = false;
-
-	nfc_dbg("entry");
 
 	if (!iter) {
 		first_call = true;
@@ -300,8 +338,7 @@ static int nfc_genl_dump_devices(struct sk_buff *skb,
 		int rc;
 
 		rc = nfc_genl_send_device(skb, dev, NETLINK_CB(cb->skb).pid,
-							cb->nlh->nlmsg_seq,
-							cb, NLM_F_MULTI);
+					  cb->nlh->nlmsg_seq, cb, NLM_F_MULTI);
 		if (rc < 0)
 			break;
 
@@ -319,12 +356,82 @@ static int nfc_genl_dump_devices_done(struct netlink_callback *cb)
 {
 	struct class_dev_iter *iter = (struct class_dev_iter *) cb->args[0];
 
-	nfc_dbg("entry");
-
 	nfc_device_iter_exit(iter);
 	kfree(iter);
 
 	return 0;
+}
+
+int nfc_genl_dep_link_up_event(struct nfc_dev *dev, u32 target_idx,
+			       u8 comm_mode, u8 rf_mode)
+{
+	struct sk_buff *msg;
+	void *hdr;
+
+	pr_debug("DEP link is up\n");
+
+	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_ATOMIC);
+	if (!msg)
+		return -ENOMEM;
+
+	hdr = genlmsg_put(msg, 0, 0, &nfc_genl_family, 0, NFC_CMD_DEP_LINK_UP);
+	if (!hdr)
+		goto free_msg;
+
+	if (nla_put_u32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx))
+		goto nla_put_failure;
+	if (rf_mode == NFC_RF_INITIATOR &&
+	    nla_put_u32(msg, NFC_ATTR_TARGET_INDEX, target_idx))
+		goto nla_put_failure;
+	if (nla_put_u8(msg, NFC_ATTR_COMM_MODE, comm_mode) ||
+	    nla_put_u8(msg, NFC_ATTR_RF_MODE, rf_mode))
+		goto nla_put_failure;
+
+	genlmsg_end(msg, hdr);
+
+	dev->dep_link_up = true;
+
+	genlmsg_multicast(msg, 0, nfc_genl_event_mcgrp.id, GFP_ATOMIC);
+
+	return 0;
+
+nla_put_failure:
+	genlmsg_cancel(msg, hdr);
+free_msg:
+	nlmsg_free(msg);
+	return -EMSGSIZE;
+}
+
+int nfc_genl_dep_link_down_event(struct nfc_dev *dev)
+{
+	struct sk_buff *msg;
+	void *hdr;
+
+	pr_debug("DEP link is down\n");
+
+	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_ATOMIC);
+	if (!msg)
+		return -ENOMEM;
+
+	hdr = genlmsg_put(msg, 0, 0, &nfc_genl_family, 0,
+			  NFC_CMD_DEP_LINK_DOWN);
+	if (!hdr)
+		goto free_msg;
+
+	if (nla_put_u32(msg, NFC_ATTR_DEVICE_INDEX, dev->idx))
+		goto nla_put_failure;
+
+	genlmsg_end(msg, hdr);
+
+	genlmsg_multicast(msg, 0, nfc_genl_event_mcgrp.id, GFP_ATOMIC);
+
+	return 0;
+
+nla_put_failure:
+	genlmsg_cancel(msg, hdr);
+free_msg:
+	nlmsg_free(msg);
+	return -EMSGSIZE;
 }
 
 static int nfc_genl_get_device(struct sk_buff *skb, struct genl_info *info)
@@ -333,8 +440,6 @@ static int nfc_genl_get_device(struct sk_buff *skb, struct genl_info *info)
 	struct nfc_dev *dev;
 	u32 idx;
 	int rc = -ENOBUFS;
-
-	nfc_dbg("entry");
 
 	if (!info->attrs[NFC_ATTR_DEVICE_INDEX])
 		return -EINVAL;
@@ -352,7 +457,7 @@ static int nfc_genl_get_device(struct sk_buff *skb, struct genl_info *info)
 	}
 
 	rc = nfc_genl_send_device(msg, dev, info->snd_pid, info->snd_seq,
-								NULL, 0);
+				  NULL, 0);
 	if (rc < 0)
 		goto out_free;
 
@@ -367,6 +472,48 @@ out_putdev:
 	return rc;
 }
 
+static int nfc_genl_dev_up(struct sk_buff *skb, struct genl_info *info)
+{
+	struct nfc_dev *dev;
+	int rc;
+	u32 idx;
+
+	if (!info->attrs[NFC_ATTR_DEVICE_INDEX])
+		return -EINVAL;
+
+	idx = nla_get_u32(info->attrs[NFC_ATTR_DEVICE_INDEX]);
+
+	dev = nfc_get_device(idx);
+	if (!dev)
+		return -ENODEV;
+
+	rc = nfc_dev_up(dev);
+
+	nfc_put_device(dev);
+	return rc;
+}
+
+static int nfc_genl_dev_down(struct sk_buff *skb, struct genl_info *info)
+{
+	struct nfc_dev *dev;
+	int rc;
+	u32 idx;
+
+	if (!info->attrs[NFC_ATTR_DEVICE_INDEX])
+		return -EINVAL;
+
+	idx = nla_get_u32(info->attrs[NFC_ATTR_DEVICE_INDEX]);
+
+	dev = nfc_get_device(idx);
+	if (!dev)
+		return -ENODEV;
+
+	rc = nfc_dev_down(dev);
+
+	nfc_put_device(dev);
+	return rc;
+}
+
 static int nfc_genl_start_poll(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nfc_dev *dev;
@@ -374,10 +521,10 @@ static int nfc_genl_start_poll(struct sk_buff *skb, struct genl_info *info)
 	u32 idx;
 	u32 protocols;
 
-	nfc_dbg("entry");
+	pr_debug("Poll start\n");
 
 	if (!info->attrs[NFC_ATTR_DEVICE_INDEX] ||
-		!info->attrs[NFC_ATTR_PROTOCOLS])
+	    !info->attrs[NFC_ATTR_PROTOCOLS])
 		return -EINVAL;
 
 	idx = nla_get_u32(info->attrs[NFC_ATTR_DEVICE_INDEX]);
@@ -405,8 +552,6 @@ static int nfc_genl_stop_poll(struct sk_buff *skb, struct genl_info *info)
 	int rc;
 	u32 idx;
 
-	nfc_dbg("entry");
-
 	if (!info->attrs[NFC_ATTR_DEVICE_INDEX])
 		return -EINVAL;
 
@@ -432,12 +577,78 @@ out:
 	return rc;
 }
 
+static int nfc_genl_dep_link_up(struct sk_buff *skb, struct genl_info *info)
+{
+	struct nfc_dev *dev;
+	int rc, tgt_idx;
+	u32 idx;
+	u8 comm;
+
+	pr_debug("DEP link up\n");
+
+	if (!info->attrs[NFC_ATTR_DEVICE_INDEX] ||
+	    !info->attrs[NFC_ATTR_COMM_MODE])
+		return -EINVAL;
+
+	idx = nla_get_u32(info->attrs[NFC_ATTR_DEVICE_INDEX]);
+	if (!info->attrs[NFC_ATTR_TARGET_INDEX])
+		tgt_idx = NFC_TARGET_IDX_ANY;
+	else
+		tgt_idx = nla_get_u32(info->attrs[NFC_ATTR_TARGET_INDEX]);
+
+	comm = nla_get_u8(info->attrs[NFC_ATTR_COMM_MODE]);
+
+	if (comm != NFC_COMM_ACTIVE && comm != NFC_COMM_PASSIVE)
+		return -EINVAL;
+
+	dev = nfc_get_device(idx);
+	if (!dev)
+		return -ENODEV;
+
+	rc = nfc_dep_link_up(dev, tgt_idx, comm);
+
+	nfc_put_device(dev);
+
+	return rc;
+}
+
+static int nfc_genl_dep_link_down(struct sk_buff *skb, struct genl_info *info)
+{
+	struct nfc_dev *dev;
+	int rc;
+	u32 idx;
+
+	if (!info->attrs[NFC_ATTR_DEVICE_INDEX])
+		return -EINVAL;
+
+	idx = nla_get_u32(info->attrs[NFC_ATTR_DEVICE_INDEX]);
+
+	dev = nfc_get_device(idx);
+	if (!dev)
+		return -ENODEV;
+
+	rc = nfc_dep_link_down(dev);
+
+	nfc_put_device(dev);
+	return rc;
+}
+
 static struct genl_ops nfc_genl_ops[] = {
 	{
 		.cmd = NFC_CMD_GET_DEVICE,
 		.doit = nfc_genl_get_device,
 		.dumpit = nfc_genl_dump_devices,
 		.done = nfc_genl_dump_devices_done,
+		.policy = nfc_genl_policy,
+	},
+	{
+		.cmd = NFC_CMD_DEV_UP,
+		.doit = nfc_genl_dev_up,
+		.policy = nfc_genl_policy,
+	},
+	{
+		.cmd = NFC_CMD_DEV_DOWN,
+		.doit = nfc_genl_dev_down,
 		.policy = nfc_genl_policy,
 	},
 	{
@@ -451,6 +662,16 @@ static struct genl_ops nfc_genl_ops[] = {
 		.policy = nfc_genl_policy,
 	},
 	{
+		.cmd = NFC_CMD_DEP_LINK_UP,
+		.doit = nfc_genl_dep_link_up,
+		.policy = nfc_genl_policy,
+	},
+	{
+		.cmd = NFC_CMD_DEP_LINK_DOWN,
+		.doit = nfc_genl_dep_link_down,
+		.policy = nfc_genl_policy,
+	},
+	{
 		.cmd = NFC_CMD_GET_TARGET,
 		.dumpit = nfc_genl_dump_targets,
 		.done = nfc_genl_dump_targets_done,
@@ -459,7 +680,7 @@ static struct genl_ops nfc_genl_ops[] = {
 };
 
 static int nfc_genl_rcv_nl_event(struct notifier_block *this,
-						unsigned long event, void *ptr)
+				 unsigned long event, void *ptr)
 {
 	struct netlink_notify *n = ptr;
 	struct class_dev_iter iter;
@@ -468,18 +689,16 @@ static int nfc_genl_rcv_nl_event(struct notifier_block *this,
 	if (event != NETLINK_URELEASE || n->protocol != NETLINK_GENERIC)
 		goto out;
 
-	nfc_dbg("NETLINK_URELEASE event from id %d", n->pid);
+	pr_debug("NETLINK_URELEASE event from id %d\n", n->pid);
 
 	nfc_device_iter_init(&iter);
 	dev = nfc_device_iter_next(&iter);
 
 	while (dev) {
-		mutex_lock(&dev->genl_data.genl_data_mutex);
 		if (dev->genl_data.poll_req_pid == n->pid) {
 			nfc_stop_poll(dev);
 			dev->genl_data.poll_req_pid = 0;
 		}
-		mutex_unlock(&dev->genl_data.genl_data_mutex);
 		dev = nfc_device_iter_next(&iter);
 	}
 
@@ -514,7 +733,7 @@ int __init nfc_genl_init(void)
 	int rc;
 
 	rc = genl_register_family_with_ops(&nfc_genl_family, nfc_genl_ops,
-					ARRAY_SIZE(nfc_genl_ops));
+					   ARRAY_SIZE(nfc_genl_ops));
 	if (rc)
 		return rc;
 

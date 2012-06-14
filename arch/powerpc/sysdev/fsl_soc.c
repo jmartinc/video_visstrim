@@ -19,7 +19,7 @@
 #include <linux/major.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
@@ -31,7 +31,6 @@
 #include <linux/fs_enet_pd.h>
 #include <linux/fs_uart_pd.h>
 
-#include <asm/system.h>
 #include <linux/atomic.h>
 #include <asm/io.h>
 #include <asm/irq.h>

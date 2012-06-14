@@ -25,7 +25,6 @@
 #include <linux/skbuff.h>
 #include <net/sock.h>
 #include <net/tcp_states.h>
-#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <linux/fcntl.h>
 #include <linux/termios.h>	/* For TIOCINQ/OUTQ */
@@ -36,6 +35,7 @@
 #include <linux/init.h>
 #include <net/rose.h>
 #include <linux/seq_file.h>
+#include <linux/export.h>
 
 static unsigned int rose_neigh_no = 1;
 

@@ -16,6 +16,8 @@
  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
+#include <linux/module.h>
+
 MODULE_AUTHOR("Giuliano Pochini <pochini@shiny.it>");
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Echoaudio " ECHOCARD_NAME " soundcards driver");
@@ -24,7 +26,7 @@ MODULE_DEVICE_TABLE(pci, snd_echo_ids);
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for " ECHOCARD_NAME " soundcard.");
@@ -2326,7 +2328,7 @@ static void __devexit snd_echo_remove(struct pci_dev *pci)
 ******************************************************************************/
 
 /* pci_driver definition */
-static struct pci_driver driver = {
+static struct pci_driver echo_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_echo_ids,
 	.probe = snd_echo_probe,
@@ -2337,22 +2339,4 @@ static struct pci_driver driver = {
 #endif /* CONFIG_PM */
 };
 
-
-
-/* initialization of the module */
-static int __init alsa_card_echo_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-
-
-/* clean up the module */
-static void __exit alsa_card_echo_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-
-module_init(alsa_card_echo_init)
-module_exit(alsa_card_echo_exit)
+module_pci_driver(echo_driver);

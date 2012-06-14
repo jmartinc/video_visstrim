@@ -12,9 +12,8 @@
  *  published by the Free Software Foundation.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/init.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/gpio.h>
@@ -23,6 +22,9 @@
 #include <linux/basic_mmio_gpio.h>
 
 #include <mach/hardware.h>
+#include <mach/gpio-ep93xx.h>
+
+#define irq_to_gpio(irq)	((irq) - gpio_to_irq(0))
 
 struct ep93xx_gpio {
 	void __iomem		*mmio_base;
@@ -59,11 +61,6 @@ static void ep93xx_gpio_update_int_params(unsigned port)
 
 	__raw_writeb(gpio_int_unmasked[port] & gpio_int_enabled[port],
 		EP93XX_GPIO_REG(int_en_register_offset[port]));
-}
-
-static inline void ep93xx_gpio_int_mask(unsigned line)
-{
-	gpio_int_unmasked[line >> 3] &= ~(1 << (line & 7));
 }
 
 static void ep93xx_gpio_int_debounce(unsigned int irq, bool enable)
@@ -208,7 +205,6 @@ static int ep93xx_gpio_irq_type(struct irq_data *d, unsigned int type)
 		handler = handle_edge_irq;
 		break;
 	default:
-		pr_err("failed to set irq type %d for gpio %d\n", type, gpio);
 		return -EINVAL;
 	}
 
@@ -307,6 +303,21 @@ static int ep93xx_gpio_set_debounce(struct gpio_chip *chip,
 	return 0;
 }
 
+/*
+ * Map GPIO A0..A7  (0..7)  to irq 64..71,
+ *          B0..B7  (7..15) to irq 72..79, and
+ *          F0..F7 (16..24) to irq 80..87.
+ */
+static int ep93xx_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
+{
+	int gpio = chip->base + offset;
+
+	if (gpio > EP93XX_GPIO_LINE_MAX_IRQ)
+		return -EINVAL;
+
+	return 64 + gpio;
+}
+
 static int ep93xx_gpio_add_bank(struct bgpio_chip *bgc, struct device *dev,
 	void __iomem *mmio_base, struct ep93xx_gpio_bank *bank)
 {
@@ -314,15 +325,17 @@ static int ep93xx_gpio_add_bank(struct bgpio_chip *bgc, struct device *dev,
 	void __iomem *dir =  mmio_base + bank->dir;
 	int err;
 
-	err = bgpio_init(bgc, dev, 1, data, NULL, NULL, dir, NULL, false);
+	err = bgpio_init(bgc, dev, 1, data, NULL, NULL, dir, NULL, 0);
 	if (err)
 		return err;
 
 	bgc->gc.label = bank->label;
 	bgc->gc.base = bank->base;
 
-	if (bank->has_debounce)
+	if (bank->has_debounce) {
 		bgc->gc.set_debounce = ep93xx_gpio_set_debounce;
+		bgc->gc.to_irq = ep93xx_gpio_to_irq;
+	}
 
 	return gpiochip_add(&bgc->gc);
 }
@@ -356,13 +369,6 @@ static int __devinit ep93xx_gpio_probe(struct platform_device *pdev)
 		goto exit_release;
 	}
 	ep93xx_gpio->mmio_base = mmio;
-
-	/* Default all ports to GPIO */
-	ep93xx_devcfg_set_bits(EP93XX_SYSCON_DEVCFG_KEYS |
-			       EP93XX_SYSCON_DEVCFG_GONK |
-			       EP93XX_SYSCON_DEVCFG_EONIDE |
-			       EP93XX_SYSCON_DEVCFG_GONIDE |
-			       EP93XX_SYSCON_DEVCFG_HONIDE);
 
 	for (i = 0; i < ARRAY_SIZE(ep93xx_gpio_banks); i++) {
 		struct bgpio_chip *bgc = &ep93xx_gpio->bgc[i];

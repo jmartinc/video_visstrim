@@ -1,7 +1,6 @@
 #ifndef __SAA7146__
 #define __SAA7146__
 
-#include <linux/module.h>	/* for module-version */
 #include <linux/delay.h>	/* for delay-stuff */
 #include <linux/slab.h>		/* for kmalloc/kfree */
 #include <linux/pci.h>		/* for pci-config-stuff, vendor ids etc. */
@@ -14,11 +13,10 @@
 #include <linux/mutex.h>
 #include <linux/scatterlist.h>
 #include <media/v4l2-device.h>
+#include <media/v4l2-ctrls.h>
 
 #include <linux/vmalloc.h>	/* for vmalloc() */
 #include <linux/mm.h>		/* for vmalloc_to_page() */
-
-#define SAA7146_VERSION_CODE 0x000600	/* 0.6.0 */
 
 #define saa7146_write(sxy,adr,dat)    writel((dat),(sxy->mem+(adr)))
 #define saa7146_read(sxy,adr)         readl(sxy->mem+(adr))
@@ -54,6 +52,8 @@ do {									\
 
 #define SAA7146_ISR_CLEAR(x,y) \
 	saa7146_write(x, ISR, (y));
+
+struct module;
 
 struct saa7146_dev;
 struct saa7146_extension;
@@ -120,6 +120,7 @@ struct saa7146_dev
 	struct list_head		item;
 
 	struct v4l2_device 		v4l2_dev;
+	struct v4l2_ctrl_handler	ctrl_handler;
 
 	/* different device locks */
 	spinlock_t			slock;

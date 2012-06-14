@@ -29,7 +29,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/moduleparam.h>
+#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/ac97_codec.h>
@@ -68,7 +68,7 @@ module_param(ac97_clock, int, 0444);
 MODULE_PARM_DESC(ac97_clock, "AC'97 codec clock (0 = auto-detect).");
 
 /* just for backward compatibility */
-static int enable;
+static bool enable;
 module_param(enable, bool, 0444);
 
 /*
@@ -1324,7 +1324,7 @@ static void __devexit snd_intel8x0m_remove(struct pci_dev *pci)
 	pci_set_drvdata(pci, NULL);
 }
 
-static struct pci_driver driver = {
+static struct pci_driver intel8x0m_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_intel8x0m_ids,
 	.probe = snd_intel8x0m_probe,
@@ -1335,16 +1335,4 @@ static struct pci_driver driver = {
 #endif
 };
 
-
-static int __init alsa_card_intel8x0m_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_intel8x0m_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_intel8x0m_init)
-module_exit(alsa_card_intel8x0m_exit)
+module_pci_driver(intel8x0m_driver);

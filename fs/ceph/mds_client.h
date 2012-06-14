@@ -11,6 +11,7 @@
 #include <linux/ceph/types.h>
 #include <linux/ceph/messenger.h>
 #include <linux/ceph/mdsmap.h>
+#include <linux/ceph/auth.h>
 
 /*
  * Some lock dependencies:
@@ -20,7 +21,7 @@
  *
  *         mdsc->snap_rwsem
  *
- *         inode->i_lock
+ *         ci->i_ceph_lock
  *                 mdsc->snap_flush_lock
  *                 mdsc->cap_delay_lock
  *
@@ -113,14 +114,15 @@ struct ceph_mds_session {
 
 	struct ceph_connection s_con;
 
-	struct ceph_authorizer *s_authorizer;
-	void             *s_authorizer_buf, *s_authorizer_reply_buf;
-	size_t            s_authorizer_buf_len, s_authorizer_reply_buf_len;
+	struct ceph_auth_handshake s_auth;
+
+	/* protected by s_gen_ttl_lock */
+	spinlock_t        s_gen_ttl_lock;
+	u32               s_cap_gen;  /* inc each time we get mds stale msg */
+	unsigned long     s_cap_ttl;  /* when session caps expire */
 
 	/* protected by s_cap_lock */
 	spinlock_t        s_cap_lock;
-	u32               s_cap_gen;  /* inc each time we get mds stale msg */
-	unsigned long     s_cap_ttl;  /* when session caps expire */
 	struct list_head  s_caps;     /* all caps issued by this session */
 	int               s_nr_caps, s_trim_caps;
 	int               s_num_cap_releases;

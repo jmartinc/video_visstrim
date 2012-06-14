@@ -45,13 +45,12 @@ static ssize_t display_enabled_store(struct device *dev,
 		const char *buf, size_t size)
 {
 	struct omap_dss_device *dssdev = to_dss_device(dev);
-	int r, enabled;
+	int r;
+	bool enabled;
 
-	r = kstrtoint(buf, 0, &enabled);
+	r = strtobool(buf, &enabled);
 	if (r)
 		return r;
-
-	enabled = !!enabled;
 
 	if (enabled != (dssdev->state != OMAP_DSS_DISPLAY_DISABLED)) {
 		if (enabled) {
@@ -79,16 +78,15 @@ static ssize_t display_tear_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct omap_dss_device *dssdev = to_dss_device(dev);
-	int te, r;
+	int r;
+	bool te;
 
 	if (!dssdev->driver->enable_te || !dssdev->driver->get_te)
 		return -ENOENT;
 
-	r = kstrtoint(buf, 0, &te);
+	r = strtobool(buf, &te);
 	if (r)
 		return r;
-
-	te = !!te;
 
 	r = dssdev->driver->enable_te(dssdev, te);
 	if (r)
@@ -195,16 +193,15 @@ static ssize_t display_mirror_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct omap_dss_device *dssdev = to_dss_device(dev);
-	int mirror, r;
+	int r;
+	bool mirror;
 
 	if (!dssdev->driver->set_mirror || !dssdev->driver->get_mirror)
 		return -ENOENT;
 
-	r = kstrtoint(buf, 0, &mirror);
+	r = strtobool(buf, &mirror);
 	if (r)
 		return r;
-
-	mirror = !!mirror;
 
 	r = dssdev->driver->set_mirror(dssdev, mirror);
 	if (r)
@@ -282,16 +279,6 @@ void omapdss_default_get_resolution(struct omap_dss_device *dssdev,
 }
 EXPORT_SYMBOL(omapdss_default_get_resolution);
 
-void default_get_overlay_fifo_thresholds(enum omap_plane plane,
-		u32 fifo_size, u32 burst_size,
-		u32 *fifo_low, u32 *fifo_high)
-{
-	unsigned buf_unit = dss_feat_get_buffer_size_unit();
-
-	*fifo_high = fifo_size - buf_unit;
-	*fifo_low = fifo_size - burst_size;
-}
-
 int omapdss_default_get_recommended_bpp(struct omap_dss_device *dssdev)
 {
 	switch (dssdev->type) {
@@ -302,8 +289,12 @@ int omapdss_default_get_recommended_bpp(struct omap_dss_device *dssdev)
 			return 16;
 
 	case OMAP_DISPLAY_TYPE_DBI:
-	case OMAP_DISPLAY_TYPE_DSI:
 		if (dssdev->ctrl.pixel_size == 24)
+			return 24;
+		else
+			return 16;
+	case OMAP_DISPLAY_TYPE_DSI:
+		if (dsi_get_pixel_size(dssdev->panel.dsi_pix_fmt) > 16)
 			return 24;
 		else
 			return 16;
@@ -313,9 +304,17 @@ int omapdss_default_get_recommended_bpp(struct omap_dss_device *dssdev)
 		return 24;
 	default:
 		BUG();
+		return 0;
 	}
 }
 EXPORT_SYMBOL(omapdss_default_get_recommended_bpp);
+
+void omapdss_default_get_timings(struct omap_dss_device *dssdev,
+		struct omap_video_timings *timings)
+{
+	*timings = dssdev->panel.timings;
+}
+EXPORT_SYMBOL(omapdss_default_get_timings);
 
 /* Checks if replication logic should be used. Only use for active matrix,
  * when overlay is in RGB12U or RGB16 mode, and LCD interface is
@@ -342,11 +341,14 @@ bool dss_use_replication(struct omap_dss_device *dssdev,
 		bpp = 24;
 		break;
 	case OMAP_DISPLAY_TYPE_DBI:
-	case OMAP_DISPLAY_TYPE_DSI:
 		bpp = dssdev->ctrl.pixel_size;
+		break;
+	case OMAP_DISPLAY_TYPE_DSI:
+		bpp = dsi_get_pixel_size(dssdev->panel.dsi_pix_fmt);
 		break;
 	default:
 		BUG();
+		return false;
 	}
 
 	return bpp > 16;
@@ -358,46 +360,6 @@ void dss_init_device(struct platform_device *pdev,
 	struct device_attribute *attr;
 	int i;
 	int r;
-
-	switch (dssdev->type) {
-#ifdef CONFIG_OMAP2_DSS_DPI
-	case OMAP_DISPLAY_TYPE_DPI:
-		r = dpi_init_display(dssdev);
-		break;
-#endif
-#ifdef CONFIG_OMAP2_DSS_RFBI
-	case OMAP_DISPLAY_TYPE_DBI:
-		r = rfbi_init_display(dssdev);
-		break;
-#endif
-#ifdef CONFIG_OMAP2_DSS_VENC
-	case OMAP_DISPLAY_TYPE_VENC:
-		r = venc_init_display(dssdev);
-		break;
-#endif
-#ifdef CONFIG_OMAP2_DSS_SDI
-	case OMAP_DISPLAY_TYPE_SDI:
-		r = sdi_init_display(dssdev);
-		break;
-#endif
-#ifdef CONFIG_OMAP2_DSS_DSI
-	case OMAP_DISPLAY_TYPE_DSI:
-		r = dsi_init_display(dssdev);
-		break;
-#endif
-	case OMAP_DISPLAY_TYPE_HDMI:
-		r = hdmi_init_display(dssdev);
-		break;
-	default:
-		DSSERR("Support for display '%s' not compiled in.\n",
-				dssdev->name);
-		return;
-	}
-
-	if (r) {
-		DSSERR("failed to init display %s\n", dssdev->name);
-		return;
-	}
 
 	/* create device sysfs files */
 	i = 0;

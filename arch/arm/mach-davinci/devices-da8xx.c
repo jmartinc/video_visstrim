@@ -136,6 +136,7 @@ static struct edma_soc_info da830_edma_cc0_info = {
 	.n_cc			= 1,
 	.queue_tc_mapping	= da8xx_queue_tc_mapping,
 	.queue_priority_mapping	= da8xx_queue_priority_mapping,
+	.default_queue		= EVENTQ_1,
 };
 
 static struct edma_soc_info *da830_edma_info[EDMA_MAX_CC] = {
@@ -151,6 +152,7 @@ static struct edma_soc_info da850_edma_cc_info[] = {
 		.n_cc			= 1,
 		.queue_tc_mapping	= da8xx_queue_tc_mapping,
 		.queue_priority_mapping	= da8xx_queue_priority_mapping,
+		.default_queue		= EVENTQ_1,
 	},
 	{
 		.n_channel		= 32,
@@ -160,6 +162,7 @@ static struct edma_soc_info da850_edma_cc_info[] = {
 		.n_cc			= 1,
 		.queue_tc_mapping	= da850_queue_tc_mapping,
 		.queue_priority_mapping	= da850_queue_priority_mapping,
+		.default_queue		= EVENTQ_0,
 	},
 };
 
@@ -359,6 +362,11 @@ struct platform_device da8xx_wdt_device = {
 	.num_resources	= ARRAY_SIZE(da8xx_watchdog_resources),
 	.resource	= da8xx_watchdog_resources,
 };
+
+void da8xx_restart(char mode, const char *cmd)
+{
+	davinci_watchdog_reset(&da8xx_wdt_device);
+}
 
 int __init da8xx_register_watchdog(void)
 {
@@ -823,7 +831,7 @@ static struct platform_device da8xx_spi_device[] = {
 	},
 };
 
-int __init da8xx_register_spi(int instance, struct spi_board_info *info,
+int __init da8xx_register_spi(int instance, const struct spi_board_info *info,
 			      unsigned len)
 {
 	int ret;

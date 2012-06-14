@@ -15,7 +15,6 @@
 #include <linux/slab.h>
 #include <linux/kmod.h>
 #include <linux/kobj_map.h>
-#include <linux/buffer_head.h>
 #include <linux/mutex.h>
 #include <linux/idr.h>
 #include <linux/log2.h>
@@ -36,6 +35,7 @@ static DEFINE_IDR(ext_devt_idr);
 
 static struct device_type disk_type;
 
+static void disk_alloc_events(struct gendisk *disk);
 static void disk_add_events(struct gendisk *disk);
 static void disk_del_events(struct gendisk *disk);
 static void disk_release_events(struct gendisk *disk);
@@ -507,7 +507,7 @@ static int exact_lock(dev_t devt, void *data)
 	return 0;
 }
 
-void register_disk(struct gendisk *disk)
+static void register_disk(struct gendisk *disk)
 {
 	struct device *ddev = disk_to_dev(disk);
 	struct block_device *bdev;
@@ -536,7 +536,7 @@ void register_disk(struct gendisk *disk)
 	disk->slave_dir = kobject_create_and_add("slaves", &ddev->kobj);
 
 	/* No minors to use for partitions */
-	if (!disk_partitionable(disk))
+	if (!disk_part_scan_enabled(disk))
 		goto exit;
 
 	/* No such device (e.g., media were just removed) */
@@ -602,6 +602,8 @@ void add_disk(struct gendisk *disk)
 	disk->major = MAJOR(devt);
 	disk->first_minor = MINOR(devt);
 
+	disk_alloc_events(disk);
+
 	/* Register BDI before referencing it from bdev */
 	bdi = &disk->queue->backing_dev_info;
 	bdi_register_dev(bdi, disk_devt(disk));
@@ -610,6 +612,12 @@ void add_disk(struct gendisk *disk)
 			    exact_match, exact_lock, disk);
 	register_disk(disk);
 	blk_register_queue(disk);
+
+	/*
+	 * Take an extra ref on queue which will be put on disk_release()
+	 * so that it sticks around as long as @disk is there.
+	 */
+	WARN_ON_ONCE(!blk_get_queue(disk->queue));
 
 	retval = sysfs_create_link(&disk_to_dev(disk)->kobj, &bdi->dev->kobj,
 				   "bdi");
@@ -735,7 +743,7 @@ void __init printk_all_partitions(void)
 		struct hd_struct *part;
 		char name_buf[BDEVNAME_SIZE];
 		char devt_buf[BDEVT_SIZE];
-		u8 uuid[PARTITION_META_INFO_UUIDLTH * 2 + 1];
+		char uuid_buf[PARTITION_META_INFO_UUIDLTH * 2 + 5];
 
 		/*
 		 * Don't show empty devices or things that have been
@@ -754,14 +762,16 @@ void __init printk_all_partitions(void)
 		while ((part = disk_part_iter_next(&piter))) {
 			bool is_part0 = part == &disk->part0;
 
-			uuid[0] = 0;
+			uuid_buf[0] = '\0';
 			if (part->info)
-				part_unpack_uuid(part->info->uuid, uuid);
+				snprintf(uuid_buf, sizeof(uuid_buf), "%pU",
+					 part->info->uuid);
 
 			printk("%s%s %10llu %s %s", is_part0 ? "" : "  ",
 			       bdevt_str(part_devt(part), devt_buf),
 			       (unsigned long long)part->nr_sects >> 1,
-			       disk_name(disk, part->partno, name_buf), uuid);
+			       disk_name(disk, part->partno, name_buf),
+			       uuid_buf);
 			if (is_part0) {
 				if (disk->driverfs_dev != NULL &&
 				    disk->driverfs_dev->driver != NULL)
@@ -841,7 +851,7 @@ static int show_partition(struct seq_file *seqf, void *v)
 	char buf[BDEVNAME_SIZE];
 
 	/* Don't show non-partitionable removeable devices or empty devices */
-	if (!get_capacity(sgp) || (!disk_partitionable(sgp) &&
+	if (!get_capacity(sgp) || (!disk_max_parts(sgp) &&
 				   (sgp->flags & GENHD_FL_REMOVABLE)))
 		return 0;
 	if (sgp->flags & GENHD_FL_SUPPRESS_PARTITION_INFO)
@@ -1095,13 +1105,15 @@ static void disk_release(struct device *dev)
 	disk_replace_part_tbl(disk, NULL);
 	free_part_stats(&disk->part0);
 	free_part_info(&disk->part0);
+	if (disk->queue)
+		blk_put_queue(disk->queue);
 	kfree(disk);
 }
 struct class block_class = {
 	.name		= "block",
 };
 
-static char *block_devnode(struct device *dev, mode_t *mode)
+static char *block_devnode(struct device *dev, umode_t *mode)
 {
 	struct gendisk *disk = dev_to_disk(dev);
 
@@ -1468,9 +1480,9 @@ static void __disk_unblock_events(struct gendisk *disk, bool check_now)
 	intv = disk_events_poll_jiffies(disk);
 	set_timer_slack(&ev->dwork.timer, intv / 4);
 	if (check_now)
-		queue_delayed_work(system_nrt_wq, &ev->dwork, 0);
+		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, 0);
 	else if (intv)
-		queue_delayed_work(system_nrt_wq, &ev->dwork, intv);
+		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, intv);
 out_unlock:
 	spin_unlock_irqrestore(&ev->lock, flags);
 }
@@ -1514,7 +1526,7 @@ void disk_flush_events(struct gendisk *disk, unsigned int mask)
 	ev->clearing |= mask;
 	if (!ev->block) {
 		cancel_delayed_work(&ev->dwork);
-		queue_delayed_work(system_nrt_wq, &ev->dwork, 0);
+		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, 0);
 	}
 	spin_unlock_irq(&ev->lock);
 }
@@ -1551,7 +1563,7 @@ unsigned int disk_clear_events(struct gendisk *disk, unsigned int mask)
 
 	/* uncondtionally schedule event check and wait for it to finish */
 	disk_block_events(disk);
-	queue_delayed_work(system_nrt_wq, &ev->dwork, 0);
+	queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, 0);
 	flush_delayed_work(&ev->dwork);
 	__disk_unblock_events(disk, false);
 
@@ -1588,7 +1600,7 @@ static void disk_events_workfn(struct work_struct *work)
 
 	intv = disk_events_poll_jiffies(disk);
 	if (!ev->block && intv)
-		queue_delayed_work(system_nrt_wq, &ev->dwork, intv);
+		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, intv);
 
 	spin_unlock_irq(&ev->lock);
 
@@ -1726,9 +1738,9 @@ module_param_cb(events_dfl_poll_msecs, &disk_events_dfl_poll_msecs_param_ops,
 		&disk_events_dfl_poll_msecs, 0644);
 
 /*
- * disk_{add|del|release}_events - initialize and destroy disk_events.
+ * disk_{alloc|add|del|release}_events - initialize and destroy disk_events.
  */
-static void disk_add_events(struct gendisk *disk)
+static void disk_alloc_events(struct gendisk *disk)
 {
 	struct disk_events *ev;
 
@@ -1741,16 +1753,6 @@ static void disk_add_events(struct gendisk *disk)
 		return;
 	}
 
-	if (sysfs_create_files(&disk_to_dev(disk)->kobj,
-			       disk_events_attrs) < 0) {
-		pr_warn("%s: failed to create sysfs files for events\n",
-			disk->disk_name);
-		kfree(ev);
-		return;
-	}
-
-	disk->ev = ev;
-
 	INIT_LIST_HEAD(&ev->node);
 	ev->disk = disk;
 	spin_lock_init(&ev->lock);
@@ -1759,8 +1761,21 @@ static void disk_add_events(struct gendisk *disk)
 	ev->poll_msecs = -1;
 	INIT_DELAYED_WORK(&ev->dwork, disk_events_workfn);
 
+	disk->ev = ev;
+}
+
+static void disk_add_events(struct gendisk *disk)
+{
+	if (!disk->ev)
+		return;
+
+	/* FIXME: error handling */
+	if (sysfs_create_files(&disk_to_dev(disk)->kobj, disk_events_attrs) < 0)
+		pr_warn("%s: failed to create sysfs files for events\n",
+			disk->disk_name);
+
 	mutex_lock(&disk_events_mutex);
-	list_add_tail(&ev->node, &disk_events);
+	list_add_tail(&disk->ev->node, &disk_events);
 	mutex_unlock(&disk_events_mutex);
 
 	/*

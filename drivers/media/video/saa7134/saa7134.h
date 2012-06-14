@@ -126,8 +126,8 @@ struct saa7134_card_ir {
 	unsigned                users;
 
 	u32			polling;
-        u32			last_gpio;
-        u32			mask_keycode, mask_keydown, mask_keyup;
+	u32			last_gpio;
+	u32			mask_keycode, mask_keydown, mask_keyup;
 
 	bool                    running;
 	bool			active;
@@ -330,6 +330,9 @@ struct saa7134_card_ir {
 #define SAA7134_BOARD_MAGICPRO_PROHDTV_PRO2 185
 #define SAA7134_BOARD_BEHOLD_501            186
 #define SAA7134_BOARD_BEHOLD_503FM          187
+#define SAA7134_BOARD_SENSORAY811_911       188
+#define SAA7134_BOARD_KWORLD_PC150U         189
+#define SAA7134_BOARD_ASUSTeK_PS3_100      190
 
 #define SAA7134_MAXBOARDS 32
 #define SAA7134_INPUT_MAX 8
@@ -817,6 +820,7 @@ void saa7134_tvaudio_init(struct saa7134_dev *dev);
 int saa7134_tvaudio_init2(struct saa7134_dev *dev);
 int saa7134_tvaudio_fini(struct saa7134_dev *dev);
 int saa7134_tvaudio_do_scan(struct saa7134_dev *dev);
+int saa7134_tvaudio_close(struct saa7134_dev *dev);
 
 int saa_dsp_writel(struct saa7134_dev *dev, int reg, u32 value);
 
@@ -843,10 +847,10 @@ void saa7134_probe_i2c_ir(struct saa7134_dev *dev);
 int saa7134_ir_start(struct saa7134_dev *dev);
 void saa7134_ir_stop(struct saa7134_dev *dev);
 #else
-#define saa7134_input_init1(dev)	(0)
-#define saa7134_input_fini(dev)		(0)
-#define saa7134_input_irq(dev)		(0)
-#define saa7134_probe_i2c_ir(dev)	(0)
-#define saa7134_ir_start(dev)		(0)
-#define saa7134_ir_stop(dev)		(0)
+#define saa7134_input_init1(dev)	((void)0)
+#define saa7134_input_fini(dev)		((void)0)
+#define saa7134_input_irq(dev)		((void)0)
+#define saa7134_probe_i2c_ir(dev)	((void)0)
+#define saa7134_ir_start(dev)		((void)0)
+#define saa7134_ir_stop(dev)		((void)0)
 #endif

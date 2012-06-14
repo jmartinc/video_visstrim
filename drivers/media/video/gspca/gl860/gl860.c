@@ -337,7 +337,6 @@ static int sd_config(struct gspca_dev *gspca_dev,
 		return -1;
 
 	cam = &gspca_dev->cam;
-	gspca_dev->nbalt = 4;
 
 	switch (sd->sensor) {
 	case ID_MI1320:
@@ -405,6 +404,9 @@ static int sd_start(struct gspca_dev *gspca_dev)
 static void sd_stop0(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
+
+	if (!sd->gspca_dev.present)
+		return;
 
 	return sd->dev_post_unset_alt(gspca_dev);
 }
@@ -524,22 +526,7 @@ static struct usb_driver sd_driver = {
 
 /*====================== Init and Exit module functions ====================*/
 
-static int __init sd_mod_init(void)
-{
-	PDEBUG(D_PROBE, "driver startup - version %s", DRIVER_VERSION);
-
-	if (usb_register(&sd_driver) < 0)
-		return -1;
-	return 0;
-}
-
-static void __exit sd_mod_exit(void)
-{
-	usb_deregister(&sd_driver);
-}
-
-module_init(sd_mod_init);
-module_exit(sd_mod_exit);
+module_usb_driver(sd_driver);
 
 /*==========================================================================*/
 

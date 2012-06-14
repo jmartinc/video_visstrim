@@ -61,7 +61,7 @@ static struct s5p_mfc_fmt formats[] = {
 		.num_planes = 1,
 	},
 	{
-		.name = "H264 Encoded Stream",
+		.name = "H263 Encoded Stream",
 		.fourcc = V4L2_PIX_FMT_H263,
 		.codec_mode = S5P_FIMV_CODEC_H263_ENC,
 		.type = MFC_FMT_ENC,
@@ -785,8 +785,8 @@ static int vidioc_querycap(struct file *file, void *priv,
 	strncpy(cap->card, dev->plat_dev->name, sizeof(cap->card) - 1);
 	cap->bus_info[0] = 0;
 	cap->version = KERNEL_VERSION(1, 0, 0);
-	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE
-			  | V4L2_CAP_VIDEO_OUTPUT
+	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE_MPLANE
+			  | V4L2_CAP_VIDEO_OUTPUT_MPLANE
 			  | V4L2_CAP_STREAMING;
 	return 0;
 }
@@ -1436,7 +1436,8 @@ static const struct v4l2_ctrl_ops s5p_mfc_enc_ctrl_ops = {
 	.s_ctrl = s5p_mfc_enc_s_ctrl,
 };
 
-int vidioc_s_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
+static int vidioc_s_parm(struct file *file, void *priv,
+			 struct v4l2_streamparm *a)
 {
 	struct s5p_mfc_ctx *ctx = fh_to_ctx(priv);
 
@@ -1452,7 +1453,8 @@ int vidioc_s_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
 	return 0;
 }
 
-int vidioc_g_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
+static int vidioc_g_parm(struct file *file, void *priv,
+			 struct v4l2_streamparm *a)
 {
 	struct s5p_mfc_ctx *ctx = fh_to_ctx(priv);
 
@@ -1513,8 +1515,9 @@ static int check_vb_with_fmt(struct s5p_mfc_fmt *fmt, struct vb2_buffer *vb)
 }
 
 static int s5p_mfc_queue_setup(struct vb2_queue *vq,
-		       unsigned int *buf_count, unsigned int *plane_count,
-		       unsigned int psize[], void *allocators[])
+			const struct v4l2_format *fmt,
+			unsigned int *buf_count, unsigned int *plane_count,
+			unsigned int psize[], void *allocators[])
 {
 	struct s5p_mfc_ctx *ctx = fh_to_ctx(vq->drv_priv);
 

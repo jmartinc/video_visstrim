@@ -80,7 +80,7 @@ static int usb_hcd_ppc_soc_probe(const struct hc_driver *driver,
 #endif
 	ohci_hcd_init(ohci);
 
-	retval = usb_add_hcd(hcd, irq, IRQF_DISABLED);
+	retval = usb_add_hcd(hcd, irq, 0);
 	if (retval == 0)
 		return retval;
 
@@ -130,7 +130,8 @@ ohci_ppc_soc_start(struct usb_hcd *hcd)
 		return ret;
 
 	if ((ret = ohci_run(ohci)) < 0) {
-		err("can't start %s", ohci_to_hcd(ohci)->self.bus_name);
+		dev_err(hcd->self.controller, "can't start %s\n",
+			hcd->self.bus_name);
 		ohci_stop(hcd);
 		return ret;
 	}

@@ -26,6 +26,7 @@
 #include <linux/timer.h>
 #include <linux/slab.h>
 #include <linux/err.h>
+#include <linux/export.h>
 
 #include <scsi/fc/fc_fc2.h>
 
@@ -65,16 +66,15 @@ static struct workqueue_struct *fc_exch_workqueue;
  * assigned range of exchanges to per cpu pool.
  */
 struct fc_exch_pool {
+	spinlock_t	 lock;
+	struct list_head ex_list;
 	u16		 next_index;
 	u16		 total_exches;
 
 	/* two cache of free slot in exch array */
 	u16		 left;
 	u16		 right;
-
-	spinlock_t	 lock;
-	struct list_head ex_list;
-};
+} ____cacheline_aligned_in_smp;
 
 /**
  * struct fc_exch_mgr - The Exchange Manager (EM).
@@ -91,13 +91,13 @@ struct fc_exch_pool {
  * It manages the allocation of exchange IDs.
  */
 struct fc_exch_mgr {
+	struct fc_exch_pool __percpu *pool;
+	mempool_t	*ep_pool;
 	enum fc_class	class;
 	struct kref	kref;
 	u16		min_xid;
 	u16		max_xid;
-	mempool_t	*ep_pool;
 	u16		pool_max_index;
-	struct fc_exch_pool *pool;
 
 	/*
 	 * currently exchange mgr stats are updated but not used.
@@ -470,6 +470,7 @@ static int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp,
 	struct fc_frame_header *fh = fc_frame_header_get(fp);
 	int error;
 	u32 f_ctl;
+	u8 fh_type = fh->fh_type;
 
 	ep = fc_seq_exch(sp);
 	WARN_ON((ep->esb_stat & ESB_ST_SEQ_INIT) != ESB_ST_SEQ_INIT);
@@ -494,7 +495,7 @@ static int fc_seq_send(struct fc_lport *lport, struct fc_seq *sp,
 	 */
 	error = lport->tt.frame_send(lport, fp);
 
-	if (fh->fh_type == FC_TYPE_BLS)
+	if (fh_type == FC_TYPE_BLS)
 		return error;
 
 	/*
@@ -1641,9 +1642,10 @@ static void fc_exch_recv_bls(struct fc_exch_mgr *mp, struct fc_frame *fp)
 		case FC_RCTL_ACK_0:
 			break;
 		default:
-			FC_EXCH_DBG(ep, "BLS rctl %x - %s received",
-				    fh->fh_r_ctl,
-				    fc_exch_rctl_name(fh->fh_r_ctl));
+			if (ep)
+				FC_EXCH_DBG(ep, "BLS rctl %x - %s received",
+					    fh->fh_r_ctl,
+					    fc_exch_rctl_name(fh->fh_r_ctl));
 			break;
 		}
 		fc_frame_free(fp);
@@ -1793,6 +1795,9 @@ restart:
 			goto restart;
 		}
 	}
+	pool->next_index = 0;
+	pool->left = FC_XID_UNKNOWN;
+	pool->right = FC_XID_UNKNOWN;
 	spin_unlock_bh(&pool->lock);
 }
 
@@ -2258,7 +2263,18 @@ struct fc_exch_mgr *fc_exch_mgr_alloc(struct fc_lport *lport,
 	mp->class = class;
 	/* adjust em exch xid range for offload */
 	mp->min_xid = min_xid;
-	mp->max_xid = max_xid;
+
+       /* reduce range so per cpu pool fits into PCPU_MIN_UNIT_SIZE pool */
+	pool_exch_range = (PCPU_MIN_UNIT_SIZE - sizeof(*pool)) /
+		sizeof(struct fc_exch *);
+	if ((max_xid - min_xid + 1) / (fc_cpu_mask + 1) > pool_exch_range) {
+		mp->max_xid = pool_exch_range * (fc_cpu_mask + 1) +
+			min_xid - 1;
+	} else {
+		mp->max_xid = max_xid;
+		pool_exch_range = (mp->max_xid - mp->min_xid + 1) /
+			(fc_cpu_mask + 1);
+	}
 
 	mp->ep_pool = mempool_create_slab_pool(2, fc_em_cachep);
 	if (!mp->ep_pool)
@@ -2269,7 +2285,6 @@ struct fc_exch_mgr *fc_exch_mgr_alloc(struct fc_lport *lport,
 	 * divided across all cpus. The exch pointers array memory is
 	 * allocated for exch range per pool.
 	 */
-	pool_exch_range = (mp->max_xid - mp->min_xid + 1) / (fc_cpu_mask + 1);
 	mp->pool_max_index = pool_exch_range - 1;
 
 	/*
@@ -2281,6 +2296,7 @@ struct fc_exch_mgr *fc_exch_mgr_alloc(struct fc_lport *lport,
 		goto free_mempool;
 	for_each_possible_cpu(cpu) {
 		pool = per_cpu_ptr(mp->pool, cpu);
+		pool->next_index = 0;
 		pool->left = FC_XID_UNKNOWN;
 		pool->right = FC_XID_UNKNOWN;
 		spin_lock_init(&pool->lock);

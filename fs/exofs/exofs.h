@@ -53,6 +53,13 @@
 /* u64 has problems with printk this will cast it to unsigned long long */
 #define _LLU(x) (unsigned long long)(x)
 
+struct exofs_dev {
+	struct ore_dev ored;
+	unsigned did;
+	unsigned urilen;
+	uint8_t *uri;
+	struct kobject ed_kobj;
+};
 /*
  * our extension to the in-memory superblock
  */
@@ -66,13 +73,10 @@ struct exofs_sb_info {
 	u32		s_next_generation;	/* next gen # to use          */
 	atomic_t	s_curr_pending;		/* number of pending commands */
 
-	struct pnfs_osd_data_map data_map;	/* Default raid to use
-						 * FIXME: Needed ?
-						 */
 	struct ore_layout	layout;		/* Default files layout       */
 	struct ore_comp one_comp;		/* id & cred of partition id=0*/
-	struct ore_components comps;		/* comps for the partition    */
-	struct osd_dev	*_min_one_dev[1];	/* Place holder for one dev   */
+	struct ore_components oc;		/* comps for the partition    */
+	struct kobject	s_kobj;			/* holds per-sbi kobject      */
 };
 
 /*
@@ -86,7 +90,7 @@ struct exofs_i_info {
 	uint32_t       i_dir_start_lookup; /* which page to start lookup      */
 	uint64_t       i_commit_size;      /* the object's written length     */
 	struct ore_comp one_comp;	   /* same component for all devices  */
-	struct ore_components comps;	   /* inode view of the device table  */
+	struct ore_components oc;	   /* inode view of the device table  */
 };
 
 static inline osd_id exofs_oi_objno(struct exofs_i_info *oi)
@@ -154,7 +158,7 @@ int exofs_write_begin(struct file *file, struct address_space *mapping,
 		loff_t pos, unsigned len, unsigned flags,
 		struct page **pagep, void **fsdata);
 extern struct inode *exofs_iget(struct super_block *, unsigned long);
-struct inode *exofs_new_inode(struct inode *, int);
+struct inode *exofs_new_inode(struct inode *, umode_t);
 extern int exofs_write_inode(struct inode *, struct writeback_control *wbc);
 extern void exofs_evict_inode(struct inode *);
 
@@ -175,6 +179,16 @@ int exofs_set_link(struct inode *, struct exofs_dir_entry *, struct page *,
 void exofs_make_credential(u8 cred_a[OSD_CAP_LEN],
 			   const struct osd_obj_id *obj);
 int exofs_sbi_write_stats(struct exofs_sb_info *sbi);
+
+/* sys.c                 */
+int exofs_sysfs_init(void);
+void exofs_sysfs_uninit(void);
+int exofs_sysfs_sb_add(struct exofs_sb_info *sbi,
+		       struct exofs_dt_device_info *dt_dev);
+void exofs_sysfs_sb_del(struct exofs_sb_info *sbi);
+int exofs_sysfs_odev_add(struct exofs_dev *edev,
+			 struct exofs_sb_info *sbi);
+void exofs_sysfs_dbg_print(void);
 
 /*********************
  * operation vectors *
@@ -207,7 +221,7 @@ extern const struct inode_operations exofs_fast_symlink_inode_operations;
  * bigger and that the device table repeats twice.
  * See: exofs_read_lookup_dev_table()
  */
-static inline void exofs_init_comps(struct ore_components *comps,
+static inline void exofs_init_comps(struct ore_components *oc,
 				    struct ore_comp *one_comp,
 				    struct exofs_sb_info *sbi, osd_id oid)
 {
@@ -217,13 +231,15 @@ static inline void exofs_init_comps(struct ore_components *comps,
 	one_comp->obj.id = oid;
 	exofs_make_credential(one_comp->cred, &one_comp->obj);
 
-	comps->numdevs = sbi->comps.numdevs;
-	comps->single_comp = EC_SINGLE_COMP;
-	comps->comps = one_comp;
+	oc->first_dev = 0;
+	oc->numdevs = sbi->layout.group_width * sbi->layout.mirrors_p1 *
+							sbi->layout.group_count;
+	oc->single_comp = EC_SINGLE_COMP;
+	oc->comps = one_comp;
 
 	/* Round robin device view of the table */
-	first_dev = (dev_mod * sbi->layout.mirrors_p1) % sbi->comps.numdevs;
-	comps->ods = sbi->comps.ods + first_dev;
+	first_dev = (dev_mod * sbi->layout.mirrors_p1) % sbi->oc.numdevs;
+	oc->ods = &sbi->oc.ods[first_dev];
 }
 
 #endif

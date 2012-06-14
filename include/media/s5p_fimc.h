@@ -19,11 +19,6 @@ enum cam_bus_type {
 	FIMC_LCD_WB, /* FIFO link from LCD mixer */
 };
 
-#define FIMC_CLK_INV_PCLK	(1 << 0)
-#define FIMC_CLK_INV_VSYNC	(1 << 1)
-#define FIMC_CLK_INV_HREF	(1 << 2)
-#define FIMC_CLK_INV_HSYNC	(1 << 3)
-
 struct i2c_board_info;
 
 /**
@@ -37,7 +32,7 @@ struct i2c_board_info;
  * @i2c_bus_num: i2c control bus id the sensor is attached to
  * @mux_id: FIMC camera interface multiplexer index (separate for MIPI and ITU)
  * @clk_id: index of the SoC peripheral clock for sensors
- * @flags: flags defining bus signals polarity inversion (High by default)
+ * @flags: the parallel bus flags defining signals polarity (V4L2_MBUS_*)
  */
 struct s5p_fimc_isp_info {
 	struct i2c_board_info *board_info;
@@ -68,5 +63,21 @@ struct s5p_platform_fimc {
  * at begining of the frame transmission.
  */
 #define S5P_FIMC_TX_END_NOTIFY _IO('e', 0)
+
+enum fimc_subdev_index {
+	IDX_SENSOR,
+	IDX_CSIS,
+	IDX_FLITE,
+	IDX_FIMC,
+	IDX_MAX,
+};
+
+struct media_pipeline;
+struct v4l2_subdev;
+
+struct fimc_pipeline {
+	struct v4l2_subdev *subdevs[IDX_MAX];
+	struct media_pipeline *m_pipeline;
+};
 
 #endif /* S5P_FIMC_H_ */

@@ -26,6 +26,7 @@
 
 #include <linux/i2c/at24.h>
 #include <linux/i2c/twl.h>
+#include <linux/regulator/fixed.h>
 #include <linux/regulator/machine.h>
 #include <linux/mmc/host.h>
 
@@ -37,12 +38,13 @@
 #include <asm/mach/map.h>
 
 #include <plat/board.h>
-#include <plat/common.h>
+#include "common.h"
 #include <plat/nand.h>
 #include <plat/gpmc.h>
 #include <plat/usb.h>
 #include <video/omapdss.h>
 #include <video/omap-panel-generic-dpi.h>
+#include <video/omap-panel-tfp410.h>
 #include <plat/mcspi.h>
 
 #include <mach/hardware.h>
@@ -52,7 +54,8 @@
 #include "hsmmc.h"
 #include "common-board-devices.h"
 
-#define CM_T35_GPIO_PENDOWN	57
+#define CM_T35_GPIO_PENDOWN		57
+#define SB_T35_USB_HUB_RESET_GPIO	167
 
 #define CM_T35_SMSC911X_CS	5
 #define CM_T35_SMSC911X_GPIO	163
@@ -79,8 +82,23 @@ static struct omap_smsc911x_platform_data sb_t35_smsc911x_cfg = {
 	.flags		= SMSC911X_USE_32BIT | SMSC911X_SAVE_MAC_ADDRESS,
 };
 
+static struct regulator_consumer_supply cm_t35_smsc911x_supplies[] = {
+	REGULATOR_SUPPLY("vddvario", "smsc911x.0"),
+	REGULATOR_SUPPLY("vdd33a", "smsc911x.0"),
+};
+
+static struct regulator_consumer_supply sb_t35_smsc911x_supplies[] = {
+	REGULATOR_SUPPLY("vddvario", "smsc911x.1"),
+	REGULATOR_SUPPLY("vdd33a", "smsc911x.1"),
+};
+
 static void __init cm_t35_init_ethernet(void)
 {
+	regulator_register_fixed(0, cm_t35_smsc911x_supplies,
+				 ARRAY_SIZE(cm_t35_smsc911x_supplies));
+	regulator_register_fixed(1, sb_t35_smsc911x_supplies,
+				 ARRAY_SIZE(sb_t35_smsc911x_supplies));
+
 	gpmc_smsc911x_init(&cm_t35_smsc911x_cfg);
 	gpmc_smsc911x_init(&sb_t35_smsc911x_cfg);
 }
@@ -200,25 +218,6 @@ static void cm_t35_panel_disable_lcd(struct omap_dss_device *dssdev)
 	gpio_set_value(CM_T35_LCD_EN_GPIO, 0);
 }
 
-static int cm_t35_panel_enable_dvi(struct omap_dss_device *dssdev)
-{
-	if (lcd_enabled) {
-		printk(KERN_ERR "cannot enable DVI, LCD is enabled\n");
-		return -EINVAL;
-	}
-
-	gpio_set_value(CM_T35_DVI_EN_GPIO, 0);
-	dvi_enabled = 1;
-
-	return 0;
-}
-
-static void cm_t35_panel_disable_dvi(struct omap_dss_device *dssdev)
-{
-	gpio_set_value(CM_T35_DVI_EN_GPIO, 1);
-	dvi_enabled = 0;
-}
-
 static int cm_t35_panel_enable_tv(struct omap_dss_device *dssdev)
 {
 	return 0;
@@ -242,16 +241,14 @@ static struct omap_dss_device cm_t35_lcd_device = {
 	.phy.dpi.data_lines	= 18,
 };
 
-static struct panel_generic_dpi_data dvi_panel = {
-	.name			= "generic",
-	.platform_enable	= cm_t35_panel_enable_dvi,
-	.platform_disable	= cm_t35_panel_disable_dvi,
+static struct tfp410_platform_data dvi_panel = {
+	.power_down_gpio	= CM_T35_DVI_EN_GPIO,
 };
 
 static struct omap_dss_device cm_t35_dvi_device = {
 	.name			= "dvi",
 	.type			= OMAP_DISPLAY_TYPE_DPI,
-	.driver_name		= "generic_dpi_panel",
+	.driver_name		= "tfp410",
 	.data			= &dvi_panel,
 	.phy.dpi.data_lines	= 24,
 };
@@ -279,7 +276,6 @@ static struct omap_dss_board_info cm_t35_dss_data = {
 
 static struct omap2_mcspi_device_config tdo24m_mcspi_config = {
 	.turbo_mode	= 0,
-	.single_channel	= 1,	/* 0: slave, 1: master */
 };
 
 static struct tdo24m_platform_data tdo24m_config = {
@@ -300,7 +296,6 @@ static struct spi_board_info cm_t35_lcd_spi_board_info[] __initdata = {
 static struct gpio cm_t35_dss_gpios[] __initdata = {
 	{ CM_T35_LCD_EN_GPIO, GPIOF_OUT_INIT_LOW,  "lcd enable"    },
 	{ CM_T35_LCD_BL_GPIO, GPIOF_OUT_INIT_LOW,  "lcd bl enable" },
-	{ CM_T35_DVI_EN_GPIO, GPIOF_OUT_INIT_HIGH, "dvi enable"    },
 };
 
 static void __init cm_t35_init_display(void)
@@ -319,7 +314,6 @@ static void __init cm_t35_init_display(void)
 
 	gpio_export(CM_T35_LCD_EN_GPIO, 0);
 	gpio_export(CM_T35_LCD_BL_GPIO, 0);
-	gpio_export(CM_T35_DVI_EN_GPIO, 0);
 
 	msleep(50);
 	gpio_set_value(CM_T35_LCD_EN_GPIO, 1);
@@ -339,8 +333,10 @@ static struct regulator_consumer_supply cm_t35_vsim_supply[] = {
 	REGULATOR_SUPPLY("vmmc_aux", "omap_hsmmc.0"),
 };
 
-static struct regulator_consumer_supply cm_t35_vdvi_supply[] = {
-	REGULATOR_SUPPLY("vdvi", "omapdss"),
+static struct regulator_consumer_supply cm_t35_vio_supplies[] = {
+	REGULATOR_SUPPLY("vcc", "spi1.0"),
+	REGULATOR_SUPPLY("vdds_dsi", "omapdss"),
+	REGULATOR_SUPPLY("vdds_dsi", "omapdss_dsi1"),
 };
 
 /* VMMC1 for MMC1 pins CMD, CLK, DAT0..DAT3 (20 mA, plus card == max 220 mA) */
@@ -373,6 +369,19 @@ static struct regulator_init_data cm_t35_vsim = {
 	.consumer_supplies	= cm_t35_vsim_supply,
 };
 
+static struct regulator_init_data cm_t35_vio = {
+	.constraints = {
+		.min_uV			= 1800000,
+		.max_uV			= 1800000,
+		.apply_uV		= true,
+		.valid_modes_mask	= REGULATOR_MODE_NORMAL
+					| REGULATOR_MODE_STANDBY,
+		.valid_ops_mask		= REGULATOR_CHANGE_MODE,
+	},
+	.num_consumer_supplies	= ARRAY_SIZE(cm_t35_vio_supplies),
+	.consumer_supplies	= cm_t35_vio_supplies,
+};
+
 static uint32_t cm_t35_keymap[] = {
 	KEY(0, 0, KEY_A),	KEY(0, 1, KEY_B),	KEY(0, 2, KEY_LEFT),
 	KEY(1, 0, KEY_UP),	KEY(1, 1, KEY_ENTER),	KEY(1, 2, KEY_DOWN),
@@ -397,7 +406,7 @@ static struct omap2_hsmmc_info mmc[] = {
 		.caps		= MMC_CAP_4_BIT_DATA,
 		.gpio_cd	= -EINVAL,
 		.gpio_wp	= -EINVAL,
-
+		.deferred	= true,
 	},
 	{
 		.mmc		= 2,
@@ -421,6 +430,23 @@ static struct usbhs_omap_board_data usbhs_bdata __initdata = {
 	.reset_gpio_port[2]  = -EINVAL
 };
 
+static void  __init cm_t35_init_usbh(void)
+{
+	int err;
+
+	err = gpio_request_one(SB_T35_USB_HUB_RESET_GPIO,
+			       GPIOF_OUT_INIT_LOW, "usb hub rst");
+	if (err) {
+		pr_err("SB-T35: usb hub rst gpio request failed: %d\n", err);
+	} else {
+		udelay(10);
+		gpio_set_value(SB_T35_USB_HUB_RESET_GPIO, 1);
+		msleep(1);
+	}
+
+	usbhs_init(&usbhs_bdata);
+}
+
 static int cm_t35_twl_gpio_setup(struct device *dev, unsigned gpio,
 				 unsigned ngpio)
 {
@@ -438,7 +464,7 @@ static int cm_t35_twl_gpio_setup(struct device *dev, unsigned gpio,
 
 	/* gpio + 0 is "mmc0_cd" (input/IRQ) */
 	mmc[0].gpio_cd = gpio + 0;
-	omap2_hsmmc_init(mmc);
+	omap_hsmmc_late_init(mmc);
 
 	return 0;
 }
@@ -450,32 +476,27 @@ static struct twl4030_gpio_platform_data cm_t35_gpio_data = {
 	.setup          = cm_t35_twl_gpio_setup,
 };
 
+static struct twl4030_power_data cm_t35_power_data = {
+	.use_poweroff	= true,
+};
+
 static struct twl4030_platform_data cm_t35_twldata = {
 	/* platform_data for children goes here */
 	.keypad		= &cm_t35_kp_data,
 	.gpio		= &cm_t35_gpio_data,
 	.vmmc1		= &cm_t35_vmmc1,
 	.vsim		= &cm_t35_vsim,
+	.vio		= &cm_t35_vio,
+	.power		= &cm_t35_power_data,
 };
 
 static void __init cm_t35_init_i2c(void)
 {
 	omap3_pmic_get_config(&cm_t35_twldata, TWL_COMMON_PDATA_USB,
-			TWL_COMMON_REGULATOR_VDAC | TWL_COMMON_REGULATOR_VPLL2);
-
-	cm_t35_twldata.vpll2->constraints.name = "VDVI";
-	cm_t35_twldata.vpll2->num_consumer_supplies =
-						ARRAY_SIZE(cm_t35_vdvi_supply);
-	cm_t35_twldata.vpll2->consumer_supplies = cm_t35_vdvi_supply;
+			      TWL_COMMON_REGULATOR_VDAC |
+			      TWL_COMMON_PDATA_AUDIO);
 
 	omap3_pmic_init("tps65930", &cm_t35_twldata);
-}
-
-static void __init cm_t35_init_early(void)
-{
-	omap2_init_common_infrastructure();
-	omap2_init_common_devices(mt46h32m32lf6_sdrc_params,
-			     mt46h32m32lf6_sdrc_params);
 }
 
 #ifdef CONFIG_OMAP_MUX
@@ -577,24 +598,28 @@ static void __init cm_t3x_common_dss_mux_init(int mux_mode)
 
 static void __init cm_t35_init_mux(void)
 {
-	omap_mux_init_signal("gpio_70", OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("gpio_71", OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("gpio_72", OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("gpio_73", OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("gpio_74", OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("gpio_75", OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT);
-	cm_t3x_common_dss_mux_init(OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT);
+	int mux_mode = OMAP_MUX_MODE0 | OMAP_PIN_OUTPUT;
+
+	omap_mux_init_signal("dss_data0.dss_data0", mux_mode);
+	omap_mux_init_signal("dss_data1.dss_data1", mux_mode);
+	omap_mux_init_signal("dss_data2.dss_data2", mux_mode);
+	omap_mux_init_signal("dss_data3.dss_data3", mux_mode);
+	omap_mux_init_signal("dss_data4.dss_data4", mux_mode);
+	omap_mux_init_signal("dss_data5.dss_data5", mux_mode);
+	cm_t3x_common_dss_mux_init(mux_mode);
 }
 
 static void __init cm_t3730_init_mux(void)
 {
-	omap_mux_init_signal("sys_boot0", OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("sys_boot1", OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("sys_boot3", OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("sys_boot4", OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("sys_boot5", OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT);
-	omap_mux_init_signal("sys_boot6", OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT);
-	cm_t3x_common_dss_mux_init(OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT);
+	int mux_mode = OMAP_MUX_MODE3 | OMAP_PIN_OUTPUT;
+
+	omap_mux_init_signal("sys_boot0", mux_mode);
+	omap_mux_init_signal("sys_boot1", mux_mode);
+	omap_mux_init_signal("sys_boot3", mux_mode);
+	omap_mux_init_signal("sys_boot4", mux_mode);
+	omap_mux_init_signal("sys_boot5", mux_mode);
+	omap_mux_init_signal("sys_boot6", mux_mode);
+	cm_t3x_common_dss_mux_init(mux_mode);
 }
 #else
 static inline void cm_t35_init_mux(void) {}
@@ -610,6 +635,9 @@ static void __init cm_t3x_common_init(void)
 	omap_board_config_size = ARRAY_SIZE(cm_t35_config);
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CUS);
 	omap_serial_init();
+	omap_sdrc_init(mt46h32m32lf6_sdrc_params,
+			     mt46h32m32lf6_sdrc_params);
+	omap_hsmmc_init(mmc);
 	cm_t35_init_i2c();
 	omap_ads7846_init(1, CM_T35_GPIO_PENDOWN, 0, NULL);
 	cm_t35_init_ethernet();
@@ -617,7 +645,7 @@ static void __init cm_t3x_common_init(void)
 	cm_t35_init_display();
 
 	usb_musb_init(NULL);
-	usbhs_init(&usbhs_bdata);
+	cm_t35_init_usbh();
 }
 
 static void __init cm_t35_init(void)
@@ -634,21 +662,27 @@ static void __init cm_t3730_init(void)
 }
 
 MACHINE_START(CM_T35, "Compulab CM-T35")
-	.boot_params	= 0x80000100,
+	.atag_offset	= 0x100,
 	.reserve	= omap_reserve,
 	.map_io		= omap3_map_io,
-	.init_early	= cm_t35_init_early,
+	.init_early	= omap35xx_init_early,
 	.init_irq	= omap3_init_irq,
+	.handle_irq	= omap3_intc_handle_irq,
 	.init_machine	= cm_t35_init,
+	.init_late	= omap35xx_init_late,
 	.timer		= &omap3_timer,
+	.restart	= omap_prcm_restart,
 MACHINE_END
 
 MACHINE_START(CM_T3730, "Compulab CM-T3730")
-	.boot_params    = 0x80000100,
+	.atag_offset    = 0x100,
 	.reserve        = omap_reserve,
 	.map_io         = omap3_map_io,
-	.init_early     = cm_t35_init_early,
+	.init_early     = omap3630_init_early,
 	.init_irq       = omap3_init_irq,
+	.handle_irq	= omap3_intc_handle_irq,
 	.init_machine   = cm_t3730_init,
+	.init_late     = omap3630_init_late,
 	.timer          = &omap3_timer,
+	.restart	= omap_prcm_restart,
 MACHINE_END

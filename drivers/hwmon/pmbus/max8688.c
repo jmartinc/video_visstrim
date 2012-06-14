@@ -45,7 +45,7 @@ static int max8688_read_word_data(struct i2c_client *client, int page, int reg)
 	int ret;
 
 	if (page)
-		return -EINVAL;
+		return -ENXIO;
 
 	switch (reg) {
 	case PMBUS_VIRT_READ_VOUT_MAX:
@@ -101,8 +101,8 @@ static int max8688_read_byte_data(struct i2c_client *client, int page, int reg)
 	int ret = 0;
 	int mfg_status;
 
-	if (page)
-		return -EINVAL;
+	if (page > 0)
+		return -ENXIO;
 
 	switch (reg) {
 	case PMBUS_STATUS_VOUT:
@@ -180,11 +180,6 @@ static int max8688_probe(struct i2c_client *client,
 	return pmbus_do_probe(client, id, &max8688_info);
 }
 
-static int max8688_remove(struct i2c_client *client)
-{
-	return pmbus_do_remove(client);
-}
-
 static const struct i2c_device_id max8688_id[] = {
 	{"max8688", 0},
 	{ }
@@ -198,22 +193,12 @@ static struct i2c_driver max8688_driver = {
 		   .name = "max8688",
 		   },
 	.probe = max8688_probe,
-	.remove = max8688_remove,
+	.remove = pmbus_do_remove,
 	.id_table = max8688_id,
 };
 
-static int __init max8688_init(void)
-{
-	return i2c_add_driver(&max8688_driver);
-}
-
-static void __exit max8688_exit(void)
-{
-	i2c_del_driver(&max8688_driver);
-}
+module_i2c_driver(max8688_driver);
 
 MODULE_AUTHOR("Guenter Roeck");
 MODULE_DESCRIPTION("PMBus driver for Maxim MAX8688");
 MODULE_LICENSE("GPL");
-module_init(max8688_init);
-module_exit(max8688_exit);

@@ -156,9 +156,9 @@
 
 /* module parameters */
 #ifdef CONFIG_USB_DEBUG
-static int debug = 1;
+static bool debug = 1;
 #else
-static int debug;
+static bool debug;
 #endif
 
 #define mce_dbg(dev, fmt, ...)					\
@@ -361,6 +361,8 @@ static struct usb_device_id mceusb_dev_table[] = {
 	{ USB_DEVICE(VENDOR_FORMOSA, 0xe03c) },
 	/* Formosa Industrial Computing */
 	{ USB_DEVICE(VENDOR_FORMOSA, 0xe03e) },
+	/* Formosa Industrial Computing */
+	{ USB_DEVICE(VENDOR_FORMOSA, 0xe042) },
 	/* Fintek eHome Infrared Transceiver (HP branded) */
 	{ USB_DEVICE(VENDOR_FINTEK, 0x5168) },
 	/* Fintek eHome Infrared Transceiver */
@@ -518,7 +520,7 @@ static void mceusb_dev_printdata(struct mceusb_dev *ir, char *buf,
 {
 	char codes[USB_BUFLEN * 3 + 1];
 	char inout[9];
-	u8 cmd, subcmd, data1, data2, data3, data4, data5;
+	u8 cmd, subcmd, data1, data2, data3, data4;
 	struct device *dev = ir->dev;
 	int i, start, skip = 0;
 	u32 carrier, period;
@@ -551,7 +553,6 @@ static void mceusb_dev_printdata(struct mceusb_dev *ir, char *buf,
 	data2  = buf[start + 3] & 0xff;
 	data3  = buf[start + 4] & 0xff;
 	data4  = buf[start + 5] & 0xff;
-	data5  = buf[start + 6] & 0xff;
 
 	switch (cmd) {
 	case MCE_CMD_NULL:
@@ -1441,32 +1442,14 @@ static int mceusb_dev_resume(struct usb_interface *intf)
 static struct usb_driver mceusb_dev_driver = {
 	.name =		DRIVER_NAME,
 	.probe =	mceusb_dev_probe,
-	.disconnect =	mceusb_dev_disconnect,
+	.disconnect =	__devexit_p(mceusb_dev_disconnect),
 	.suspend =	mceusb_dev_suspend,
 	.resume =	mceusb_dev_resume,
 	.reset_resume =	mceusb_dev_resume,
 	.id_table =	mceusb_dev_table
 };
 
-static int __init mceusb_dev_init(void)
-{
-	int ret;
-
-	ret = usb_register(&mceusb_dev_driver);
-	if (ret < 0)
-		printk(KERN_ERR DRIVER_NAME
-		       ": usb register failed, result = %d\n", ret);
-
-	return ret;
-}
-
-static void __exit mceusb_dev_exit(void)
-{
-	usb_deregister(&mceusb_dev_driver);
-}
-
-module_init(mceusb_dev_init);
-module_exit(mceusb_dev_exit);
+module_usb_driver(mceusb_dev_driver);
 
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR(DRIVER_AUTHOR);

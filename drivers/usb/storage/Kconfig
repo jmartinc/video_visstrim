@@ -42,7 +42,7 @@ config USB_STORAGE_REALTEK
 
 config REALTEK_AUTOPM
 	bool "Realtek Card Reader autosuspend support"
-	depends on USB_STORAGE_REALTEK && CONFIG_PM_RUNTIME
+	depends on USB_STORAGE_REALTEK && PM_RUNTIME
 	default y
 
 config USB_STORAGE_DATAFAB
@@ -222,7 +222,7 @@ config USB_LIBUSUAL
 	  for usb-storage and ub drivers, and allows to switch binding
 	  of these devices without rebuilding modules.
 
-	  Typical syntax of /etc/modprobe.conf is:
+	  Typical syntax of /etc/modprobe.d/*conf is:
 
 		options libusual bias="ub"
 

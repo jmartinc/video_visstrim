@@ -183,9 +183,6 @@ enum {
 	das1802hr, das1802hr_da, das1801hc, das1802hc, das1801ao, das1802ao
 };
 
-static int das1800_attach(struct comedi_device *dev,
-			  struct comedi_devconfig *it);
-static int das1800_detach(struct comedi_device *dev);
 static int das1800_probe(struct comedi_device *dev);
 static int das1800_cancel(struct comedi_device *dev,
 			  struct comedi_subdevice *s);
@@ -518,33 +515,6 @@ static const struct comedi_lrange range_ao_2 = {
 };
 */
 
-static struct comedi_driver driver_das1800 = {
-	.driver_name = "das1800",
-	.module = THIS_MODULE,
-	.attach = das1800_attach,
-	.detach = das1800_detach,
-	.num_names = ARRAY_SIZE(das1800_boards),
-	.board_name = &das1800_boards[0].name,
-	.offset = sizeof(struct das1800_board),
-};
-
-/*
- * A convenient macro that defines init_module() and cleanup_module(),
- * as necessary.
- */
-static int __init driver_das1800_init_module(void)
-{
-	return comedi_driver_register(&driver_das1800);
-}
-
-static void __exit driver_das1800_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_das1800);
-}
-
-module_init(driver_das1800_init_module);
-module_exit(driver_das1800_cleanup_module);
-
 static int das1800_init_dma(struct comedi_device *dev, unsigned int dma0,
 			    unsigned int dma1)
 {
@@ -573,22 +543,23 @@ static int das1800_init_dma(struct comedi_device *dev, unsigned int dma0,
 			devpriv->dma_bits |= DMA_CH7_CH5;
 			break;
 		default:
-			printk(" only supports dma channels 5 through 7\n"
-			       " Dual dma only allows the following combinations:\n"
-			       " dma 5,6 / 6,7 / or 7,5\n");
+			dev_err(dev->hw_dev, " only supports dma channels 5 through 7\n"
+				" Dual dma only allows the following combinations:\n"
+				" dma 5,6 / 6,7 / or 7,5\n");
 			return -EINVAL;
 			break;
 		}
-		if (request_dma(dma0, driver_das1800.driver_name)) {
-			printk(" failed to allocate dma channel %i\n", dma0);
+		if (request_dma(dma0, dev->driver->driver_name)) {
+			dev_err(dev->hw_dev, "failed to allocate dma channel %i\n",
+				dma0);
 			return -EINVAL;
 		}
 		devpriv->dma0 = dma0;
 		devpriv->dma_current = dma0;
 		if (dma1) {
-			if (request_dma(dma1, driver_das1800.driver_name)) {
-				printk(" failed to allocate dma channel %i\n",
-				       dma1);
+			if (request_dma(dma1, dev->driver->driver_name)) {
+				dev_err(dev->hw_dev, "failed to allocate dma channel %i\n",
+					dma1);
 				return -EINVAL;
 			}
 			devpriv->dma1 = dma1;
@@ -631,25 +602,25 @@ static int das1800_attach(struct comedi_device *dev,
 	if (alloc_private(dev, sizeof(struct das1800_private)) < 0)
 		return -ENOMEM;
 
-	printk("comedi%d: %s: io 0x%lx", dev->minor, driver_das1800.driver_name,
-	       iobase);
+	printk(KERN_DEBUG "comedi%d: %s: io 0x%lx", dev->minor,
+	       dev->driver->driver_name, iobase);
 	if (irq) {
-		printk(", irq %u", irq);
+		printk(KERN_CONT ", irq %u", irq);
 		if (dma0) {
-			printk(", dma %u", dma0);
+			printk(KERN_CONT ", dma %u", dma0);
 			if (dma1)
-				printk(" and %u", dma1);
+				printk(KERN_CONT " and %u", dma1);
 		}
 	}
-	printk("\n");
+	printk(KERN_CONT "\n");
 
 	if (iobase == 0) {
-		printk(" io base address required\n");
+		dev_err(dev->hw_dev, "io base address required\n");
 		return -EINVAL;
 	}
 
 	/* check if io addresses are available */
-	if (!request_region(iobase, DAS1800_SIZE, driver_das1800.driver_name)) {
+	if (!request_region(iobase, DAS1800_SIZE, dev->driver->driver_name)) {
 		printk
 		    (" I/O port conflict: failed to allocate ports 0x%lx to 0x%lx\n",
 		     iobase, iobase + DAS1800_SIZE - 1);
@@ -659,7 +630,7 @@ static int das1800_attach(struct comedi_device *dev,
 
 	board = das1800_probe(dev);
 	if (board < 0) {
-		printk(" unable to determine board type\n");
+		dev_err(dev->hw_dev, "unable to determine board type\n");
 		return -ENODEV;
 	}
 
@@ -670,7 +641,7 @@ static int das1800_attach(struct comedi_device *dev,
 	if (thisboard->ao_ability == 2) {
 		iobase2 = iobase + IOBASE2;
 		if (!request_region(iobase2, DAS1800_SIZE,
-				    driver_das1800.driver_name)) {
+				    dev->driver->driver_name)) {
 			printk
 			    (" I/O port conflict: failed to allocate ports 0x%lx to 0x%lx\n",
 			     iobase2, iobase2 + DAS1800_SIZE - 1);
@@ -682,8 +653,9 @@ static int das1800_attach(struct comedi_device *dev,
 	/* grab our IRQ */
 	if (irq) {
 		if (request_irq(irq, das1800_interrupt, 0,
-				driver_das1800.driver_name, dev)) {
-			printk(" unable to allocate irq %u\n", irq);
+				dev->driver->driver_name, dev)) {
+			dev_dbg(dev->hw_dev, "unable to allocate irq %u\n",
+				irq);
 			return -EINVAL;
 		}
 	}
@@ -712,7 +684,7 @@ static int das1800_attach(struct comedi_device *dev,
 		devpriv->irq_dma_bits |= 0x38;
 		break;
 	default:
-		printk(" irq out of range\n");
+		dev_err(dev->hw_dev, "irq out of range\n");
 		return -EINVAL;
 		break;
 	}
@@ -795,9 +767,8 @@ static int das1800_attach(struct comedi_device *dev,
 	return 0;
 };
 
-static int das1800_detach(struct comedi_device *dev)
+static void das1800_detach(struct comedi_device *dev)
 {
-	/* only free stuff if it has been allocated by _attach */
 	if (dev->iobase)
 		release_region(dev->iobase, DAS1800_SIZE);
 	if (dev->irq)
@@ -812,11 +783,6 @@ static int das1800_detach(struct comedi_device *dev)
 		kfree(devpriv->ai_buf0);
 		kfree(devpriv->ai_buf1);
 	}
-
-	printk("comedi%d: %s: remove\n", dev->minor,
-	       driver_das1800.driver_name);
-
-	return 0;
 };
 
 /* probes and checks das-1800 series board type
@@ -833,8 +799,8 @@ static int das1800_probe(struct comedi_device *dev)
 	case 0x3:
 		if (board == das1801st_da || board == das1802st_da ||
 		    board == das1701st_da || board == das1702st_da) {
-			printk(" Board model: %s\n",
-			       das1800_boards[board].name);
+			dev_dbg(dev->hw_dev, "Board model: %s\n",
+				das1800_boards[board].name);
 			return board;
 		}
 		printk
@@ -843,8 +809,8 @@ static int das1800_probe(struct comedi_device *dev)
 		break;
 	case 0x4:
 		if (board == das1802hr_da || board == das1702hr_da) {
-			printk(" Board model: %s\n",
-			       das1800_boards[board].name);
+			dev_dbg(dev->hw_dev, "Board model: %s\n",
+				das1800_boards[board].name);
 			return board;
 		}
 		printk
@@ -854,8 +820,8 @@ static int das1800_probe(struct comedi_device *dev)
 	case 0x5:
 		if (board == das1801ao || board == das1802ao ||
 		    board == das1701ao || board == das1702ao) {
-			printk(" Board model: %s\n",
-			       das1800_boards[board].name);
+			dev_dbg(dev->hw_dev, "Board model: %s\n",
+				das1800_boards[board].name);
 			return board;
 		}
 		printk
@@ -864,18 +830,19 @@ static int das1800_probe(struct comedi_device *dev)
 		break;
 	case 0x6:
 		if (board == das1802hr || board == das1702hr) {
-			printk(" Board model: %s\n",
-			       das1800_boards[board].name);
+			dev_dbg(dev->hw_dev, "Board model: %s\n",
+				das1800_boards[board].name);
 			return board;
 		}
-		printk(" Board model (probed, not recommended): das-1802hr\n");
+		printk
+		    (" Board model (probed, not recommended): das-1802hr\n");
 		return das1802hr;
 		break;
 	case 0x7:
 		if (board == das1801st || board == das1802st ||
 		    board == das1701st || board == das1702st) {
-			printk(" Board model: %s\n",
-			       das1800_boards[board].name);
+			dev_dbg(dev->hw_dev, "Board model: %s\n",
+				das1800_boards[board].name);
 			return board;
 		}
 		printk
@@ -884,8 +851,8 @@ static int das1800_probe(struct comedi_device *dev)
 		break;
 	case 0x8:
 		if (board == das1801hc || board == das1802hc) {
-			printk(" Board model: %s\n",
-			       das1800_boards[board].name);
+			dev_dbg(dev->hw_dev, "Board model: %s\n",
+				das1800_boards[board].name);
 			return board;
 		}
 		printk
@@ -1807,6 +1774,17 @@ static unsigned int suggest_transfer_size(struct comedi_cmd *cmd)
 
 	return size;
 }
+
+static struct comedi_driver das1800_driver = {
+	.driver_name	= "das1800",
+	.module		= THIS_MODULE,
+	.attach		= das1800_attach,
+	.detach		= das1800_detach,
+	.num_names	= ARRAY_SIZE(das1800_boards),
+	.board_name	= &das1800_boards[0].name,
+	.offset		= sizeof(struct das1800_board),
+};
+module_comedi_driver(das1800_driver);
 
 MODULE_AUTHOR("Comedi http://www.comedi.org");
 MODULE_DESCRIPTION("Comedi low-level driver");
