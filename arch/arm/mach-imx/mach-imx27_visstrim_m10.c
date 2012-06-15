@@ -335,6 +335,22 @@ static struct resource visstrim_m10_flash_resource = {
 	.flags = IORESOURCE_MEM,
 };
 
+static struct resource mxc_visstrim_m10_flash_resource = {
+	.start = 0xc0000000,
+	.end = 0xc0000000 + SZ_64M - 1,
+	.flags = IORESOURCE_MEM,
+};
+
+static struct platform_device mxc_visstrim_m10_nor_mtd_device = {
+	.name = "mxc_nor_flash",
+	.id = 0,
+	.dev = {
+		.platform_data = &visstrim_m10_flash_data,
+	},
+	.num_resources = 1,
+	.resource = &mxc_visstrim_m10_flash_resource,
+};
+
 static struct platform_device visstrim_m10_nor_mtd_device = {
 	.name = "physmap-flash",
 	.id = 0,
@@ -346,7 +362,7 @@ static struct platform_device visstrim_m10_nor_mtd_device = {
 };
 
 static struct platform_device *platform_devices[] __initdata = {
-	&visstrim_m10_nor_mtd_device,
+	NULL,
 };
 
 /* Visstrim_M10 uses UART0 as console */
@@ -435,6 +451,16 @@ static void __init visstrim_m10_revision(void)
 	system_rev |= exp_version;
 }
 
+static char *cmd;
+
+static void __init visstrim_m10_detect_nor(void)
+{
+	if (strstr(cmd, "mxc_nor_flash") != NULL)
+		platform_devices[0] = &mxc_visstrim_m10_nor_mtd_device;
+	else
+		platform_devices[0] = &visstrim_m10_nor_mtd_device;
+}
+
 static void __init visstrim_m10_board_init(void)
 {
 	int ret;
@@ -460,6 +486,7 @@ static void __init visstrim_m10_board_init(void)
 	imx27_add_codadx6(&visstrim_codadx6_data);
 	imx27_add_fec(NULL);
 	imx_add_gpio_keys(&visstrim_gpio_keys_platform_data);
+	visstrim_m10_detect_nor();
 	platform_add_devices(platform_devices, ARRAY_SIZE(platform_devices));
 	imx_add_platform_device("mx27vis", 0, NULL, 0, NULL, 0);
 	platform_device_register_resndata(NULL, "soc-camera-pdrv", 0, NULL, 0,
@@ -478,8 +505,15 @@ static struct sys_timer visstrim_m10_timer = {
 	.init	= visstrim_m10_timer_init,
 };
 
+static void __init visstrim_m10_fixup(struct tag *tags, char **cmdline,
+	struct meminfo *mi)
+{
+	cmd = *cmdline;
+}
+
 MACHINE_START(IMX27_VISSTRIM_M10, "Vista Silicon Visstrim_M10")
 	.atag_offset = 0x100,
+	.fixup = visstrim_m10_fixup,
 	.reserve = visstrim_reserve,
 	.map_io = mx27_map_io,
 	.init_early = imx27_init_early,

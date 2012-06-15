@@ -220,11 +220,20 @@ static struct platform_driver physmap_flash_driver = {
 	.remove		= physmap_flash_remove,
 	.shutdown	= physmap_flash_shutdown,
 	.driver		= {
-		.name	= "physmap-flash",
+		.name	= "mxc_nor_flash",
 		.owner	= THIS_MODULE,
 	},
 };
 
+static struct platform_driver mxc_physmap_flash_driver = {
+	.probe		= physmap_flash_probe,
+	.remove		= physmap_flash_remove,
+	.shutdown	= physmap_flash_shutdown,
+	.driver		= {
+		.name	= "physmap-flash",
+		.owner	= THIS_MODULE,
+	},
+};
 
 #ifdef CONFIG_MTD_PHYSMAP_COMPAT
 static struct physmap_flash_data physmap_flash_data = {
@@ -235,6 +244,16 @@ static struct resource physmap_flash_resource = {
 	.start		= CONFIG_MTD_PHYSMAP_START,
 	.end		= CONFIG_MTD_PHYSMAP_START + CONFIG_MTD_PHYSMAP_LEN - 1,
 	.flags		= IORESOURCE_MEM,
+};
+
+static struct platform_device mxc_physmap_flash = {
+	.name		= "mxc_nor_flash",
+	.id		= 0,
+	.dev		= {
+		.platform_data	= &physmap_flash_data,
+	},
+	.num_resources	= 1,
+	.resource	= &physmap_flash_resource,
 };
 
 static struct platform_device physmap_flash = {
@@ -260,7 +279,14 @@ static int __init physmap_init(void)
 			platform_driver_unregister(&physmap_flash_driver);
 	}
 #endif
-
+	err = platform_driver_register(&mxc_physmap_flash_driver);
+#ifdef CONFIG_MTD_PHYSMAP_COMPAT
+	if (err == 0) {
+		err = platform_device_register(&mxc_physmap_flash);
+		if (err)
+			platform_driver_unregister(&mxc_physmap_flash_driver);
+	}
+#endif
 	return err;
 }
 
