@@ -166,8 +166,8 @@ static struct soc_camera_link iclink_tvp5150 = {
 	.bus_id         = 0,
 	.board_info     = &visstrim_i2c_camera,
 	.i2c_adapter_id = 0,
-	.power = visstrim_camera_power,
-	.reset = visstrim_camera_reset,
+// 	.power = visstrim_camera_power,
+// 	.reset = visstrim_camera_reset,
 };
 
 static struct mx2_camera_platform_data visstrim_camera = {
