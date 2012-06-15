@@ -827,7 +827,9 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 				q_data_src->width * q_data_src->height;
 			ctx->runtime.frame_buf_pool[i].cr = ctx->runtime.frame_buf_pool[i].cb +
 				q_data_src->width / 2 * q_data_src->height / 2;
-			i++;
+
+			printk("%s: Registering picture (%p) in parabuf (%d)\n",
+			       __func__, ctx->runtime.frame_buf_pool[i].y, i);
 		}
 		ctx->runtime.num_frame_buffers = vq->num_buffers;
 		ctx->runtime.stride = q_data_src->width;
@@ -929,6 +931,8 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 			p[i * 3] = ctx->runtime.frame_buf_pool[i].y;
 			p[i * 3 + 1] = ctx->runtime.frame_buf_pool[i].cb;
 			p[i * 3 + 2] = ctx->runtime.frame_buf_pool[i].cr;
+			printk("%s: Registering picture (%p) in parabuf (%d)\n",
+			       __func__, ctx->runtime.frame_buf_pool[i].y, i);
 		}
 		codadx6_write(dev, ctx->runtime.num_frame_buffers, CODADX6_CMD_SET_FRAME_BUF_NUM);
 		codadx6_write(dev, ctx->runtime.stride, CODADX6_CMD_SET_FRAME_BUF_STRIDE);
