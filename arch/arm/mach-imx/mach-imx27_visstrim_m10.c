@@ -117,6 +117,8 @@ static const int visstrim_m10_pins[] __initconst = {
 	PB23_PF_USB_PWR,
 	PB24_PF_USB_OC,
 	/* CSI */
+	TVP5150_RSTN | GPIO_GPIO | GPIO_OUT,
+	TVP5150_PWDN | GPIO_GPIO | GPIO_OUT,
 	PB10_PF_CSI_D0,
 	PB11_PF_CSI_D1,
 	PB12_PF_CSI_D2,
@@ -183,10 +185,10 @@ static void __init visstrim_camera_init(void)
 	int dma;
 
 	/* Initialize tvp5150 gpios */
-	mxc_gpio_mode(TVP5150_RSTN | GPIO_GPIO | GPIO_OUT);
-	mxc_gpio_mode(TVP5150_PWDN | GPIO_GPIO | GPIO_OUT);
-	gpio_set_value(TVP5150_RSTN, 1);
-	gpio_set_value(TVP5150_PWDN, 0);
+	gpio_request_one(TVP5150_RSTN, GPIOF_DIR_OUT | GPIOF_INIT_HIGH,
+			 "tvp5150_rstn");
+	gpio_request_one(TVP5150_PWDN, GPIOF_DIR_OUT | GPIOF_INIT_LOW,
+			 "tvp5150_pwdn");
 	ndelay(1);
 
 	gpio_set_value(TVP5150_PWDN, 1);
@@ -408,7 +410,8 @@ static struct i2c_board_info visstrim_m10_i2c_devices[] = {
 /* USB OTG */
 static int otg_phy_init(struct platform_device *pdev)
 {
-	gpio_set_value(OTG_PHY_CS_GPIO, 0);
+	gpio_request_one(OTG_PHY_CS_GPIO, GPIOF_DIR_OUT | GPIOF_INIT_LOW,
+			 "usbotg_cs");
 
 	mdelay(10);
 
