@@ -170,7 +170,11 @@ static inline unsigned int codadx6_read(struct codadx6_dev *dev, u32 reg)
 }
 
 static inline unsigned long codadx6_isbusy(struct codadx6_dev *dev) {
-	return readl(dev->regs_base + CODADX6_REG_BIT_BUSY);
+	return codadx6_read(dev, CODADX6_REG_BIT_BUSY);
+}
+
+static inline int codadx6_is_initialized(struct codadx6_dev *dev) {
+	return (codadx6_read(dev, CODADX6_REG_BIT_CUR_PC) != 0);
 }
 
 static void codadx6_command_async(struct codadx6_dev *dev, int codec_mode,

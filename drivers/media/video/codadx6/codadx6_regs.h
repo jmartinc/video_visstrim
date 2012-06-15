@@ -190,9 +190,9 @@
 #define CODADX6_CMD_ENC_PIC_OPTION            0x194
 #define CODADX6_CMD_ENC_PIC_BB_START          0x198
 #define CODADX6_CMD_ENC_PIC_BB_SIZE           0x19C
-// #define CODADX6_RET_ENC_PIC_TYPE              0x1C4
-// #define CODADX6_RET_ENC_PIC_SLICE_NUM         0x1CC
-// #define CODADX6_RET_ENC_PIC_FLAG              0x1D0
+#define CODADX6_RET_ENC_PIC_TYPE              0x1C4
+#define CODADX6_RET_ENC_PIC_SLICE_NUM         0x1CC
+#define CODADX6_RET_ENC_PIC_FLAG              0x1D0
 
 /* Set Frame Buffer */
 #define CODADX6_CMD_SET_FRAME_BUF_NUM         0x180

@@ -313,21 +313,6 @@ static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 	
 	ret = v4l2_m2m_qbuf(file, ctx->m2m_ctx, buf);
-
-	if (buf->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
-		buf->sequence = ctx->isequence++;
-
-		/* 
-		 * Workaround codadx6 firmware BUG that only marks the first
-		 * frame as IDR. This is a problem for some decoders when a
-		 * frame is lost.
-		 */
-		if (buf->sequence % ctx->enc_params.gop_size)
-			buf->flags |= V4L2_BUF_FLAG_PFRAME;
-		else
-			buf->flags |= V4L2_BUF_FLAG_KEYFRAME;
-	}
-
 	return ret;
 }
 
@@ -434,7 +419,8 @@ const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void)
 void codadx6_enc_isr(struct codadx6_dev *dev)
 {
 	struct codadx6_ctx *ctx;
-	struct vb2_buffer *src_buf, *dst_buf;
+	struct vb2_buffer *src_buf, *dst_buf, *tmp_buf;
+	int i;
 
 	ctx = v4l2_m2m_get_curr_priv(dev->m2m_enc_dev);
 	if (ctx == NULL) {
@@ -442,8 +428,34 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 		return;
 	}
 
+
+	if (codadx6_isbusy(ctx->dev)) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+			 "coda is still busy!!!!\n");
+// 		return;
+	}
+
+	/* codadx6_encoder_get_results */
+	{
+	u32 tmp1, tmp2;
+	/* TODO: here we can get bytesused field */
+	codadx6_read(dev, CODADX6_RET_ENC_PIC_TYPE);
+	tmp1 = codadx6_read(dev, CODADX6_CMD_ENC_PIC_BB_START);
+	tmp2 = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0);
+	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "frame size = %u\n", tmp2-tmp1);
+	codadx6_read(dev, CODADX6_RET_ENC_PIC_SLICE_NUM);
+	codadx6_read(dev, CODADX6_RET_ENC_PIC_FLAG);
+	}
+
 	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
 	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
+
+	if (dst_buf->v4l2_buf.sequence == 0) {
+		printk("%s:", __func__);
+		for (i = 0; i < 0x15; i++)
+			printk("0x%x ", *((u8 *)(vb2_plane_vaddr(dst_buf, 0) + i)));
+		printk("\n");
+	}
 
 	dst_buf->v4l2_buf.sequence = dst_buf->v4l2_buf.sequence; /* FIXME: remove for mainline */
 
@@ -463,10 +475,12 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 	 * For the last frame of the gop we don't need to save
 	 * a reference picture.
 	 */
+	v4l2_m2m_dst_buf_remove(ctx->m2m_ctx);
+	tmp_buf = v4l2_m2m_src_buf_remove(ctx->m2m_ctx);
 	if (ctx->gopcounter == 0) {
 		v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_DONE);
 	} else {
-		ctx->reference = v4l2_m2m_src_buf_remove(ctx->m2m_ctx);
+		ctx->reference = tmp_buf;
 	}
 
 	v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_DONE);
@@ -493,6 +507,19 @@ static void codadx6_device_run(void *m2m_priv)
 	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
 	q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 	q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+
+
+	src_buf->v4l2_buf.sequence = ctx->isequence++;
+
+	/* 
+	 * Workaround codadx6 firmware BUG that only marks the first
+	 * frame as IDR. This is a problem for some decoders when a
+	 * frame is lost.
+	 */
+	if (src_buf->v4l2_buf.sequence % ctx->enc_params.gop_size)
+		src_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_PFRAME;
+	else
+		src_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
 
 	ctx->runtime.source_frame.y = vb2_dma_contig_plane_dma_addr(src_buf, 0);
 	ctx->runtime.source_frame.cb = ctx->runtime.source_frame.y +
@@ -522,6 +549,10 @@ static void codadx6_device_run(void *m2m_priv)
 	 * Copy headers at the beginning of the first frame for H.264 only.
 	 * In MPEG4 they are already copied by the coda.
 	 */
+	printk("%s: src buffer addr = %p, sequence = %d\n", __func__, vb2_dma_contig_plane_dma_addr(src_buf, 0),
+	       src_buf->v4l2_buf.sequence);
+	printk("%s: dst buffer length = %d\n", __func__, dst_buf->v4l2_buf.length);
+
 	if ((src_buf->v4l2_buf.sequence == 0) &&
 	   (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264)) {
 		ctx->runtime.pic_stream_buffer_addr =
@@ -529,7 +560,7 @@ static void codadx6_device_run(void *m2m_priv)
 			ctx->runtime.vpu_header_size[0] +
 			ctx->runtime.vpu_header_size[1] +
 			ctx->runtime.vpu_header_size[2];
-		ctx->runtime.pic_stream_buffer_size = dst_buf->v4l2_buf.length -
+		ctx->runtime.pic_stream_buffer_size = CODADX6_ENC_MAX_FRAME_SIZE -
 			ctx->runtime.vpu_header_size[0] -
 			ctx->runtime.vpu_header_size[1] -
 			ctx->runtime.vpu_header_size[2];
@@ -541,7 +572,7 @@ static void codadx6_device_run(void *m2m_priv)
 		       &ctx->runtime.vpu_header[2][0], ctx->runtime.vpu_header_size[2]);
 	} else {
 		ctx->runtime.pic_stream_buffer_addr = vb2_dma_contig_plane_dma_addr(dst_buf, 0);
-		ctx->runtime.pic_stream_buffer_size = dst_buf->v4l2_buf.length;
+		ctx->runtime.pic_stream_buffer_size = CODADX6_ENC_MAX_FRAME_SIZE;
 	}
 	
 	/* codadx6_encoder_submit */
@@ -587,11 +618,11 @@ static int codadx6_job_ready(void *m2m_priv)
 		return 0;
 	}
 
-	if (codadx6_isbusy(ctx->dev)) {
-		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
-			 "not ready: coda is still busy.\n");
-		return 0;
-	}
+// 	if (codadx6_isbusy(ctx->dev)) {
+// 		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+// 			 "not ready: coda is still busy.\n");
+// 		return 0;
+// 	}
 
 	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
 			"job ready\n");
@@ -757,7 +788,12 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 		ctx->runtime.intra_refresh = 0;
 		ctx->runtime.gamma = 4096;
 		ctx->runtime.maxqp = 0;
-		
+
+		if (!codadx6_is_initialized(dev)) {
+			v4l2_err(&ctx->dev->v4l2_dev, "coda is not initialized.\n");
+			return -EFAULT;
+		}
+
 		/* codadx6_encoder_init */
 		{
 		

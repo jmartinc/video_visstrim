@@ -211,6 +211,8 @@ static irqreturn_t codadx6_irq_handler(int irq, void *data)
 {
 	struct codadx6_dev *dev = data;
 
+	printk("%s!!\n", __func__);
+
 	/* read status register to attend the IRQ */
 	codadx6_read(dev, CODADX6_REG_BIT_INT_STATUS);
 	codadx6_write(dev, CODADX6_REG_BIT_INT_CLEAR_SET,
