@@ -435,20 +435,31 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 // 		return;
 	}
 
+	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
+	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
+
+
 	/* codadx6_encoder_get_results */
 	{
 	u32 tmp1, tmp2;
-	/* TODO: here we can get bytesused field */
+
 	codadx6_read(dev, CODADX6_RET_ENC_PIC_TYPE);
 	tmp1 = codadx6_read(dev, CODADX6_CMD_ENC_PIC_BB_START);
 	tmp2 = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0);
+	/* Calculate bytesused field */
+	if (dst_buf->v4l2_buf.sequence == 0) {
+// 	   (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264)) {
+		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1) + ctx->runtime.vpu_header_size[0] +
+							ctx->runtime.vpu_header_size[1] +
+							ctx->runtime.vpu_header_size[2];
+	} else {
+		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1);
+	}
+
 	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "frame size = %u\n", tmp2-tmp1);
 	codadx6_read(dev, CODADX6_RET_ENC_PIC_SLICE_NUM);
 	codadx6_read(dev, CODADX6_RET_ENC_PIC_FLAG);
 	}
-
-	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
-	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
 
 	if (dst_buf->v4l2_buf.sequence == 0) {
 		printk("%s:", __func__);
@@ -457,8 +468,9 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 		printk("\n");
 	}
 
-	dst_buf->v4l2_buf.sequence = dst_buf->v4l2_buf.sequence; /* FIXME: remove for mainline */
 
+
+	/* FIXME: does this value really propagate  */
 	if (dst_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
 		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
 	} else {
@@ -509,7 +521,9 @@ static void codadx6_device_run(void *m2m_priv)
 	q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 
 
-	src_buf->v4l2_buf.sequence = ctx->isequence++;
+	src_buf->v4l2_buf.sequence = ctx->isequence;
+	dst_buf->v4l2_buf.sequence = ctx->isequence;
+	ctx->isequence++;
 
 	/* 
 	 * Workaround codadx6 firmware BUG that only marks the first
@@ -553,8 +567,8 @@ static void codadx6_device_run(void *m2m_priv)
 	       src_buf->v4l2_buf.sequence);
 	printk("%s: dst buffer length = %d\n", __func__, dst_buf->v4l2_buf.length);
 
-	if ((src_buf->v4l2_buf.sequence == 0) &&
-	   (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264)) {
+	if (src_buf->v4l2_buf.sequence == 0) {
+// 	   (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264)) {
 		ctx->runtime.pic_stream_buffer_addr =
 			vb2_dma_contig_plane_dma_addr(dst_buf, 0) +
 			ctx->runtime.vpu_header_size[0] +
