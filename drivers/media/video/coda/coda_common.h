@@ -107,9 +107,6 @@ struct coda_enc_runtime {
 	unsigned int	pic_height;
 	u32		bitstream_buf;	/* Seems to be pointer to compressed buffer */
 	u32		bitstream_buf_size;
-	/* old EncInfo structure inside dev->encInfo (pEncInfo->openParam = *pop) */
-	u32		stream_buf_size; /* This can be removed (use bitstream_buf_size) instead */
-	u32		stream_buf_end_addr; /* This can be just dropped */
 	struct framebuffer frame_buf_pool[CODA_ENC_OUTPUT_BUFS]; /* Can be removed if we write to parabuf directly */
 	int		initial_info_obtained; /* This probably can be removed (framework protects) */
 	int		num_frame_buffers; /* This can be removed */

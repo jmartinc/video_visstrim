@@ -804,9 +804,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
 		}
 
-		ctx->runtime.stream_buf_size = ctx->runtime.bitstream_buf_size;
-		ctx->runtime.stream_buf_end_addr = ctx->runtime.bitstream_buf +
-						ctx->runtime.bitstream_buf_size;
 		ctx->runtime.initial_info_obtained = 0;
 
 		coda_write(dev, ctx->runtime.bitstream_buf, CODA_REG_BIT_RD_PTR_0);
@@ -882,7 +879,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_INTRA_REFRESH);
 
 		coda_write(dev, ctx->runtime.bitstream_buf, CODA_CMD_ENC_SEQ_BB_START);
-		coda_write(dev, ctx->runtime.stream_buf_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
+		coda_write(dev, ctx->runtime.bitstream_buf_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
     
 		/* set default gamma */
 		data = (CODA_ENC_DEFAULT_GAMMA & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET;
