@@ -9,7 +9,7 @@
 
 #include <mach/hardware.h>
 #include <mach/devices-common.h>
-#include <linux/codadx6.h>
+#include <linux/coda_codec.h>
 
 #ifdef CONFIG_SOC_IMX27
 const struct imx_imx27_codadx6_data imx27_codadx6_data __initconst = {

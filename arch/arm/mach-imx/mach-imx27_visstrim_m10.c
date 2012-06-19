@@ -29,7 +29,7 @@
 #include <linux/i2c/pca953x.h>
 #include <linux/input.h>
 #include <linux/gpio.h>
-#include <linux/codadx6.h>
+#include <linux/coda_codec.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/leds.h>
@@ -236,10 +236,10 @@ static void __init visstrim_m10_deinterlace_init(void)
 static void __init visstrim_reserve(void)
 {
 	/* reserve 4 MiB for mx2-camera */
-	mx2_camera_base = memblock_alloc(2 * MX2_CAMERA_BUF_SIZE,
+	mx2_camera_base = memblock_alloc(3 * MX2_CAMERA_BUF_SIZE,
 			MX2_CAMERA_BUF_SIZE);
-	memblock_free(mx2_camera_base, 2 * MX2_CAMERA_BUF_SIZE);
-	memblock_remove(mx2_camera_base, 2 * MX2_CAMERA_BUF_SIZE);
+	memblock_free(mx2_camera_base, 3 * MX2_CAMERA_BUF_SIZE);
+	memblock_remove(mx2_camera_base, 3 * MX2_CAMERA_BUF_SIZE);
 }
 
 /* GPIOs used as events for applications */
@@ -434,6 +434,22 @@ static const struct codadx6_platform_data visstrim_codadx6_data __initconst = {
 	.firmware = "v4l-codadx6-imx27.bin",
 };
 
+static void __init visstrim_m10_coda_init(void)
+{
+	struct platform_device *pdev;
+	int dma;
+
+	pdev = imx27_add_codadx6(&visstrim_codadx6_data);
+	
+	dma = dma_declare_coherent_memory(&pdev->dev,
+					  mx2_camera_base + 2 * MX2_CAMERA_BUF_SIZE,
+					  mx2_camera_base + 2 * MX2_CAMERA_BUF_SIZE,
+					  MX2_CAMERA_BUF_SIZE,
+					  DMA_MEMORY_MAP | DMA_MEMORY_EXCLUSIVE);
+	if (!(dma & DMA_MEMORY_MAP))
+		return;
+}
+
 static void __init visstrim_m10_revision(void)
 {
 	int exp_version = 0;
@@ -486,7 +502,6 @@ static void __init visstrim_m10_board_init(void)
 
 	imx27_add_mxc_mmc(0, &visstrim_m10_sdhc_pdata);
 	imx27_add_mxc_ehci_otg(&visstrim_m10_usbotg_pdata);
-	imx27_add_codadx6(&visstrim_codadx6_data);
 	imx27_add_fec(NULL);
 	imx_add_gpio_keys(&visstrim_gpio_keys_platform_data);
 	visstrim_m10_detect_nor();
@@ -497,6 +512,7 @@ static void __init visstrim_m10_board_init(void)
 	gpio_led_register_device(0, &visstrim_m10_led_data);
 	visstrim_m10_deinterlace_init();
 	visstrim_camera_init();
+	visstrim_m10_coda_init();
 }
 
 static void __init visstrim_m10_timer_init(void)
