@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2012 Vista Silicon SL
  *    Javier Martin <javier.martin@vista-silicon.com>
- *    Xavier Duret <xavier@vista-silicon.com>
+ *    Xavier Duret
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
