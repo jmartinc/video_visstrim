@@ -449,7 +449,6 @@ int codadx6_enc_isr(struct codadx6_dev *dev)
 	tmp2 = codadx6_read(dev, CODADX6_REG_BIT_WR_PTR_0);
 	/* Calculate bytesused field */
 	if (dst_buf->v4l2_buf.sequence == 0) {
-// 	   (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264)) {
 		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1) + ctx->runtime.vpu_header_size[0] +
 							ctx->runtime.vpu_header_size[1] +
 							ctx->runtime.vpu_header_size[2];
@@ -462,19 +461,10 @@ int codadx6_enc_isr(struct codadx6_dev *dev)
 	codadx6_read(dev, CODADX6_RET_ENC_PIC_FLAG);
 	}
 
-	if (dst_buf->v4l2_buf.sequence == 0) {
-		printk("%s:", __func__);
-		for (i = 0; i < 0x15; i++)
-			printk("0x%x ", *((u8 *)(vb2_plane_vaddr(dst_buf, 0) + i)));
-		printk("\n");
-	}
-
 	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
-		printk("%s: dst frame (%d) is KEYFRAME\n", __func__, dst_buf->v4l2_buf.sequence);
 		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
 		dst_buf->v4l2_buf.flags &= ~V4L2_BUF_FLAG_PFRAME;
 	} else {
-		printk("%s: dst frame (%d) is PFRAME\n", __func__, dst_buf->v4l2_buf.sequence);
 		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_PFRAME;
 		dst_buf->v4l2_buf.flags &= ~V4L2_BUF_FLAG_KEYFRAME;
 	}
@@ -503,9 +493,11 @@ int codadx6_enc_isr(struct codadx6_dev *dev)
 	if (ctx->gopcounter < 0)
 		ctx->gopcounter = ctx->enc_params.gop_size - 1;
 
-
 	v4l2_dbg(1, codadx6_debug, &dev->v4l2_dev,
-		 "job finished: encoding\n");
+		"job finished: encoding frame (%d) (%s)\n",
+		dst_buf->v4l2_buf.sequence,
+		(dst_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) ?
+		"KEYFRAME" : "PFRAME");
 
 	v4l2_m2m_job_finish(ctx->dev->m2m_enc_dev, ctx->m2m_ctx);
 	
