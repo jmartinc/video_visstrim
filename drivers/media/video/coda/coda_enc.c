@@ -804,8 +804,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
 		}
 
-		ctx->runtime.initial_info_obtained = 0;
-
 		coda_write(dev, ctx->runtime.bitstream_buf, CODA_REG_BIT_RD_PTR_0);
 		coda_write(dev, ctx->runtime.bitstream_buf, CODA_REG_BIT_WR_PTR_0);
 		value = coda_read(dev, CODA_REG_BIT_STREAM_CTRL);
@@ -919,8 +917,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_SET_FRAME_BUF timeout\n");
 			return -ETIMEDOUT;
 		}
-
-		ctx->runtime.initial_info_obtained = 1;
 		}
 
 		/* Save stream headers */

@@ -108,7 +108,6 @@ struct coda_enc_runtime {
 	u32		bitstream_buf;	/* Seems to be pointer to compressed buffer */
 	u32		bitstream_buf_size;
 	struct framebuffer frame_buf_pool[CODA_ENC_OUTPUT_BUFS]; /* Can be removed if we write to parabuf directly */
-	int		initial_info_obtained; /* This probably can be removed (framework protects) */
 	int		num_frame_buffers; /* This can be removed */
 	int		stride; /* This can be removed later */
 	struct framebuffer source_frame; /* This is only used to pass data to 'encoder_submit' */
