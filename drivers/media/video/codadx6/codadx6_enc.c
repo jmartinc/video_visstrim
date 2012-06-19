@@ -422,6 +422,11 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 		return;
 	}
 
+	if (ctx->aborting) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+			 "task has been aborted\n");
+		return;
+	}
 
 	if (codadx6_isbusy(ctx->dev)) {
 		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
@@ -641,6 +646,19 @@ static int codadx6_job_ready(void *m2m_priv)
 	return 1;
 }
 
+static void codadx6_job_abort(void *priv)
+{
+	struct codadx6_ctx *ctx = priv;
+	struct codadx6_dev *dev = ctx->dev;
+
+	ctx->aborting = 1;
+
+	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+		 "Aborting task\n");
+	
+	v4l2_m2m_job_finish(dev->m2m_enc_dev, ctx->m2m_ctx);
+}
+
 static void codadx6_lock(void *m2m_priv)
 {
 	struct codadx6_ctx *ctx = m2m_priv;
@@ -658,6 +676,7 @@ static void codadx6_unlock(void *m2m_priv)
 static struct v4l2_m2m_ops codadx6_enc_m2m_ops = {
 	.device_run	= codadx6_device_run,
 	.job_ready	= codadx6_job_ready,
+	.job_abort	= codadx6_job_abort,
 	.lock		= codadx6_lock,
 	.unlock		= codadx6_unlock,
 };
@@ -671,6 +690,7 @@ void set_enc_default_params(struct codadx6_ctx *ctx) {
 	ctx->enc_params.codec_mode = CODADX6_MODE_INVALID;
 	ctx->enc_params.framerate = 30;
 	ctx->reference = NULL;
+	ctx->aborting = 0;
 
 	/* Default formats for output and input queues */
 	ctx->q_data[V4L2_M2M_SRC].fmt = &formats[0];

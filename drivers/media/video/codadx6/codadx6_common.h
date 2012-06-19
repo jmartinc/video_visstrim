@@ -138,7 +138,7 @@ struct codadx6_enc_runtime {
 
 struct codadx6_ctx {
 	struct codadx6_dev		*dev;
-// 	int			aborting;
+	int				aborting;
 	int				rawstreamon;
 	int				compstreamon;
 	u32				isequence;
