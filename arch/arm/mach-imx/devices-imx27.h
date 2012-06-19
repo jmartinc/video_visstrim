@@ -17,9 +17,9 @@ extern const struct imx_fsl_usb2_udc_data imx27_fsl_usb2_udc_data;
 #define imx27_add_fsl_usb2_udc(pdata)	\
 	imx_add_fsl_usb2_udc(&imx27_fsl_usb2_udc_data, pdata)
 
-extern const struct imx_imx27_codadx6_data imx27_codadx6_data;
-#define imx27_add_codadx6(pdata)	\
-	imx_add_imx27_codadx6(&imx27_codadx6_data, pdata)
+extern const struct imx_imx27_coda_data imx27_coda_data;
+#define imx27_add_coda(pdata)	\
+	imx_add_imx27_coda(&imx27_coda_data, pdata)
 
 extern const struct imx_imx2_wdt_data imx27_imx2_wdt_data;
 #define imx27_add_imx2_wdt(pdata)	\

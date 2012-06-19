@@ -12,16 +12,16 @@
 #include <linux/coda_codec.h>
 
 #ifdef CONFIG_SOC_IMX27
-const struct imx_imx27_codadx6_data imx27_codadx6_data __initconst = {
+const struct imx_imx27_coda_data imx27_coda_data __initconst = {
 	.iobase = MX27_VPU_BASE_ADDR,
 	.iosize = SZ_512,
 	.irq = MX27_INT_VPU,
 };
 #endif
 
-struct platform_device *__init imx_add_imx27_codadx6(
-		const struct imx_imx27_codadx6_data *data,
-		const struct codadx6_platform_data *pdata)
+struct platform_device *__init imx_add_imx27_coda(
+		const struct imx_imx27_coda_data *data,
+		const struct coda_platform_data *pdata)
 {
 	struct resource res[] = {
 		{
@@ -34,6 +34,6 @@ struct platform_device *__init imx_add_imx27_codadx6(
 			.flags = IORESOURCE_IRQ,
 		},
 	};
-	return imx_add_platform_device_dmamask("codadx6", 0, res, 2, pdata,
+	return imx_add_platform_device_dmamask("coda", 0, res, 2, pdata,
 					sizeof(*pdata), DMA_BIT_MASK(32));
 }

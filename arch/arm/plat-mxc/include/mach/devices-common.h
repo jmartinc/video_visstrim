@@ -84,14 +84,14 @@ struct platform_device *__init imx_add_imx21_hcd(
 		const struct mx21_usbh_platform_data *pdata);
 
 #include <linux/coda_codec.h>
-struct imx_imx27_codadx6_data {
+struct imx_imx27_coda_data {
 	resource_size_t iobase;
 	resource_size_t iosize;
 	resource_size_t irq;
 };
-struct platform_device *__init imx_add_imx27_codadx6(
-		const struct imx_imx27_codadx6_data *data,
-		const struct codadx6_platform_data *pdata);
+struct platform_device *__init imx_add_imx27_coda(
+		const struct imx_imx27_coda_data *data,
+		const struct coda_platform_data *pdata);
 
 struct imx_imx2_wdt_data {
 	int id;

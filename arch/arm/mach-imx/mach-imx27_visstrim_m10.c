@@ -429,8 +429,8 @@ static const struct imx_ssi_platform_data visstrim_m10_ssi_pdata __initconst = {
 	.flags			= IMX_SSI_DMA | IMX_SSI_SYN,
 };
 
-/* codadx6 */
-static const struct codadx6_platform_data visstrim_codadx6_data __initconst = {
+/* coda */
+static const struct coda_platform_data visstrim_coda_data __initconst = {
 	.firmware = "v4l-codadx6-imx27.bin",
 };
 
@@ -439,7 +439,7 @@ static void __init visstrim_m10_coda_init(void)
 	struct platform_device *pdev;
 	int dma;
 
-	pdev = imx27_add_codadx6(&visstrim_codadx6_data);
+	pdev = imx27_add_coda(&visstrim_coda_data);
 	
 	dma = dma_declare_coherent_memory(&pdev->dev,
 					  mx2_camera_base + 2 * MX2_CAMERA_BUF_SIZE,

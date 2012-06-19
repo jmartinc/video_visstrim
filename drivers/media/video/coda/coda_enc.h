@@ -1,5 +1,5 @@
 /*
- * linux/drivers/media/video/codadx6/codadx6_enc.h
+ * linux/drivers/media/video/coda/coda_enc.h
  *
  * Copyright (C) 2012 Vista Silicon SL
  *    Javier Martin <javier.martin@vista-silicon.com>
@@ -11,16 +11,16 @@
  * (at your option) any later version.
  */
 
-#ifndef _CODADX6_ENC_H_
-#define _CODADX6_ENC_H_
+#ifndef _CODA_ENC_H_
+#define _CODA_ENC_H_
 
-#define CODADX6_ENC_NAME	"codadx6-enc"
+#define CODA_ENC_NAME	"coda-enc"
 
 const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void);
 struct v4l2_m2m_ops *get_enc_m2m_ops(void);
-void set_enc_default_params(struct codadx6_ctx *ctx);
+void set_enc_default_params(struct coda_ctx *ctx);
 struct vb2_ops *get_enc_qops(void);
-int codadx6_enc_ctrls_setup(struct codadx6_ctx *ctx);
-int codadx6_enc_isr(struct codadx6_dev *dev);
+int coda_enc_ctrls_setup(struct coda_ctx *ctx);
+int coda_enc_isr(struct coda_dev *dev);
 
 #endif

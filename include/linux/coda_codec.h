@@ -1,8 +1,8 @@
 
-#ifndef _CODADX6_H
-#define _CODADX6_H
+#ifndef _CODA_CODEC_H
+#define _CODA_CODEC_H
 
-struct codadx6_platform_data {
+struct coda_platform_data {
 	char	*firmware;
 };
 
