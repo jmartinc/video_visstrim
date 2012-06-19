@@ -16,7 +16,7 @@
 
 #include <media/v4l2-device.h>
 #include <asm/io.h>
-#include "codadx6_regs.h"
+#include "coda_regs.h"
 
 extern int codadx6_debug;
 

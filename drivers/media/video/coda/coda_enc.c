@@ -19,8 +19,8 @@
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-dma-contig.h>
 
-#include "codadx6_common.h"
-#include "codadx6_enc.h"
+#include "coda_common.h"
+#include "coda_enc.h"
 
 #define CODADX6_ENC_MAX_WIDTH		720
 #define CODADX6_ENC_MAX_HEIGHT		576

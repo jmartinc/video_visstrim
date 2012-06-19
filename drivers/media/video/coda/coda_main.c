@@ -28,9 +28,9 @@
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-dma-contig.h>
 
-#include "codadx6_common.h"
-#include "codadx6_regs.h"
-#include "codadx6_enc.h"
+#include "coda_common.h"
+#include "coda_regs.h"
+#include "coda_enc.h"
 
 #define CODADX6_NAME		"codadx6"
 
