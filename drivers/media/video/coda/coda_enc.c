@@ -26,6 +26,7 @@
 #define CODA_ENC_MAX_HEIGHT		576
 #define CODA_ENC_MAX_FRAME_SIZE	0x90000
 #define FMO_SLICE_SAVE_BUF_SIZE         (32)
+#define CODA_ENC_DEFAULT_GAMMA		4096
 
 #define MIN_W 176
 #define MIN_H 144
@@ -788,8 +789,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 		ctx->runtime.bitstream_buf_size = q_data_dst->sizeimage;
 		dst_fourcc = q_data_dst->fmt->fourcc;
-		ctx->runtime.gamma = 4096;
-		ctx->runtime.maxqp = 0;
 
 		if (!coda_is_initialized(dev)) {
 			v4l2_err(&ctx->dev->v4l2_dev, "coda is not initialized.\n");
@@ -886,24 +885,12 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		coda_write(dev, ctx->runtime.stream_buf_start_addr, CODA_CMD_ENC_SEQ_BB_START);
 		coda_write(dev, ctx->runtime.stream_buf_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
-
-		if (ctx->runtime.maxqp) {
-			/* adjust qp if they are above the maximum */
-			if ((dst_fourcc == V4L2_PIX_FMT_MPEG4) && (ctx->runtime.maxqp > 31)) ctx->runtime.maxqp = 31;  
-			if ((dst_fourcc == V4L2_PIX_FMT_H264) && (ctx->runtime.maxqp > 51)) ctx->runtime.maxqp = 51;
-			data = (ctx->runtime.maxqp & CODA_QPMAX_MASK) << CODA_QPMAX_OFFSET;
-			coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_QP_MAX);
-		}
     
-		if (ctx->runtime.gamma) {
-			/* set default gamma if not set */
-			if (ctx->runtime.gamma > 32768) ctx->runtime.gamma = 32768;
-			data = (ctx->runtime.gamma & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET;
-			coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_GAMMA);
-		}
+		/* set default gamma */
+		data = (CODA_ENC_DEFAULT_GAMMA & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET;
+		coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_GAMMA);
 
-		data  = (ctx->runtime.gamma > 0) << CODA_OPTION_GAMMA_OFFSET;
-		data |= (ctx->runtime.maxqp > 0) << CODA_OPTION_LIMITQP_OFFSET;
+		data  = (CODA_ENC_DEFAULT_GAMMA > 0) << CODA_OPTION_GAMMA_OFFSET;
 		data |= (0 & CODA_OPTION_SLICEREPORT_MASK) << CODA_OPTION_SLICEREPORT_OFFSET;
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_OPTION);
 
