@@ -760,17 +760,13 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct codadx6_ctx *ctx = vb2_get_drv_priv(q);
 	struct codadx6_dev *dev = ctx->dev;
-	/* 
-	 * codadx6 requires all buffers to be pre-queued before streamon
-	 * so that they can be safely registered with the hardware.
-	 */
+
+	if (count < 1)
+		return -EINVAL;
+
 	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
-		if (count < 1)
-			return -EINVAL;
 		ctx->rawstreamon = 1;
 	} else {
-		if (count < CODADX6_ENC_CAPTURE_BUFS)
-			return -EINVAL;
 		ctx->compstreamon = 1;
 	}
 
