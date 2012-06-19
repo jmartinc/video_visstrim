@@ -108,8 +108,6 @@ struct coda_enc_runtime {
 	u32		bitstream_buf;	/* Seems to be pointer to compressed buffer */
 	u32		bitstream_buf_size;
 	/* old EncInfo structure inside dev->encInfo (pEncInfo->openParam = *pop) */
-	u32		stream_rd_ptr; /* This can be safely removed (use bitstream_buf instead) */
-	u32		stream_buf_start_addr; /* This can be removed (use bitstream_buf instead) */
 	u32		stream_buf_size; /* This can be removed (use bitstream_buf_size) instead */
 	u32		stream_buf_end_addr; /* This can be just dropped */
 	struct framebuffer frame_buf_pool[CODA_ENC_OUTPUT_BUFS]; /* Can be removed if we write to parabuf directly */

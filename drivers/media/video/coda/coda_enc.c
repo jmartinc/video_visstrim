@@ -804,15 +804,13 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
 		}
 
-		ctx->runtime.stream_rd_ptr = ctx->runtime.bitstream_buf;
-		ctx->runtime.stream_buf_start_addr = ctx->runtime.bitstream_buf;
 		ctx->runtime.stream_buf_size = ctx->runtime.bitstream_buf_size;
 		ctx->runtime.stream_buf_end_addr = ctx->runtime.bitstream_buf +
 						ctx->runtime.bitstream_buf_size;
 		ctx->runtime.initial_info_obtained = 0;
 
-		coda_write(dev, ctx->runtime.stream_rd_ptr, CODA_REG_BIT_RD_PTR_0);
-		coda_write(dev, ctx->runtime.stream_buf_start_addr, CODA_REG_BIT_WR_PTR_0);
+		coda_write(dev, ctx->runtime.bitstream_buf, CODA_REG_BIT_RD_PTR_0);
+		coda_write(dev, ctx->runtime.bitstream_buf, CODA_REG_BIT_WR_PTR_0);
 		value = coda_read(dev, CODA_REG_BIT_STREAM_CTRL);
 		value &= 0xffe7;
 		value |= 3 << 3;
@@ -883,7 +881,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_RC_BUF_SIZE);
 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_INTRA_REFRESH);
 
-		coda_write(dev, ctx->runtime.stream_buf_start_addr, CODA_CMD_ENC_SEQ_BB_START);
+		coda_write(dev, ctx->runtime.bitstream_buf, CODA_CMD_ENC_SEQ_BB_START);
 		coda_write(dev, ctx->runtime.stream_buf_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
     
 		/* set default gamma */
