@@ -220,18 +220,4 @@
 #define		CODADX6_FIRMWARE_MINOR(x)	(((x) >> 8) & 0x0f)
 #define		CODADX6_FIRMWARE_RELEASE(x)	((x) & 0xff)
 
-// 
-//   /* Linux compatible low level functions. */
-//   #define __iomem
-//   void writel(unsigned int b, volatile void *addr) {
-//     *((unsigned int *)addr) = b;
-//   }
-//   unsigned int readl(volatile void *addr) {
-//     return *((unsigned int *)addr);
-//   }
-// 
-// #define codadx6_read(dev, offset)           readl(dev->regs_base + (offset))
-// #define codadx6_write(dev, data, offset)    writel((data), dev->regs_base + (offset))
-
-
 #endif

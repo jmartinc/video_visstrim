@@ -43,7 +43,6 @@ enum codadx6_node_type {
 struct codadx6_fmt {
 	char *name;
 	u32 fourcc;
-// 	u32 codec_mode;
 	enum codadx6_fmt_type type;
 };
 

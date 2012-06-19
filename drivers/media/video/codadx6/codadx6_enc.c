@@ -45,13 +45,11 @@ static struct codadx6_fmt formats[] = {
         {
                 .name = "H264 Encoded Stream",
                 .fourcc = V4L2_PIX_FMT_H264,
-//                 .codec_mode = CODADX6_MODE_ENCODE_H264,
                 .type = CODADX6_FMT_ENC,
         },
         {
                 .name = "MPEG4 Encoded Stream",
                 .fourcc = V4L2_PIX_FMT_MPEG4,
-//                 .codec_mode = CODADX6_MODE_ENCODE_M4S2,
                 .type = CODADX6_FMT_ENC,
         },
 };
@@ -567,7 +565,6 @@ static void codadx6_device_run(void *m2m_priv)
 	printk("%s: dst buffer length = %d\n", __func__, dst_buf->v4l2_buf.length);
 
 	if (src_buf->v4l2_buf.sequence == 0) {
-// 	   (ctx->enc_params.codec_mode == CODADX6_MODE_ENCODE_H264)) {
 		ctx->runtime.pic_stream_buffer_addr =
 			vb2_dma_contig_plane_dma_addr(dst_buf, 0) +
 			ctx->runtime.vpu_header_size[0] +
@@ -909,7 +906,7 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 		codadx6_write(dev, ctx->runtime.stream_buf_size / 1024, CODADX6_CMD_ENC_SEQ_BB_SIZE);
 
 		if (ctx->runtime.maxqp) {
-			// adjust qp if they are above the maximum
+			/* adjust qp if they are above the maximum */
 			if ((ctx->runtime.bitstream_format == V4L2_PIX_FMT_MPEG4) && (ctx->runtime.maxqp > 31)) ctx->runtime.maxqp = 31;  
 			if ((ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) && (ctx->runtime.maxqp > 51)) ctx->runtime.maxqp = 51;
 			data = (ctx->runtime.maxqp & CODADX6_QPMAX_MASK) << CODADX6_QPMAX_OFFSET;
@@ -917,7 +914,7 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 		}
     
 		if (ctx->runtime.gamma) {
-			// set default gamma if not set
+			/* set default gamma if not set */
 			if (ctx->runtime.gamma > 32768) ctx->runtime.gamma = 32768;
 			data = (ctx->runtime.gamma & CODADX6_GAMMA_MASK) << CODADX6_GAMMA_OFFSET;
 			codadx6_write(dev, data, CODADX6_CMD_ENC_SEQ_RC_GAMMA);
@@ -966,7 +963,6 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		/* Save stream headers */
 		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
-// 		ctx->runtime.bitstream_buf = vb2_dma_contig_plane_dma_addr(buf, 0);
 		if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) {
 			/* Get SPS in the first frame and copy it to an intermediate buffer TODO: copy directly */
 			codadx6_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODADX6_CMD_ENC_HEADER_BB_START);
