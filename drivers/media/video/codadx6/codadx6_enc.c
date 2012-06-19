@@ -336,12 +336,6 @@ static int vidioc_streamoff(struct file *file, void *priv,
 {
 	struct codadx6_ctx *ctx = fh_to_ctx(priv);
 
-	if (type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
-		ctx->rawstreamon = 0;
-	} else {
-		ctx->compstreamon = 0;
-	}
-
 	return v4l2_m2m_streamoff(file, ctx->m2m_ctx, type);
 }
 
@@ -647,12 +641,6 @@ static int codadx6_job_ready(void *m2m_priv)
 	return 1;
 }
 
-static void codadx6_job_abort(void *m2m_priv)
-{
-	/* TODO */
-	return;
-}
-
 static void codadx6_lock(void *m2m_priv)
 {
 	struct codadx6_ctx *ctx = m2m_priv;
@@ -670,7 +658,6 @@ static void codadx6_unlock(void *m2m_priv)
 static struct v4l2_m2m_ops codadx6_enc_m2m_ops = {
 	.device_run	= codadx6_device_run,
 	.job_ready	= codadx6_job_ready,
-	.job_abort	= codadx6_job_abort,
 	.lock		= codadx6_lock,
 	.unlock		= codadx6_unlock,
 };
@@ -1031,7 +1018,25 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 
 static int codadx6_stop_streaming(struct vb2_queue *q)
 {
-	/* TODO */
+	struct codadx6_ctx *ctx = vb2_get_drv_priv(q);
+	struct codadx6_dev *dev = ctx->dev;
+
+	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "%s: output\n", __func__);
+		ctx->rawstreamon = 0;
+	} else {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "%s: capture\n", __func__);
+		ctx->compstreamon = 0;
+	}
+
+	if (!ctx->rawstreamon & !ctx->compstreamon) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "%s: sent command 'SEQ_END' to coda\n", __func__);
+		if (codadx6_command_sync(dev, ctx->enc_params.codec_mode, CODADX6_COMMAND_SEQ_END)) {
+			v4l2_err(&ctx->dev->v4l2_dev, "CODADX6_COMMAND_SEQ_END failed\n");
+			return -ETIMEDOUT;
+		}
+	}
+
 	return 0;
 }
 
