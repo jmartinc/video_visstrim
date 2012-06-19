@@ -788,7 +788,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 		ctx->runtime.bitstream_buf_size = q_data_dst->sizeimage;
 		dst_fourcc = q_data_dst->fmt->fourcc;
-		ctx->runtime.vbv_buffer_size = 0;
 		ctx->runtime.enable_autoskip = 1;
 		ctx->runtime.intra_refresh = 0;
 		ctx->runtime.gamma = 4096;
@@ -884,7 +883,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		}
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_PARA);
 
-		coda_write(dev, ctx->runtime.vbv_buffer_size, CODA_CMD_ENC_SEQ_RC_BUF_SIZE);
+		coda_write(dev, 0, CODA_CMD_ENC_SEQ_RC_BUF_SIZE);
 		coda_write(dev, ctx->runtime.intra_refresh, CODA_CMD_ENC_SEQ_INTRA_REFRESH);
 
 		coda_write(dev, ctx->runtime.stream_buf_start_addr, CODA_CMD_ENC_SEQ_BB_START);
