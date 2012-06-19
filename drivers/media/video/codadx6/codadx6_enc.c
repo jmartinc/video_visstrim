@@ -11,6 +11,8 @@
  * (at your option) any later version.
  */
 
+#include <linux/irq.h>
+
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-mem2mem.h>
@@ -410,7 +412,7 @@ const struct v4l2_ioctl_ops *get_enc_v4l2_ioctl_ops(void)
  * Mem-to-mem operations.
  */
 
-void codadx6_enc_isr(struct codadx6_dev *dev)
+int codadx6_enc_isr(struct codadx6_dev *dev)
 {
 	struct codadx6_ctx *ctx;
 	struct vb2_buffer *src_buf, *dst_buf, *tmp_buf;
@@ -419,19 +421,19 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 	ctx = v4l2_m2m_get_curr_priv(dev->m2m_enc_dev);
 	if (ctx == NULL) {
 		v4l2_err(&dev->v4l2_dev, "Instance released before the end of transaction\n");
-		return;
+		return IRQ_HANDLED;
 	}
 
 	if (ctx->aborting) {
 		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
 			 "task has been aborted\n");
-		return;
+		return IRQ_HANDLED;
 	}
 
 	if (codadx6_isbusy(ctx->dev)) {
 		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
 			 "coda is still busy!!!!\n");
-// 		return;
+		return IRQ_NONE;
 	}
 
 	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
@@ -506,6 +508,8 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 		 "job finished: encoding\n");
 
 	v4l2_m2m_job_finish(ctx->dev->m2m_enc_dev, ctx->m2m_ctx);
+	
+	return IRQ_HANDLED;
 }
 
 static void codadx6_device_run(void *m2m_priv)
@@ -628,18 +632,17 @@ static int codadx6_job_ready(void *m2m_priv)
 	}
 
 	/* For P frames a reference picture is needed too */
-// 	printk("gopcounter = %d\n", ctx->gopcounter);
 	if ((ctx->gopcounter != (ctx->enc_params.gop_size - 1)) && (!ctx->reference)) {
 		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
 			 "not ready: reference picture not available.\n");
 		return 0;
 	}
 
-// 	if (codadx6_isbusy(ctx->dev)) {
-// 		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
-// 			 "not ready: coda is still busy.\n");
-// 		return 0;
-// 	}
+	if (codadx6_isbusy(ctx->dev)) {
+		v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
+			 "not ready: coda is still busy.\n");
+		return 0;
+	}
 
 	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev,
 			"job ready\n");

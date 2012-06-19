@@ -218,10 +218,7 @@ static irqreturn_t codadx6_irq_handler(int irq, void *data)
 	codadx6_write(dev, CODADX6_REG_BIT_INT_CLEAR_SET,
 		      CODADX6_REG_BIT_INT_CLEAR);
 
-	/* TODO: move to a tasklet? */
-	codadx6_enc_isr(dev);
-
-	return IRQ_HANDLED;
+	return codadx6_enc_isr(dev);
 }
 
 static int codadx6_hw_init(struct codadx6_dev *dev, const struct firmware *fw)
