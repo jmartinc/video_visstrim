@@ -772,6 +772,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 	if (ctx->rawstreamon & ctx->compstreamon) {
 		struct coda_q_data *q_data_src, *q_data_dst;
+		u32 dst_fourcc;
 		struct vb2_buffer *buf;
 		struct vb2_queue *vq;
 		u32 value;
@@ -786,7 +787,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		ctx->runtime.bitstream_buf = vb2_dma_contig_plane_dma_addr(buf, 0);
 		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 		ctx->runtime.bitstream_buf_size = q_data_dst->sizeimage;
-		ctx->runtime.bitstream_format = q_data_dst->fmt->fourcc;
+		dst_fourcc = q_data_dst->fmt->fourcc;
 		ctx->runtime.initial_delay = 0;
 		ctx->runtime.vbv_buffer_size = 0;
 		ctx->runtime.enable_autoskip = 1;
@@ -802,9 +803,9 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		/* coda_encoder_init */
 		{
 		
-		if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) {
+		if (dst_fourcc == V4L2_PIX_FMT_H264) {
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_H264;
-		} else if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_MPEG4) {
+		} else if (dst_fourcc == V4L2_PIX_FMT_MPEG4) {
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
 		}
 
@@ -848,14 +849,14 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_SRC_SIZE);
 		coda_write(dev, ctx->enc_params.framerate, CODA_CMD_ENC_SEQ_SRC_F_RATE);
 
-		if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_MPEG4) {
+		if (dst_fourcc == V4L2_PIX_FMT_MPEG4) {
 			coda_write(dev, CODA_ENCODE_MPEG4, CODA_CMD_ENC_SEQ_COD_STD);
 			data  = (0 & CODA_MP4PARAM_VERID_MASK) << CODA_MP4PARAM_VERID_OFFSET;
 			data |= (0 & CODA_MP4PARAM_INTRADCVLCTHR_MASK) << CODA_MP4PARAM_INTRADCVLCTHR_OFFSET;
 			data |= (0 & CODA_MP4PARAM_REVERSIBLEVLCENABLE_MASK) << CODA_MP4PARAM_REVERSIBLEVLCENABLE_OFFSET;
 			data |=  0 & CODA_MP4PARAM_DATAPARTITIONENABLE_MASK;
 			coda_write(dev, data, CODA_CMD_ENC_SEQ_MP4_PARA);
-		} else if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) {
+		} else if (dst_fourcc == V4L2_PIX_FMT_H264) {
 			coda_write(dev, CODA_ENCODE_H264, CODA_CMD_ENC_SEQ_COD_STD);
 			data  = (0 & CODA_264PARAM_DEBLKFILTEROFFSETBETA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETBETA_OFFSET;
 			data |= (0 & CODA_264PARAM_DEBLKFILTEROFFSETALPHA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETALPHA_OFFSET;
@@ -892,8 +893,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		if (ctx->runtime.maxqp) {
 			/* adjust qp if they are above the maximum */
-			if ((ctx->runtime.bitstream_format == V4L2_PIX_FMT_MPEG4) && (ctx->runtime.maxqp > 31)) ctx->runtime.maxqp = 31;  
-			if ((ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) && (ctx->runtime.maxqp > 51)) ctx->runtime.maxqp = 51;
+			if ((dst_fourcc == V4L2_PIX_FMT_MPEG4) && (ctx->runtime.maxqp > 31)) ctx->runtime.maxqp = 31;  
+			if ((dst_fourcc == V4L2_PIX_FMT_H264) && (ctx->runtime.maxqp > 51)) ctx->runtime.maxqp = 51;
 			data = (ctx->runtime.maxqp & CODA_QPMAX_MASK) << CODA_QPMAX_OFFSET;
 			coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_QP_MAX);
 		}
@@ -946,7 +947,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		/* Save stream headers */
 		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
-		if (ctx->runtime.bitstream_format == V4L2_PIX_FMT_H264) {
+		if (dst_fourcc == V4L2_PIX_FMT_H264) {
 			/* Get SPS in the first frame and copy it to an intermediate buffer TODO: copy directly */
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, ctx->runtime.bitstream_buf_size, CODA_CMD_ENC_HEADER_BB_SIZE);

@@ -107,7 +107,6 @@ struct coda_enc_runtime {
 	unsigned int	pic_height;
 	u32		bitstream_buf;	/* Seems to be pointer to compressed buffer */
 	u32		bitstream_buf_size;
-	u32		bitstream_format; /* This is probably redundant (q_data->fmt->fourcc) */
 	int		initial_delay;	/* This is fixed to 0 */
 	int		vbv_buffer_size; /* This is fixed to 0 */
 	int		enable_autoskip; /* This is fixed to 1 */
