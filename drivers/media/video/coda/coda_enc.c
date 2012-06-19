@@ -788,7 +788,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 		ctx->runtime.bitstream_buf_size = q_data_dst->sizeimage;
 		dst_fourcc = q_data_dst->fmt->fourcc;
-		ctx->runtime.initial_delay = 0;
 		ctx->runtime.vbv_buffer_size = 0;
 		ctx->runtime.enable_autoskip = 1;
 		ctx->runtime.intra_refresh = 0;
@@ -877,7 +876,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		if (ctx->enc_params.bitrate) {
 			/* Rate control enabled */
 			data  = ((!ctx->runtime.enable_autoskip) & CODA_RATECONTROL_AUTOSKIP_MASK) << CODA_RATECONTROL_AUTOSKIP_OFFSET;
-			data |= (ctx->runtime.initial_delay & CODA_RATECONTROL_INITIALDELAY_MASK) << CODA_RATECONTROL_INITIALDELAY_OFFSET;
+			data |= (0 & CODA_RATECONTROL_INITIALDELAY_MASK) << CODA_RATECONTROL_INITIALDELAY_OFFSET;
 			data |= (ctx->enc_params.bitrate & CODA_RATECONTROL_BITRATE_MASK) << CODA_RATECONTROL_BITRATE_OFFSET;
 			data |=  1 & CODA_RATECONTROL_ENABLE_MASK;
 		} else {
