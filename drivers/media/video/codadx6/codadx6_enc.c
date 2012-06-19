@@ -414,7 +414,6 @@ int codadx6_enc_isr(struct codadx6_dev *dev)
 {
 	struct codadx6_ctx *ctx;
 	struct vb2_buffer *src_buf, *dst_buf, *tmp_buf;
-	int i;
 
 	ctx = v4l2_m2m_get_curr_priv(dev->m2m_enc_dev);
 	if (ctx == NULL) {
@@ -560,10 +559,6 @@ static void codadx6_device_run(void *m2m_priv)
 	 * Copy headers at the beginning of the first frame for H.264 only.
 	 * In MPEG4 they are already copied by the coda.
 	 */
-	printk("%s: src buffer addr = %p, sequence = %d\n", __func__, vb2_dma_contig_plane_dma_addr(src_buf, 0),
-	       src_buf->v4l2_buf.sequence);
-	printk("%s: dst buffer length = %d\n", __func__, dst_buf->v4l2_buf.length);
-
 	if (src_buf->v4l2_buf.sequence == 0) {
 		ctx->runtime.pic_stream_buffer_addr =
 			vb2_dma_contig_plane_dma_addr(dst_buf, 0) +
@@ -729,9 +724,6 @@ static int codadx6_enc_buf_prepare(struct vb2_buffer *vb)
 	struct codadx6_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
 	struct codadx6_q_data *q_data;
 
-	v4l2_dbg(1, codadx6_debug, &ctx->dev->v4l2_dev, "type: %d\n",
-		 vb->vb2_queue->type);
-
 	q_data = get_q_data(ctx, vb->vb2_queue->type);
 
 	if (vb2_plane_size(vb, 0) < q_data->sizeimage) {
@@ -844,9 +836,6 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 				q_data_src->width * q_data_src->height;
 			ctx->runtime.frame_buf_pool[i].cr = ctx->runtime.frame_buf_pool[i].cb +
 				q_data_src->width / 2 * q_data_src->height / 2;
-
-			printk("%s: Registering picture (%p) in parabuf (%d)\n",
-			       __func__, ctx->runtime.frame_buf_pool[i].y, i);
 		}
 		ctx->runtime.num_frame_buffers = vq->num_buffers;
 		ctx->runtime.stride = q_data_src->width;
@@ -948,8 +937,6 @@ static int codadx6_start_streaming(struct vb2_queue *q, unsigned int count)
 			p[i * 3] = ctx->runtime.frame_buf_pool[i].y;
 			p[i * 3 + 1] = ctx->runtime.frame_buf_pool[i].cb;
 			p[i * 3 + 2] = ctx->runtime.frame_buf_pool[i].cr;
-			printk("%s: Registering picture (%p) in parabuf (%d)\n",
-			       __func__, ctx->runtime.frame_buf_pool[i].y, i);
 		}
 		codadx6_write(dev, ctx->runtime.num_frame_buffers, CODADX6_CMD_SET_FRAME_BUF_NUM);
 		codadx6_write(dev, ctx->runtime.stride, CODADX6_CMD_SET_FRAME_BUF_STRIDE);
