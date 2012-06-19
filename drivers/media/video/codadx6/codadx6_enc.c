@@ -468,13 +468,14 @@ void codadx6_enc_isr(struct codadx6_dev *dev)
 		printk("\n");
 	}
 
-
-
-	/* FIXME: does this value really propagate  */
-	if (dst_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
+	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
+		printk("%s: dst frame (%d) is KEYFRAME\n", __func__, dst_buf->v4l2_buf.sequence);
 		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
+		dst_buf->v4l2_buf.flags &= ~V4L2_BUF_FLAG_PFRAME;
 	} else {
+		printk("%s: dst frame (%d) is PFRAME\n", __func__, dst_buf->v4l2_buf.sequence);
 		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_PFRAME;
+		dst_buf->v4l2_buf.flags &= ~V4L2_BUF_FLAG_KEYFRAME;
 	}
 
 	/* Free previous reference picture if available */
@@ -527,13 +528,16 @@ static void codadx6_device_run(void *m2m_priv)
 
 	/* 
 	 * Workaround codadx6 firmware BUG that only marks the first
-	 * frame as IDR. This is a problem for some decoders when a
-	 * frame is lost.
+	 * frame as IDR. This is a problem for some decoders that can't
+	 * recover when a frame is lost.
 	 */
-	if (src_buf->v4l2_buf.sequence % ctx->enc_params.gop_size)
+	if (src_buf->v4l2_buf.sequence % ctx->enc_params.gop_size) {
 		src_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_PFRAME;
-	else
+		src_buf->v4l2_buf.flags &= ~V4L2_BUF_FLAG_KEYFRAME;
+	} else {
 		src_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
+		src_buf->v4l2_buf.flags &= ~V4L2_BUF_FLAG_PFRAME;
+	}
 
 	ctx->runtime.source_frame.y = vb2_dma_contig_plane_dma_addr(src_buf, 0);
 	ctx->runtime.source_frame.cb = ctx->runtime.source_frame.y +
