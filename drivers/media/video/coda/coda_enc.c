@@ -782,8 +782,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		ctx->gopcounter = ctx->enc_params.gop_size - 1;
 
 		q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
-		ctx->runtime.pic_width = q_data_src->width;
-		ctx->runtime.pic_height = q_data_src->height;
 		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
 		ctx->runtime.bitstream_buf = vb2_dma_contig_plane_dma_addr(buf, 0);
 		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
@@ -832,8 +830,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, 0xFFFF4C00, CODA_REG_BIT_SEARCH_RAM_BASE_ADDR);
 
 		/* Could set rotation here if needed */
-		data = (ctx->runtime.pic_width & CODA_PICWIDTH_MASK) << CODA_PICWIDTH_OFFSET;
-		data |= (ctx->runtime.pic_height & CODA_PICHEIGHT_MASK) << CODA_PICHEIGHT_OFFSET;
+		data = (q_data_src->width & CODA_PICWIDTH_MASK) << CODA_PICWIDTH_OFFSET;
+		data |= (q_data_src->height & CODA_PICHEIGHT_MASK) << CODA_PICHEIGHT_OFFSET;
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_SRC_SIZE);
 		coda_write(dev, ctx->enc_params.framerate, CODA_CMD_ENC_SEQ_SRC_F_RATE);
 

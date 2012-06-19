@@ -102,9 +102,6 @@ struct framebuffer {
 
 /* TODO: some data of this structure can be removed */
 struct coda_enc_runtime {
-	/* old EncOpenParam vpuParams */
-	unsigned int	pic_width;
-	unsigned int	pic_height;
 	u32		bitstream_buf;	/* Seems to be pointer to compressed buffer */
 	u32		bitstream_buf_size;
 	struct framebuffer frame_buf_pool[CODA_ENC_OUTPUT_BUFS]; /* Can be removed if we write to parabuf directly */
