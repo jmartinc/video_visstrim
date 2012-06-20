@@ -756,6 +756,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct coda_ctx *ctx = vb2_get_drv_priv(q);
 	struct coda_dev *dev = ctx->dev;
+	u32 bitstream_buf, bitstream_size;
 
 	if (count < 1)
 		return -EINVAL;
@@ -778,9 +779,9 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
-		ctx->runtime.bitstream_buf = vb2_dma_contig_plane_dma_addr(buf, 0);
+		bitstream_buf = vb2_dma_contig_plane_dma_addr(buf, 0);
 		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
-		ctx->runtime.bitstream_buf_size = q_data_dst->sizeimage;
+		bitstream_size = q_data_dst->sizeimage;
 		dst_fourcc = q_data_dst->fmt->fourcc;
 
 		if (!coda_is_initialized(dev)) {
@@ -797,8 +798,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
 		}
 
-		coda_write(dev, ctx->runtime.bitstream_buf, CODA_REG_BIT_RD_PTR_0);
-		coda_write(dev, ctx->runtime.bitstream_buf, CODA_REG_BIT_WR_PTR_0);
+		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR_0);
+		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR_0);
 		value = coda_read(dev, CODA_REG_BIT_STREAM_CTRL);
 		value &= 0xffe7;
 		value |= 3 << 3;
@@ -868,8 +869,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_RC_BUF_SIZE);
 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_INTRA_REFRESH);
 
-		coda_write(dev, ctx->runtime.bitstream_buf, CODA_CMD_ENC_SEQ_BB_START);
-		coda_write(dev, ctx->runtime.bitstream_buf_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
+		coda_write(dev, bitstream_buf, CODA_CMD_ENC_SEQ_BB_START);
+		coda_write(dev, bitstream_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
     
 		/* set default gamma */
 		data = (CODA_ENC_DEFAULT_GAMMA & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET;
@@ -916,7 +917,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		if (dst_fourcc == V4L2_PIX_FMT_H264) {
 			/* Get SPS in the first frame and copy it to an intermediate buffer TODO: copy directly */
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
-			coda_write(dev, ctx->runtime.bitstream_buf_size, CODA_CMD_ENC_HEADER_BB_SIZE);
+			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_H264_SPS, CODA_CMD_ENC_HEADER_CODE);
 			if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
@@ -928,7 +929,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 			/* Get PPS in the first frame and copy it to an intermediate buffer TODO: copy directly*/
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
-			coda_write(dev, ctx->runtime.bitstream_buf_size, CODA_CMD_ENC_HEADER_BB_SIZE);
+			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_H264_PPS, CODA_CMD_ENC_HEADER_CODE);
 			if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
@@ -941,7 +942,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		} else { /* MPEG4 */
 			/* Get VOS in the first frame and copy it to an intermediate buffer TODO: copy directly */
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
-			coda_write(dev,  ctx->runtime.bitstream_buf_size, CODA_CMD_ENC_HEADER_BB_SIZE);
+			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_MP4V_VOS, CODA_CMD_ENC_HEADER_CODE);
 			if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
@@ -952,7 +953,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			memcpy(&ctx->runtime.vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[0]);
 
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
-			coda_write(dev, ctx->runtime.bitstream_buf_size, CODA_CMD_ENC_HEADER_BB_SIZE);
+			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_MP4V_VIS, CODA_CMD_ENC_HEADER_CODE);
 			if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");
@@ -963,7 +964,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			memcpy(&ctx->runtime.vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[1]);
 
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
-			coda_write(dev, ctx->runtime.bitstream_buf_size, CODA_CMD_ENC_HEADER_BB_SIZE);
+			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_MP4V_VOL, CODA_CMD_ENC_HEADER_CODE);
 			if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");

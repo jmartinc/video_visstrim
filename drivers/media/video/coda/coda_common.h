@@ -102,8 +102,6 @@ struct framebuffer {
 
 /* TODO: some data of this structure can be removed */
 struct coda_enc_runtime {
-	u32		bitstream_buf;	/* Seems to be pointer to compressed buffer */
-	u32		bitstream_buf_size;
 	struct framebuffer frame_buf_pool[CODA_ENC_OUTPUT_BUFS]; /* Can be removed if we write to parabuf directly */
 	int		num_frame_buffers; /* This can be removed */
 	struct framebuffer source_frame; /* This is only used to pass data to 'encoder_submit' */
