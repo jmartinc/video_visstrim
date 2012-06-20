@@ -509,6 +509,7 @@ static void coda_device_run(void *m2m_priv)
 	struct vb2_buffer *src_buf, *dst_buf;
 	struct coda_dev *dev = ctx->dev;
 	int force_ipicture, quant_param;
+	u32 picture_y, picture_cb, picture_cr;
 
 	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
 	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
@@ -532,13 +533,6 @@ static void coda_device_run(void *m2m_priv)
 		src_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
 		src_buf->v4l2_buf.flags &= ~V4L2_BUF_FLAG_PFRAME;
 	}
-
-	ctx->runtime.source_frame.y = vb2_dma_contig_plane_dma_addr(src_buf, 0);
-	ctx->runtime.source_frame.cb = ctx->runtime.source_frame.y +
-				q_data_src->width * q_data_src->height;
-	ctx->runtime.source_frame.cr = ctx->runtime.source_frame.cb +
-				q_data_src->width / 2 * q_data_src->height / 2;
-
 
 	/*
 	 * Copy headers at the beginning of the first frame for H.264 only.
@@ -584,10 +578,15 @@ static void coda_device_run(void *m2m_priv)
 	/* Encoder submit */
 	coda_write(dev, 0, CODA_CMD_ENC_PIC_ROT_MODE);
 	coda_write(dev, quant_param, CODA_CMD_ENC_PIC_QS);
-	
-	coda_write(dev, ctx->runtime.source_frame.y, CODA_CMD_ENC_PIC_SRC_ADDR_Y);
-	coda_write(dev, ctx->runtime.source_frame.cb, CODA_CMD_ENC_PIC_SRC_ADDR_CB);
-	coda_write(dev, ctx->runtime.source_frame.cr, CODA_CMD_ENC_PIC_SRC_ADDR_CR);
+
+
+	picture_y = vb2_dma_contig_plane_dma_addr(src_buf, 0);
+	picture_cb = picture_y + q_data_src->width * q_data_src->height;
+	picture_cr = picture_cb + q_data_src->width / 2 * q_data_src->height / 2;
+
+	coda_write(dev, picture_y, CODA_CMD_ENC_PIC_SRC_ADDR_Y);
+	coda_write(dev, picture_cb, CODA_CMD_ENC_PIC_SRC_ADDR_CB);
+	coda_write(dev, picture_cr, CODA_CMD_ENC_PIC_SRC_ADDR_CR);
 	coda_write(dev, force_ipicture << 1 & 0x2, CODA_CMD_ENC_PIC_OPTION);
 	
 	coda_write(dev, ctx->runtime.pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
@@ -771,7 +770,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		struct coda_q_data *q_data_src, *q_data_dst;
 		u32 dst_fourcc;
 		struct vb2_buffer *buf;
-		struct vb2_queue *vq;
+		struct vb2_queue *src_vq;
 		u32 value;
 		int i = 0;
 
@@ -807,17 +806,16 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		}
 
 		/* walk the src ready list and store buffer phys addresses  */
-		vq = v4l2_m2m_get_vq(ctx->m2m_ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
-		for (i = 0; i < vq->num_buffers; i++) {
-			buf = vq->bufs[i];
+		src_vq = v4l2_m2m_get_vq(ctx->m2m_ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+		for (i = 0; i < src_vq->num_buffers; i++) {
+			buf = src_vq->bufs[i];
 			ctx->runtime.frame_buf_pool[i].y = vb2_dma_contig_plane_dma_addr(buf, 0);
 			ctx->runtime.frame_buf_pool[i].cb = ctx->runtime.frame_buf_pool[i].y +
 				q_data_src->width * q_data_src->height;
 			ctx->runtime.frame_buf_pool[i].cr = ctx->runtime.frame_buf_pool[i].cb +
 				q_data_src->width / 2 * q_data_src->height / 2;
 		}
-		ctx->runtime.num_frame_buffers = vq->num_buffers;
-		
+
 		/* coda_encoder_configure */
 		{
 		u32 data;
@@ -896,7 +894,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			return -EFAULT;
 
 		/* Let the codec know the addresses of the frame buffers */
-		for (i = 0; i < ctx->runtime.num_frame_buffers; i++) {
+		for (i = 0; i < src_vq->num_buffers; i++) {
 			u32 *p;
 
 			p = ctx->dev->enc_parabuf.vaddr;
@@ -904,7 +902,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			p[i * 3 + 1] = ctx->runtime.frame_buf_pool[i].cb;
 			p[i * 3 + 2] = ctx->runtime.frame_buf_pool[i].cr;
 		}
-		coda_write(dev, ctx->runtime.num_frame_buffers, CODA_CMD_SET_FRAME_BUF_NUM);
+		coda_write(dev, src_vq->num_buffers, CODA_CMD_SET_FRAME_BUF_NUM);
 		coda_write(dev, q_data_src->width, CODA_CMD_SET_FRAME_BUF_STRIDE);
 		if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_SET_FRAME_BUF)) {
 			v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_SET_FRAME_BUF timeout\n");
