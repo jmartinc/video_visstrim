@@ -508,6 +508,7 @@ static void coda_device_run(void *m2m_priv)
 	struct coda_q_data *q_data_src, *q_data_dst;
 	struct vb2_buffer *src_buf, *dst_buf;
 	struct coda_dev *dev = ctx->dev;
+	int force_ipicture, quant_param;
 
 	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
 	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
@@ -538,23 +539,6 @@ static void coda_device_run(void *m2m_priv)
 	ctx->runtime.source_frame.cr = ctx->runtime.source_frame.cb +
 				q_data_src->width / 2 * q_data_src->height / 2;
 
-	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
-		ctx->runtime.force_ipicture = 1;
-		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
-			ctx->runtime.quant_param = ctx->enc_params.h264_intra_qp;
-		} else {
-			ctx->runtime.quant_param = ctx->enc_params.mpeg4_intra_qp;
-		}
-	} else {
-		ctx->runtime.force_ipicture = 0;
-		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
-			ctx->runtime.quant_param = ctx->enc_params.h264_inter_qp;
-		} else {
-			ctx->runtime.quant_param = ctx->enc_params.mpeg4_inter_qp;
-		}
-	}
-	ctx->runtime.skip_picture = 0;
-	ctx->runtime.all_inter_mb = 0;
 
 	/*
 	 * Copy headers at the beginning of the first frame for H.264 only.
@@ -581,24 +565,35 @@ static void coda_device_run(void *m2m_priv)
 		ctx->runtime.pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE;
 	}
 	
-	/* coda_encoder_submit */
-	{
-		coda_write(dev, 0, CODA_CMD_ENC_PIC_ROT_MODE);
-		coda_write(dev, ctx->runtime.quant_param, CODA_CMD_ENC_PIC_QS);
-		
-		if (ctx->runtime.skip_picture) {
-			coda_write(dev, 1, CODA_CMD_ENC_PIC_OPTION);
+	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
+		force_ipicture = 1;
+		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
+			quant_param = ctx->enc_params.h264_intra_qp;
 		} else {
-			coda_write(dev, ctx->runtime.source_frame.y, CODA_CMD_ENC_PIC_SRC_ADDR_Y);
-			coda_write(dev, ctx->runtime.source_frame.cb, CODA_CMD_ENC_PIC_SRC_ADDR_CB);
-			coda_write(dev, ctx->runtime.source_frame.cr, CODA_CMD_ENC_PIC_SRC_ADDR_CR);
-			coda_write(dev, (ctx->runtime.all_inter_mb << 5) | (ctx->runtime.force_ipicture << 1 & 0x2), CODA_CMD_ENC_PIC_OPTION);
+			quant_param = ctx->enc_params.mpeg4_intra_qp;
 		}
-
-		coda_write(dev, ctx->runtime.pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
-		coda_write(dev, ctx->runtime.pic_stream_buffer_size / 1024, CODA_CMD_ENC_PIC_BB_SIZE);
-		coda_command_async(dev, ctx->enc_params.codec_mode, CODA_COMMAND_PIC_RUN);
+	} else {
+		force_ipicture = 0;
+		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
+			quant_param = ctx->enc_params.h264_inter_qp;
+		} else {
+			quant_param = ctx->enc_params.mpeg4_inter_qp;
+		}
 	}
+
+	/* Encoder submit */
+	coda_write(dev, 0, CODA_CMD_ENC_PIC_ROT_MODE);
+	coda_write(dev, quant_param, CODA_CMD_ENC_PIC_QS);
+	
+	coda_write(dev, ctx->runtime.source_frame.y, CODA_CMD_ENC_PIC_SRC_ADDR_Y);
+	coda_write(dev, ctx->runtime.source_frame.cb, CODA_CMD_ENC_PIC_SRC_ADDR_CB);
+	coda_write(dev, ctx->runtime.source_frame.cr, CODA_CMD_ENC_PIC_SRC_ADDR_CR);
+	coda_write(dev, force_ipicture << 1 & 0x2, CODA_CMD_ENC_PIC_OPTION);
+	
+	coda_write(dev, ctx->runtime.pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
+	coda_write(dev, ctx->runtime.pic_stream_buffer_size / 1024, CODA_CMD_ENC_PIC_BB_SIZE);
+	coda_command_async(dev, ctx->enc_params.codec_mode, CODA_COMMAND_PIC_RUN);
+
 }
 
 static int coda_job_ready(void *m2m_priv)
