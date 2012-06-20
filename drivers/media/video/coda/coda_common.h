@@ -91,37 +91,25 @@ struct coda_enc_params {
 	u32			slice_max_mb;
 };
 
-struct framebuffer {
-	u32	y;
-	u32	cb;
-	u32	cr;
-};
-
 #define CODA_ENC_OUTPUT_BUFS	4
 #define CODA_ENC_CAPTURE_BUFS	2
 
-/* TODO: some data of this structure can be removed */
-struct coda_enc_runtime {
-	/* headers */
-	char		vpu_header[3][64];
-	int		vpu_header_size[3];
-};
-
 struct coda_ctx {
-	struct coda_dev		*dev;
+	struct coda_dev			*dev;
 	int				aborting;
 	int				rawstreamon;
 	int				compstreamon;
 	u32				isequence;
 	struct coda_q_data		q_data[2];
 	enum coda_inst_type		inst_type;
-	struct coda_enc_params	enc_params;
-	struct coda_enc_runtime	runtime;
+	struct coda_enc_params		enc_params;
 	struct v4l2_m2m_ctx		*m2m_ctx;
 	struct v4l2_ctrl_handler	ctrls;
 	struct v4l2_fh			fh;
 	struct vb2_buffer		*reference;
 	int				gopcounter;
+	char				vpu_header[3][64];
+	int				vpu_header_size[3];
 };
 
 static inline void coda_write(struct coda_dev *dev, u32 data, u32 reg)

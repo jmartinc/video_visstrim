@@ -447,9 +447,9 @@ int coda_enc_isr(struct coda_dev *dev)
 	tmp2 = coda_read(dev, CODA_REG_BIT_WR_PTR_0);
 	/* Calculate bytesused field */
 	if (dst_buf->v4l2_buf.sequence == 0) {
-		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1) + ctx->runtime.vpu_header_size[0] +
-							ctx->runtime.vpu_header_size[1] +
-							ctx->runtime.vpu_header_size[2];
+		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1) + ctx->vpu_header_size[0] +
+							ctx->vpu_header_size[1] +
+							ctx->vpu_header_size[2];
 	} else {
 		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1);
 	}
@@ -542,19 +542,19 @@ static void coda_device_run(void *m2m_priv)
 	if (src_buf->v4l2_buf.sequence == 0) {
 		pic_stream_buffer_addr =
 			vb2_dma_contig_plane_dma_addr(dst_buf, 0) +
-			ctx->runtime.vpu_header_size[0] +
-			ctx->runtime.vpu_header_size[1] +
-			ctx->runtime.vpu_header_size[2];
+			ctx->vpu_header_size[0] +
+			ctx->vpu_header_size[1] +
+			ctx->vpu_header_size[2];
 		pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE -
-			ctx->runtime.vpu_header_size[0] -
-			ctx->runtime.vpu_header_size[1] -
-			ctx->runtime.vpu_header_size[2];
+			ctx->vpu_header_size[0] -
+			ctx->vpu_header_size[1] -
+			ctx->vpu_header_size[2];
 		memcpy(vb2_plane_vaddr(dst_buf, 0),
-		       &ctx->runtime.vpu_header[0][0], ctx->runtime.vpu_header_size[0]);
-		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->runtime.vpu_header_size[0],
-		       &ctx->runtime.vpu_header[1][0], ctx->runtime.vpu_header_size[1]);
-		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->runtime.vpu_header_size[0] + ctx->runtime.vpu_header_size[1],
-		       &ctx->runtime.vpu_header[2][0], ctx->runtime.vpu_header_size[2]);
+		       &ctx->vpu_header[0][0], ctx->vpu_header_size[0]);
+		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->vpu_header_size[0],
+		       &ctx->vpu_header[1][0], ctx->vpu_header_size[1]);
+		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->vpu_header_size[0] + ctx->vpu_header_size[1],
+		       &ctx->vpu_header[2][0], ctx->vpu_header_size[2]);
 	} else {
 		pic_stream_buffer_addr = vb2_dma_contig_plane_dma_addr(dst_buf, 0);
 		pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE;
@@ -918,9 +918,9 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->runtime.vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
+			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->runtime.vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[0]);
+			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[0]);
 
 			/* Get PPS in the first frame and copy it to an intermediate buffer TODO: copy directly*/
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
@@ -930,10 +930,10 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->runtime.vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
+			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->runtime.vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[1]);
-			ctx->runtime.vpu_header_size[2] = 0;
+			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[1]);
+			ctx->vpu_header_size[2] = 0;
 		} else { /* MPEG4 */
 			/* Get VOS in the first frame and copy it to an intermediate buffer TODO: copy directly */
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
@@ -943,9 +943,9 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->runtime.vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
+			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->runtime.vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[0]);
+			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[0]);
 
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
@@ -954,9 +954,9 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");
 				return -ETIMEDOUT;
 			}
-			ctx->runtime.vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
+			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->runtime.vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[1]);
+			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[1]);
 
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
@@ -965,9 +965,9 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");
 				return -ETIMEDOUT;
 			}
-			ctx->runtime.vpu_header_size[2] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
+			ctx->vpu_header_size[2] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->runtime.vpu_header[2][0], vb2_plane_vaddr(buf, 0), ctx->runtime.vpu_header_size[2]);
+			memcpy(&ctx->vpu_header[2][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[2]);
 		}
 	}
 	return 0;
