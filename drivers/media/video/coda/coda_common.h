@@ -106,7 +106,6 @@ struct coda_enc_runtime {
 	u32		bitstream_buf_size;
 	struct framebuffer frame_buf_pool[CODA_ENC_OUTPUT_BUFS]; /* Can be removed if we write to parabuf directly */
 	int		num_frame_buffers; /* This can be removed */
-	int		stride; /* This can be removed later */
 	struct framebuffer source_frame; /* This is only used to pass data to 'encoder_submit' */
 	int		quant_param; /* idem */
 	int		force_ipicture; /* idem */

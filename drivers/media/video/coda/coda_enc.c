@@ -821,7 +821,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				q_data_src->width / 2 * q_data_src->height / 2;
 		}
 		ctx->runtime.num_frame_buffers = vq->num_buffers;
-		ctx->runtime.stride = q_data_src->width;
 		
 		/* coda_encoder_configure */
 		{
@@ -910,7 +909,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			p[i * 3 + 2] = ctx->runtime.frame_buf_pool[i].cr;
 		}
 		coda_write(dev, ctx->runtime.num_frame_buffers, CODA_CMD_SET_FRAME_BUF_NUM);
-		coda_write(dev, ctx->runtime.stride, CODA_CMD_SET_FRAME_BUF_STRIDE);
+		coda_write(dev, q_data_src->width, CODA_CMD_SET_FRAME_BUF_STRIDE);
 		if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_SET_FRAME_BUF)) {
 			v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_SET_FRAME_BUF timeout\n");
 			return -ETIMEDOUT;
