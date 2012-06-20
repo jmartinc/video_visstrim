@@ -510,6 +510,7 @@ static void coda_device_run(void *m2m_priv)
 	struct coda_dev *dev = ctx->dev;
 	int force_ipicture, quant_param;
 	u32 picture_y, picture_cb, picture_cr;
+	u32 pic_stream_buffer_addr, pic_stream_buffer_size;
 
 	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
 	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
@@ -539,12 +540,12 @@ static void coda_device_run(void *m2m_priv)
 	 * In MPEG4 they are already copied by the coda.
 	 */
 	if (src_buf->v4l2_buf.sequence == 0) {
-		ctx->runtime.pic_stream_buffer_addr =
+		pic_stream_buffer_addr =
 			vb2_dma_contig_plane_dma_addr(dst_buf, 0) +
 			ctx->runtime.vpu_header_size[0] +
 			ctx->runtime.vpu_header_size[1] +
 			ctx->runtime.vpu_header_size[2];
-		ctx->runtime.pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE -
+		pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE -
 			ctx->runtime.vpu_header_size[0] -
 			ctx->runtime.vpu_header_size[1] -
 			ctx->runtime.vpu_header_size[2];
@@ -555,8 +556,8 @@ static void coda_device_run(void *m2m_priv)
 		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->runtime.vpu_header_size[0] + ctx->runtime.vpu_header_size[1],
 		       &ctx->runtime.vpu_header[2][0], ctx->runtime.vpu_header_size[2]);
 	} else {
-		ctx->runtime.pic_stream_buffer_addr = vb2_dma_contig_plane_dma_addr(dst_buf, 0);
-		ctx->runtime.pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE;
+		pic_stream_buffer_addr = vb2_dma_contig_plane_dma_addr(dst_buf, 0);
+		pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE;
 	}
 	
 	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
@@ -589,8 +590,8 @@ static void coda_device_run(void *m2m_priv)
 	coda_write(dev, picture_cr, CODA_CMD_ENC_PIC_SRC_ADDR_CR);
 	coda_write(dev, force_ipicture << 1 & 0x2, CODA_CMD_ENC_PIC_OPTION);
 	
-	coda_write(dev, ctx->runtime.pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
-	coda_write(dev, ctx->runtime.pic_stream_buffer_size / 1024, CODA_CMD_ENC_PIC_BB_SIZE);
+	coda_write(dev, pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
+	coda_write(dev, pic_stream_buffer_size / 1024, CODA_CMD_ENC_PIC_BB_SIZE);
 	coda_command_async(dev, ctx->enc_params.codec_mode, CODA_COMMAND_PIC_RUN);
 
 }
