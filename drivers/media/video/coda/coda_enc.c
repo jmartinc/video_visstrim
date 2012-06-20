@@ -806,17 +806,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, value, CODA_REG_BIT_STREAM_CTRL);
 		}
 
-		/* walk the src ready list and store buffer phys addresses  */
-		src_vq = v4l2_m2m_get_vq(ctx->m2m_ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
-		for (i = 0; i < src_vq->num_buffers; i++) {
-			buf = src_vq->bufs[i];
-			ctx->runtime.frame_buf_pool[i].y = vb2_dma_contig_plane_dma_addr(buf, 0);
-			ctx->runtime.frame_buf_pool[i].cb = ctx->runtime.frame_buf_pool[i].y +
-				q_data_src->width * q_data_src->height;
-			ctx->runtime.frame_buf_pool[i].cr = ctx->runtime.frame_buf_pool[i].cb +
-				q_data_src->width / 2 * q_data_src->height / 2;
-		}
-
 		/* coda_encoder_configure */
 		{
 		u32 data;
@@ -894,15 +883,22 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		if (coda_read(dev, CODA_RET_ENC_SEQ_SUCCESS) == 0)
 			return -EFAULT;
 
-		/* Let the codec know the addresses of the frame buffers */
+		/* 
+		 * Walk the src buffer list and let the codec know the
+		 * addresses of the pictures.
+		 */
+		src_vq = v4l2_m2m_get_vq(ctx->m2m_ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 		for (i = 0; i < src_vq->num_buffers; i++) {
 			u32 *p;
-
+			
+			buf = src_vq->bufs[i];
 			p = ctx->dev->enc_parabuf.vaddr;
-			p[i * 3] = ctx->runtime.frame_buf_pool[i].y;
-			p[i * 3 + 1] = ctx->runtime.frame_buf_pool[i].cb;
-			p[i * 3 + 2] = ctx->runtime.frame_buf_pool[i].cr;
+			
+			p[i * 3] = vb2_dma_contig_plane_dma_addr(buf, 0);
+			p[i * 3 + 1] = p[i * 3] + q_data_src->width * q_data_src->height;
+			p[i * 3 + 2] = p[i * 3 + 1] + q_data_src->width / 2 * q_data_src->height / 2;
 		}
+
 		coda_write(dev, src_vq->num_buffers, CODA_CMD_SET_FRAME_BUF_NUM);
 		coda_write(dev, q_data_src->width, CODA_CMD_SET_FRAME_BUF_STRIDE);
 		if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_SET_FRAME_BUF)) {
