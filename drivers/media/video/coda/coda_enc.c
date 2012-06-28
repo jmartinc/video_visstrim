@@ -802,10 +802,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR_0);
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR_0);
-		value = coda_read(dev, CODA_REG_BIT_STREAM_CTRL);
-		value &= 0xffe7;
-		value |= 3 << 3;
-		coda_write(dev, value, CODA_REG_BIT_STREAM_CTRL);
+		coda_write(dev, 3 << 3, CODA_REG_BIT_STREAM_CTRL);
 
 		/* Configure the coda */
 		coda_write(dev, 0xFFFF4C00, CODA_REG_BIT_SEARCH_RAM_BASE_ADDR);
