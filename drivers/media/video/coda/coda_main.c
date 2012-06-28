@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include <linux/videodev2.h>
 
+#include <mach/hardware.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
@@ -307,13 +308,11 @@ static void coda_fw_callback(const struct firmware *fw, void *context)
 {
 	struct coda_dev *dev = context;
 	struct platform_device *pdev = dev->plat_dev;
-	struct coda_platform_data *pdata = pdev->dev.platform_data;
 	struct video_device *vfd;
 	int ret;
 
 	if (!fw) {
-		v4l2_err(&dev->v4l2_dev, "firmware request '%s' failed\n",
-			 pdata->firmware);
+		v4l2_err(&dev->v4l2_dev, "firmware request failed\n");
 		return;
 	}
 
@@ -371,19 +370,27 @@ rel_vdev:
 	return;
 }
 
+static int coda_firmware_request(struct coda_dev *dev)
+{
+	char *fw;
+
+	if (cpu_is_mx27()) {
+		fw = "v4l-codadx6-imx27.bin";
+	} else {
+		/* Not supported yet */
+		return -ENOENT;
+	}
+
+	return request_firmware_nowait(THIS_MODULE, true,
+		fw, &dev->plat_dev->dev,GFP_KERNEL, dev, coda_fw_callback);
+}
+
 static int __devinit coda_probe(struct platform_device *pdev)
 {
-	struct coda_platform_data *pdata;
 	struct coda_dev *dev;
 	struct resource *res;
 	unsigned int bufsize;
 	int ret;
-
-	pdata = pdev->dev.platform_data;
-	if (!pdata) {
-		dev_err(&pdev->dev, "Invalid platform data\n");
-		return -EINVAL;
-	}
 
 	dev = kzalloc(sizeof *dev, GFP_KERNEL);
 	if (!dev) {
@@ -468,9 +475,7 @@ static int __devinit coda_probe(struct platform_device *pdev)
 	dev->enc_parabuf.vaddr = dev->enc_workbuf.vaddr + CODA_WORK_BUF_SIZE;
 	dev->enc_parabuf.paddr = dev->enc_workbuf.paddr + CODA_WORK_BUF_SIZE;
 
-
-	return request_firmware_nowait(THIS_MODULE, true, pdata->firmware,
-			&pdev->dev, GFP_KERNEL, dev, coda_fw_callback);
+	return coda_firmware_request(dev);
 
 free_clk:
 	clk_put(dev->clk);
