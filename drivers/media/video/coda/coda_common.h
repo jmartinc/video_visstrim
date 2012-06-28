@@ -152,11 +152,11 @@ static void coda_command_async(struct coda_dev *dev, int codec_mode,
 static int coda_command_sync(struct coda_dev *dev, int codec_mode,
 				int cmd)
 {
-	unsigned int timeout = 100000;
+	unsigned long timeout = jiffies + msecs_to_jiffies(1000);
 
 	coda_command_async(dev, codec_mode, cmd);
 	while (coda_isbusy(dev)) {
-		if (timeout-- == 0)
+		if (time_after(jiffies, timeout))
 			return -ETIMEDOUT;
 	};
 	return 0;
