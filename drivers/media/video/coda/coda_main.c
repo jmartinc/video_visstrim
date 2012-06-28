@@ -12,7 +12,6 @@
  */
 
 #include <linux/clk.h>
-#include <linux/coda_codec.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/interrupt.h>

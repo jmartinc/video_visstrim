@@ -29,7 +29,6 @@
 #include <linux/i2c/pca953x.h>
 #include <linux/input.h>
 #include <linux/gpio.h>
-#include <linux/coda_codec.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/leds.h>

@@ -83,7 +83,6 @@ struct platform_device *__init imx_add_imx21_hcd(
 		const struct imx_imx21_hcd_data *data,
 		const struct mx21_usbh_platform_data *pdata);
 
-#include <linux/coda_codec.h>
 struct imx_imx27_coda_data {
 	resource_size_t iobase;
 	resource_size_t iosize;
