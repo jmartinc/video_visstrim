@@ -415,6 +415,7 @@ int coda_enc_isr(struct coda_dev *dev)
 {
 	struct coda_ctx *ctx;
 	struct vb2_buffer *src_buf, *dst_buf, *tmp_buf;
+	u32 wr_ptr, start_ptr;
 
 	ctx = v4l2_m2m_get_curr_priv(dev->m2m_enc_dev);
 	if (ctx == NULL) {
@@ -438,29 +439,26 @@ int coda_enc_isr(struct coda_dev *dev)
 	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
 
 
-	/* coda_encoder_get_results */
-	{
-	u32 tmp1, tmp2;
-
+	/* Get results from the coda */
 	coda_read(dev, CODA_RET_ENC_PIC_TYPE);
-	tmp1 = coda_read(dev, CODA_CMD_ENC_PIC_BB_START);
-	tmp2 = coda_read(dev, CODA_REG_BIT_WR_PTR_0);
+	start_ptr = coda_read(dev, CODA_CMD_ENC_PIC_BB_START);
+	wr_ptr = coda_read(dev, CODA_REG_BIT_WR_PTR_0);
 	/* Calculate bytesused field */
 	if (dst_buf->v4l2_buf.sequence == 0) {
-		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1) +
+		dst_buf->v4l2_planes[0].bytesused = (wr_ptr - start_ptr) +
 						ctx->vpu_header_size[0] +
 						ctx->vpu_header_size[1] +
 						ctx->vpu_header_size[2];
 	} else {
-		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1);
+		dst_buf->v4l2_planes[0].bytesused = (wr_ptr - start_ptr);
 	}
 
 	v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev, "frame size = %u\n",
-		 tmp2 - tmp1);
+		 wr_ptr - start_ptr);
 
 	coda_read(dev, CODA_RET_ENC_PIC_SLICE_NUM);
 	coda_read(dev, CODA_RET_ENC_PIC_FLAG);
-	}
+
 
 	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
 		dst_buf->v4l2_buf.flags |= V4L2_BUF_FLAG_KEYFRAME;
@@ -797,9 +795,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			return -EFAULT;
 		}
 
-		/* coda_encoder_init */
-		{
-
 		if (dst_fourcc == V4L2_PIX_FMT_H264)
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_H264;
 		else if (dst_fourcc == V4L2_PIX_FMT_MPEG4)
@@ -811,56 +806,52 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		value &= 0xffe7;
 		value |= 3 << 3;
 		coda_write(dev, value, CODA_REG_BIT_STREAM_CTRL);
-		}
 
-		/* coda_encoder_configure */
-		{
-		u32 data;
-
+		/* Configure the coda */
 		coda_write(dev, 0xFFFF4C00, CODA_REG_BIT_SEARCH_RAM_BASE_ADDR);
 
 		/* Could set rotation here if needed */
-		data = (q_data_src->width & CODA_PICWIDTH_MASK) << CODA_PICWIDTH_OFFSET;
-		data |= (q_data_src->height & CODA_PICHEIGHT_MASK) << CODA_PICHEIGHT_OFFSET;
-		coda_write(dev, data, CODA_CMD_ENC_SEQ_SRC_SIZE);
+		value = (q_data_src->width & CODA_PICWIDTH_MASK) << CODA_PICWIDTH_OFFSET;
+		value |= (q_data_src->height & CODA_PICHEIGHT_MASK) << CODA_PICHEIGHT_OFFSET;
+		coda_write(dev, value, CODA_CMD_ENC_SEQ_SRC_SIZE);
 		coda_write(dev, ctx->enc_params.framerate,
 			   CODA_CMD_ENC_SEQ_SRC_F_RATE);
 
 		if (dst_fourcc == V4L2_PIX_FMT_MPEG4) {
 			coda_write(dev, CODA_ENCODE_MPEG4, CODA_CMD_ENC_SEQ_COD_STD);
-			data  = (0 & CODA_MP4PARAM_VERID_MASK) << CODA_MP4PARAM_VERID_OFFSET;
-			data |= (0 & CODA_MP4PARAM_INTRADCVLCTHR_MASK) << CODA_MP4PARAM_INTRADCVLCTHR_OFFSET;
-			data |= (0 & CODA_MP4PARAM_REVERSIBLEVLCENABLE_MASK) << CODA_MP4PARAM_REVERSIBLEVLCENABLE_OFFSET;
-			data |=  0 & CODA_MP4PARAM_DATAPARTITIONENABLE_MASK;
-			coda_write(dev, data, CODA_CMD_ENC_SEQ_MP4_PARA);
+			value  = (0 & CODA_MP4PARAM_VERID_MASK) << CODA_MP4PARAM_VERID_OFFSET;
+			value |= (0 & CODA_MP4PARAM_INTRADCVLCTHR_MASK) << CODA_MP4PARAM_INTRADCVLCTHR_OFFSET;
+			value |= (0 & CODA_MP4PARAM_REVERSIBLEVLCENABLE_MASK) << CODA_MP4PARAM_REVERSIBLEVLCENABLE_OFFSET;
+			value |=  0 & CODA_MP4PARAM_DATAPARTITIONENABLE_MASK;
+			coda_write(dev, value, CODA_CMD_ENC_SEQ_MP4_PARA);
 		} else if (dst_fourcc == V4L2_PIX_FMT_H264) {
 			coda_write(dev, CODA_ENCODE_H264, CODA_CMD_ENC_SEQ_COD_STD);
-			data  = (0 & CODA_264PARAM_DEBLKFILTEROFFSETBETA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETBETA_OFFSET;
-			data |= (0 & CODA_264PARAM_DEBLKFILTEROFFSETALPHA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETALPHA_OFFSET;
-			data |= (0 & CODA_264PARAM_DISABLEDEBLK_MASK) << CODA_264PARAM_DISABLEDEBLK_OFFSET;
-			data |= (0 & CODA_264PARAM_CONSTRAINEDINTRAPREDFLAG_MASK) << CODA_264PARAM_CONSTRAINEDINTRAPREDFLAG_OFFSET;
-			data |=  0 & CODA_264PARAM_CHROMAQPOFFSET_MASK;
-			coda_write(dev, data, CODA_CMD_ENC_SEQ_264_PARA);
+			value  = (0 & CODA_264PARAM_DEBLKFILTEROFFSETBETA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETBETA_OFFSET;
+			value |= (0 & CODA_264PARAM_DEBLKFILTEROFFSETALPHA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETALPHA_OFFSET;
+			value |= (0 & CODA_264PARAM_DISABLEDEBLK_MASK) << CODA_264PARAM_DISABLEDEBLK_OFFSET;
+			value |= (0 & CODA_264PARAM_CONSTRAINEDINTRAPREDFLAG_MASK) << CODA_264PARAM_CONSTRAINEDINTRAPREDFLAG_OFFSET;
+			value |=  0 & CODA_264PARAM_CHROMAQPOFFSET_MASK;
+			coda_write(dev, value, CODA_CMD_ENC_SEQ_264_PARA);
 		}
 
-		data  = (ctx->enc_params.slice_max_mb & CODA_SLICING_SIZE_MASK) << CODA_SLICING_SIZE_OFFSET;
-		data |= (1 & CODA_SLICING_UNIT_MASK) << CODA_SLICING_UNIT_OFFSET;
+		value  = (ctx->enc_params.slice_max_mb & CODA_SLICING_SIZE_MASK) << CODA_SLICING_SIZE_OFFSET;
+		value |= (1 & CODA_SLICING_UNIT_MASK) << CODA_SLICING_UNIT_OFFSET;
 		if (ctx->enc_params.slice_mode == V4L2_MPEG_VIDEO_MULTI_SICE_MODE_MAX_MB)
-			data |=  1 & CODA_SLICING_MODE_MASK;
-		coda_write(dev, data, CODA_CMD_ENC_SEQ_SLICE_MODE);
-		data  =  ctx->enc_params.gop_size & CODA_GOP_SIZE_MASK;
-		coda_write(dev, data, CODA_CMD_ENC_SEQ_GOP_SIZE);
+			value |=  1 & CODA_SLICING_MODE_MASK;
+		coda_write(dev, value, CODA_CMD_ENC_SEQ_SLICE_MODE);
+		value  =  ctx->enc_params.gop_size & CODA_GOP_SIZE_MASK;
+		coda_write(dev, value, CODA_CMD_ENC_SEQ_GOP_SIZE);
 
 		if (ctx->enc_params.bitrate) {
 			/* Rate control enabled */
-			data  = (0 & CODA_RATECONTROL_AUTOSKIP_MASK) << CODA_RATECONTROL_AUTOSKIP_OFFSET;
-			data |= (0 & CODA_RATECONTROL_INITIALDELAY_MASK) << CODA_RATECONTROL_INITIALDELAY_OFFSET;
-			data |= (ctx->enc_params.bitrate & CODA_RATECONTROL_BITRATE_MASK) << CODA_RATECONTROL_BITRATE_OFFSET;
-			data |=  1 & CODA_RATECONTROL_ENABLE_MASK;
+			value  = (0 & CODA_RATECONTROL_AUTOSKIP_MASK) << CODA_RATECONTROL_AUTOSKIP_OFFSET;
+			value |= (0 & CODA_RATECONTROL_INITIALDELAY_MASK) << CODA_RATECONTROL_INITIALDELAY_OFFSET;
+			value |= (ctx->enc_params.bitrate & CODA_RATECONTROL_BITRATE_MASK) << CODA_RATECONTROL_BITRATE_OFFSET;
+			value |=  1 & CODA_RATECONTROL_ENABLE_MASK;
 		} else {
-			data = 0;
+			value = 0;
 		}
-		coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_PARA);
+		coda_write(dev, value, CODA_CMD_ENC_SEQ_RC_PARA);
 
 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_RC_BUF_SIZE);
 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_INTRA_REFRESH);
@@ -869,18 +860,18 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, bitstream_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
 
 		/* set default gamma */
-		data = (CODA_ENC_DEFAULT_GAMMA & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET;
-		coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_GAMMA);
+		value = (CODA_ENC_DEFAULT_GAMMA & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET;
+		coda_write(dev, value, CODA_CMD_ENC_SEQ_RC_GAMMA);
 
-		data  = (CODA_ENC_DEFAULT_GAMMA > 0) << CODA_OPTION_GAMMA_OFFSET;
-		data |= (0 & CODA_OPTION_SLICEREPORT_MASK) << CODA_OPTION_SLICEREPORT_OFFSET;
-		coda_write(dev, data, CODA_CMD_ENC_SEQ_OPTION);
+		value  = (CODA_ENC_DEFAULT_GAMMA > 0) << CODA_OPTION_GAMMA_OFFSET;
+		value |= (0 & CODA_OPTION_SLICEREPORT_MASK) << CODA_OPTION_SLICEREPORT_OFFSET;
+		coda_write(dev, value, CODA_CMD_ENC_SEQ_OPTION);
 
 		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
-			data  = (FMO_SLICE_SAVE_BUF_SIZE << 7);
-			data |= (0 & CODA_FMOPARAM_TYPE_MASK) << CODA_FMOPARAM_TYPE_OFFSET;
-			data |=  0 & CODA_FMOPARAM_SLICENUM_MASK;
-			coda_write(dev, data, CODA_CMD_ENC_SEQ_FMO);
+			value  = (FMO_SLICE_SAVE_BUF_SIZE << 7);
+			value |= (0 & CODA_FMOPARAM_TYPE_MASK) << CODA_FMOPARAM_TYPE_OFFSET;
+			value |=  0 & CODA_FMOPARAM_SLICENUM_MASK;
+			coda_write(dev, value, CODA_CMD_ENC_SEQ_FMO);
 		}
 
 		if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_SEQ_INIT)) {
@@ -914,7 +905,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_SET_FRAME_BUF)) {
 			v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_SET_FRAME_BUF timeout\n");
 			return -ETIMEDOUT;
-		}
 		}
 
 		/* Save stream headers */
