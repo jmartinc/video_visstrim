@@ -404,12 +404,6 @@ static int __devinit coda_probe(struct platform_device *pdev)
 	spin_lock_init(&dev->irqlock);
 
 	dev->plat_dev = pdev;
-	if (!dev->plat_dev) {
-		dev_err(&pdev->dev, "No platform data specified\n");
-		ret = -ENODEV;
-		goto free_dev;
-	}
-
 	dev->clk = clk_get(&pdev->dev, "vpu");
 	if (IS_ERR(dev->clk)) {
 		ret = PTR_ERR(dev->clk);
