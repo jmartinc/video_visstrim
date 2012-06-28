@@ -404,7 +404,7 @@ static int __devinit coda_probe(struct platform_device *pdev)
 	spin_lock_init(&dev->irqlock);
 
 	dev->plat_dev = pdev;
-	dev->clk = clk_get(&pdev->dev, "vpu");
+	dev->clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(dev->clk))
 		return PTR_ERR(dev->clk);
 
