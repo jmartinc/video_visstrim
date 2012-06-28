@@ -4,7 +4,7 @@
  * Copyright (C) 2012 Vista Silicon S.L.
  *    Javier Martin, <javier.martin@vista-silicon.com>
  *    Xavier Duret
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -134,8 +134,9 @@ static int coda_open(struct file *file)
 						 &coda_queue_init);
 		if (IS_ERR(ctx->m2m_ctx)) {
 			int ret = PTR_ERR(ctx->m2m_ctx);
-			
-			printk("%s return error (%d)\n", __func__, ret);
+
+			v4l2_err(&dev->v4l2_dev, "%s return error (%d)\n",
+				 __func__, ret);
 			goto err;
 		}
 		ret = coda_enc_ctrls_setup(ctx);
@@ -211,8 +212,6 @@ static const struct v4l2_file_operations coda_fops = {
 static irqreturn_t coda_irq_handler(int irq, void *data)
 {
 	struct coda_dev *dev = data;
-
-	printk("%s!!\n", __func__);
 
 	/* read status register to attend the IRQ */
 	coda_read(dev, CODA_REG_BIT_INT_STATUS);
@@ -298,7 +297,8 @@ static int coda_hw_init(struct coda_dev *dev, const struct firmware *fw)
 
 	clk_disable(dev->clk);
 
-	v4l2_info(&dev->v4l2_dev, "Initialized. Fw version: %u.%u.%u.%u", product, major, minor, release);
+	v4l2_info(&dev->v4l2_dev, "Initialized. Fw version: %u.%u.%u.%u",
+		  product, major, minor, release);
 
 	return 0;
 }
@@ -356,7 +356,8 @@ static void coda_fw_callback(const struct firmware *fw, void *context)
 		v4l2_err(&dev->v4l2_dev, "Failed to register video device\n");
 		goto rel_m2m_enc;
 	}
-	v4l2_info(&dev->v4l2_dev, "encoder registered as /dev/video%d\n", vfd->num);
+	v4l2_info(&dev->v4l2_dev, "encoder registered as /dev/video%d\n",
+		  vfd->num);
 
 	return;
 

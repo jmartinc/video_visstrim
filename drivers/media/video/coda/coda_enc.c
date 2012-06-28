@@ -38,21 +38,21 @@
 #define H_ALIGN		1 /* multiple of 2 */
 
 static struct coda_fmt formats[] = {
-        {
-                .name = "YUV 4:2:0 Planar",
-                .fourcc = V4L2_PIX_FMT_YUV420,
-                .type = CODA_FMT_RAW,
-        },
-        {
-                .name = "H264 Encoded Stream",
-                .fourcc = V4L2_PIX_FMT_H264,
-                .type = CODA_FMT_ENC,
-        },
-        {
-                .name = "MPEG4 Encoded Stream",
-                .fourcc = V4L2_PIX_FMT_MPEG4,
-                .type = CODA_FMT_ENC,
-        },
+	{
+		.name = "YUV 4:2:0 Planar",
+		.fourcc = V4L2_PIX_FMT_YUV420,
+		.type = CODA_FMT_RAW,
+	},
+	{
+		.name = "H264 Encoded Stream",
+		.fourcc = V4L2_PIX_FMT_H264,
+		.type = CODA_FMT_ENC,
+	},
+	{
+		.name = "MPEG4 Encoded Stream",
+		.fourcc = V4L2_PIX_FMT_MPEG4,
+		.type = CODA_FMT_ENC,
+	},
 };
 
 #define NUM_FORMATS ARRAY_SIZE(formats)
@@ -92,7 +92,7 @@ static int enum_fmt(struct v4l2_fmtdesc *f, enum coda_fmt_type type)
 {
 	struct coda_fmt *fmt;
 	int i, num = 0;
-	
+
 	for (i = 0; i < NUM_FORMATS; i++) {
 		if (formats[i].type == type) {
 			if (num == f->index)
@@ -312,7 +312,7 @@ static int vidioc_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
 	int ret;
 	struct coda_ctx *ctx = fh_to_ctx(priv);
-	
+
 	ret = v4l2_m2m_qbuf(file, ctx->m2m_ctx, buf);
 	return ret;
 }
@@ -447,14 +447,17 @@ int coda_enc_isr(struct coda_dev *dev)
 	tmp2 = coda_read(dev, CODA_REG_BIT_WR_PTR_0);
 	/* Calculate bytesused field */
 	if (dst_buf->v4l2_buf.sequence == 0) {
-		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1) + ctx->vpu_header_size[0] +
-							ctx->vpu_header_size[1] +
-							ctx->vpu_header_size[2];
+		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1) +
+						ctx->vpu_header_size[0] +
+						ctx->vpu_header_size[1] +
+						ctx->vpu_header_size[2];
 	} else {
 		dst_buf->v4l2_planes[0].bytesused = (tmp2 - tmp1);
 	}
 
-	v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev, "frame size = %u\n", tmp2-tmp1);
+	v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev, "frame size = %u\n",
+		 tmp2 - tmp1);
+
 	coda_read(dev, CODA_RET_ENC_PIC_SLICE_NUM);
 	coda_read(dev, CODA_RET_ENC_PIC_FLAG);
 	}
@@ -473,17 +476,16 @@ int coda_enc_isr(struct coda_dev *dev)
 		ctx->reference = NULL;
 	}
 
-	/* 
+	/*
 	 * For the last frame of the gop we don't need to save
 	 * a reference picture.
 	 */
 	v4l2_m2m_dst_buf_remove(ctx->m2m_ctx);
 	tmp_buf = v4l2_m2m_src_buf_remove(ctx->m2m_ctx);
-	if (ctx->gopcounter == 0) {
+	if (ctx->gopcounter == 0)
 		v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_DONE);
-	} else {
+	else
 		ctx->reference = tmp_buf;
-	}
 
 	v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_DONE);
 
@@ -498,7 +500,7 @@ int coda_enc_isr(struct coda_dev *dev)
 		"KEYFRAME" : "PFRAME");
 
 	v4l2_m2m_job_finish(ctx->dev->m2m_enc_dev, ctx->m2m_ctx);
-	
+
 	return IRQ_HANDLED;
 }
 
@@ -522,7 +524,7 @@ static void coda_device_run(void *m2m_priv)
 	dst_buf->v4l2_buf.sequence = ctx->isequence;
 	ctx->isequence++;
 
-	/* 
+	/*
 	 * Workaround coda firmware BUG that only marks the first
 	 * frame as IDR. This is a problem for some decoders that can't
 	 * recover when a frame is lost.
@@ -553,27 +555,28 @@ static void coda_device_run(void *m2m_priv)
 		       &ctx->vpu_header[0][0], ctx->vpu_header_size[0]);
 		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->vpu_header_size[0],
 		       &ctx->vpu_header[1][0], ctx->vpu_header_size[1]);
-		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->vpu_header_size[0] + ctx->vpu_header_size[1],
-		       &ctx->vpu_header[2][0], ctx->vpu_header_size[2]);
+		memcpy(vb2_plane_vaddr(dst_buf, 0) + ctx->vpu_header_size[0] +
+			ctx->vpu_header_size[1], &ctx->vpu_header[2][0],
+			ctx->vpu_header_size[2]);
 	} else {
-		pic_stream_buffer_addr = vb2_dma_contig_plane_dma_addr(dst_buf, 0);
+		pic_stream_buffer_addr =
+			vb2_dma_contig_plane_dma_addr(dst_buf, 0);
 		pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE;
 	}
-	
+
 	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
 		force_ipicture = 1;
-		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
+		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264)
 			quant_param = ctx->enc_params.h264_intra_qp;
-		} else {
+		else
 			quant_param = ctx->enc_params.mpeg4_intra_qp;
-		}
+
 	} else {
 		force_ipicture = 0;
-		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
+		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264)
 			quant_param = ctx->enc_params.h264_inter_qp;
-		} else {
+		else
 			quant_param = ctx->enc_params.mpeg4_inter_qp;
-		}
 	}
 
 	/* Encoder submit */
@@ -583,24 +586,27 @@ static void coda_device_run(void *m2m_priv)
 
 	picture_y = vb2_dma_contig_plane_dma_addr(src_buf, 0);
 	picture_cb = picture_y + q_data_src->width * q_data_src->height;
-	picture_cr = picture_cb + q_data_src->width / 2 * q_data_src->height / 2;
+	picture_cr = picture_cb + q_data_src->width / 2 *
+			q_data_src->height / 2;
 
 	coda_write(dev, picture_y, CODA_CMD_ENC_PIC_SRC_ADDR_Y);
 	coda_write(dev, picture_cb, CODA_CMD_ENC_PIC_SRC_ADDR_CB);
 	coda_write(dev, picture_cr, CODA_CMD_ENC_PIC_SRC_ADDR_CR);
-	coda_write(dev, force_ipicture << 1 & 0x2, CODA_CMD_ENC_PIC_OPTION);
-	
-	coda_write(dev, pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
-	coda_write(dev, pic_stream_buffer_size / 1024, CODA_CMD_ENC_PIC_BB_SIZE);
-	coda_command_async(dev, ctx->enc_params.codec_mode, CODA_COMMAND_PIC_RUN);
+	coda_write(dev, force_ipicture << 1 & 0x2,
+		   CODA_CMD_ENC_PIC_OPTION);
 
+	coda_write(dev, pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
+	coda_write(dev, pic_stream_buffer_size / 1024,
+		   CODA_CMD_ENC_PIC_BB_SIZE);
+	coda_command_async(dev, ctx->enc_params.codec_mode,
+			   CODA_COMMAND_PIC_RUN);
 }
 
 static int coda_job_ready(void *m2m_priv)
 {
 	struct coda_ctx *ctx = m2m_priv;
 
-	/* 
+	/*
 	 * For both 'P' and 'key' frame cases 1 picture
 	 * and 1 frame are needed.
 	 */
@@ -612,7 +618,8 @@ static int coda_job_ready(void *m2m_priv)
 	}
 
 	/* For P frames a reference picture is needed too */
-	if ((ctx->gopcounter != (ctx->enc_params.gop_size - 1)) && (!ctx->reference)) {
+	if ((ctx->gopcounter != (ctx->enc_params.gop_size - 1)) &&
+	   (!ctx->reference)) {
 		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
 			 "not ready: reference picture not available.\n");
 		return 0;
@@ -638,7 +645,7 @@ static void coda_job_abort(void *priv)
 
 	v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
 		 "Aborting task\n");
-	
+
 	v4l2_m2m_job_finish(dev->m2m_enc_dev, ctx->m2m_ctx);
 }
 
@@ -669,7 +676,8 @@ struct v4l2_m2m_ops *get_enc_m2m_ops(void)
 	return &coda_enc_m2m_ops;
 }
 
-void set_enc_default_params(struct coda_ctx *ctx) {
+void set_enc_default_params(struct coda_ctx *ctx)
+{
 	ctx->enc_params.codec_mode = CODA_MODE_INVALID;
 	ctx->enc_params.framerate = 30;
 	ctx->reference = NULL;
@@ -703,7 +711,7 @@ static int coda_enc_queue_setup(struct vb2_queue *vq,
 		*nbuffers = CODA_ENC_CAPTURE_BUFS;
 		size = CODA_ENC_MAX_FRAME_SIZE;
 	}
-	
+
 	*nplanes = 1;
 	sizes[0] = size;
 
@@ -723,9 +731,10 @@ static int coda_enc_buf_prepare(struct vb2_buffer *vb)
 	q_data = get_q_data(ctx, vb->vb2_queue->type);
 
 	if (vb2_plane_size(vb, 0) < q_data->sizeimage) {
-		v4l2_warn(&ctx->dev->v4l2_dev, "%s data will not fit into"
-			"plane (%lu < %lu)\n", __func__, vb2_plane_size(vb, 0),
-			(long)q_data->sizeimage);
+		v4l2_warn(&ctx->dev->v4l2_dev,
+			  "%s data will not fit into plane (%lu < %lu)\n",
+			  __func__, vb2_plane_size(vb, 0),
+			  (long)q_data->sizeimage);
 		return -EINVAL;
 	}
 
@@ -761,11 +770,10 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 	if (count < 1)
 		return -EINVAL;
 
-	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
+	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT)
 		ctx->rawstreamon = 1;
-	} else {
+	else
 		ctx->compstreamon = 1;
-	}
 
 	if (ctx->rawstreamon & ctx->compstreamon) {
 		struct coda_q_data *q_data_src, *q_data_dst;
@@ -791,12 +799,11 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		/* coda_encoder_init */
 		{
-		
-		if (dst_fourcc == V4L2_PIX_FMT_H264) {
+
+		if (dst_fourcc == V4L2_PIX_FMT_H264)
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_H264;
-		} else if (dst_fourcc == V4L2_PIX_FMT_MPEG4) {
+		else if (dst_fourcc == V4L2_PIX_FMT_MPEG4)
 			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
-		}
 
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR_0);
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR_0);
@@ -816,7 +823,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		data = (q_data_src->width & CODA_PICWIDTH_MASK) << CODA_PICWIDTH_OFFSET;
 		data |= (q_data_src->height & CODA_PICHEIGHT_MASK) << CODA_PICHEIGHT_OFFSET;
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_SRC_SIZE);
-		coda_write(dev, ctx->enc_params.framerate, CODA_CMD_ENC_SEQ_SRC_F_RATE);
+		coda_write(dev, ctx->enc_params.framerate,
+			   CODA_CMD_ENC_SEQ_SRC_F_RATE);
 
 		if (dst_fourcc == V4L2_PIX_FMT_MPEG4) {
 			coda_write(dev, CODA_ENCODE_MPEG4, CODA_CMD_ENC_SEQ_COD_STD);
@@ -842,7 +850,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_SLICE_MODE);
 		data  =  ctx->enc_params.gop_size & CODA_GOP_SIZE_MASK;
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_GOP_SIZE);
-		
+
 		if (ctx->enc_params.bitrate) {
 			/* Rate control enabled */
 			data  = (0 & CODA_RATECONTROL_AUTOSKIP_MASK) << CODA_RATECONTROL_AUTOSKIP_OFFSET;
@@ -859,7 +867,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		coda_write(dev, bitstream_buf, CODA_CMD_ENC_SEQ_BB_START);
 		coda_write(dev, bitstream_size / 1024, CODA_CMD_ENC_SEQ_BB_SIZE);
-    
+
 		/* set default gamma */
 		data = (CODA_ENC_DEFAULT_GAMMA & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET;
 		coda_write(dev, data, CODA_CMD_ENC_SEQ_RC_GAMMA);
@@ -883,20 +891,22 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		if (coda_read(dev, CODA_RET_ENC_SEQ_SUCCESS) == 0)
 			return -EFAULT;
 
-		/* 
+		/*
 		 * Walk the src buffer list and let the codec know the
 		 * addresses of the pictures.
 		 */
 		src_vq = v4l2_m2m_get_vq(ctx->m2m_ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 		for (i = 0; i < src_vq->num_buffers; i++) {
 			u32 *p;
-			
+
 			buf = src_vq->bufs[i];
 			p = ctx->dev->enc_parabuf.vaddr;
-			
+
 			p[i * 3] = vb2_dma_contig_plane_dma_addr(buf, 0);
-			p[i * 3 + 1] = p[i * 3] + q_data_src->width * q_data_src->height;
-			p[i * 3 + 2] = p[i * 3 + 1] + q_data_src->width / 2 * q_data_src->height / 2;
+			p[i * 3 + 1] = p[i * 3] + q_data_src->width *
+					q_data_src->height;
+			p[i * 3 + 2] = p[i * 3 + 1] + q_data_src->width / 2 *
+					q_data_src->height / 2;
 		}
 
 		coda_write(dev, src_vq->num_buffers, CODA_CMD_SET_FRAME_BUF_NUM);
@@ -910,7 +920,10 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		/* Save stream headers */
 		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
 		if (dst_fourcc == V4L2_PIX_FMT_H264) {
-			/* Get SPS in the first frame and copy it to an intermediate buffer TODO: copy directly */
+			/*
+			 * Get SPS in the first frame and copy it to an
+			 * intermediate buffer.
+			 */
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_H264_SPS, CODA_CMD_ENC_HEADER_CODE);
@@ -918,11 +931,15 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
+			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[0]);
+			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0),
+			       ctx->vpu_header_size[0]);
 
-			/* Get PPS in the first frame and copy it to an intermediate buffer TODO: copy directly*/
+			/*
+			 * Get PPS in the first frame and copy it to an
+			 * intermediate buffer.
+			 */
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_H264_PPS, CODA_CMD_ENC_HEADER_CODE);
@@ -930,12 +947,16 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
+			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[1]);
+			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0),
+			       ctx->vpu_header_size[1]);
 			ctx->vpu_header_size[2] = 0;
 		} else { /* MPEG4 */
-			/* Get VOS in the first frame and copy it to an intermediate buffer TODO: copy directly */
+			/*
+			 * Get VOS in the first frame and copy it to an
+			 * intermediate buffer
+			 */
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_MP4V_VOS, CODA_CMD_ENC_HEADER_CODE);
@@ -943,9 +964,10 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) - 
+			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[0]);
+			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0),
+			       ctx->vpu_header_size[0]);
 
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
@@ -956,7 +978,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			}
 			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[1]);
+			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0),
+			       ctx->vpu_header_size[1]);
 
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
@@ -967,7 +990,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			}
 			ctx->vpu_header_size[2] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
-			memcpy(&ctx->vpu_header[2][0], vb2_plane_vaddr(buf, 0), ctx->vpu_header_size[2]);
+			memcpy(&ctx->vpu_header[2][0], vb2_plane_vaddr(buf, 0),
+			       ctx->vpu_header_size[2]);
 		}
 	}
 	return 0;
@@ -979,17 +1003,21 @@ static int coda_stop_streaming(struct vb2_queue *q)
 	struct coda_dev *dev = ctx->dev;
 
 	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
-		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev, "%s: output\n", __func__);
+		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
+			 "%s: output\n", __func__);
 		ctx->rawstreamon = 0;
 	} else {
-		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev, "%s: capture\n", __func__);
+		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
+			 "%s: capture\n", __func__);
 		ctx->compstreamon = 0;
 	}
 
 	if (!ctx->rawstreamon & !ctx->compstreamon) {
-		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev, "%s: sent command 'SEQ_END' to coda\n", __func__);
+		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
+			 "%s: sent command 'SEQ_END' to coda\n", __func__);
 		if (coda_command_sync(dev, ctx->enc_params.codec_mode, CODA_COMMAND_SEQ_END)) {
-			v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_SEQ_END failed\n");
+			v4l2_err(&ctx->dev->v4l2_dev,
+				 "CODA_COMMAND_SEQ_END failed\n");
 			return -ETIMEDOUT;
 		}
 	}
@@ -1016,7 +1044,7 @@ static int coda_enc_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct coda_ctx *ctx =
 			container_of(ctrl->handler, struct coda_ctx, ctrls);
-	
+
 	v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
 		 "s_ctrl: id = %d, val = %d\n", ctrl->id, ctrl->val);
 
@@ -1053,7 +1081,7 @@ static int coda_enc_s_ctrl(struct v4l2_ctrl *ctrl)
 			ctrl->id, ctrl->val);
 		return -EINVAL;
 	}
-	
+
 	return 0;
 }
 

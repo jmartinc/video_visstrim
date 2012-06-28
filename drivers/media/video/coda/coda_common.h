@@ -4,7 +4,7 @@
  * Copyright (C) 2012 Vista Silicon SL
  *    Javier Martin <javier.martin@vista-silicon.com>
  *    Xavier Duret
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -15,7 +15,7 @@
 #define _CODA_COMMON_H_
 
 #include <media/v4l2-device.h>
-#include <asm/io.h>
+#include <linux/io.h>
 #include "coda_regs.h"
 
 extern int coda_debug;
@@ -128,11 +128,13 @@ static inline unsigned int coda_read(struct coda_dev *dev, u32 reg)
 	return data;
 }
 
-static inline unsigned long coda_isbusy(struct coda_dev *dev) {
+static inline unsigned long coda_isbusy(struct coda_dev *dev)
+{
 	return coda_read(dev, CODA_REG_BIT_BUSY);
 }
 
-static inline int coda_is_initialized(struct coda_dev *dev) {
+static inline int coda_is_initialized(struct coda_dev *dev)
+{
 	return (coda_read(dev, CODA_REG_BIT_CUR_PC) != 0);
 }
 
@@ -140,8 +142,8 @@ static void coda_command_async(struct coda_dev *dev, int codec_mode,
 				  int cmd)
 {
 	coda_write(dev, CODA_REG_BIT_BUSY_FLAG, CODA_REG_BIT_BUSY);
-	/* TODO: 0 for the first instance of (encoder-decoder), 1 for the second one
-	 *(except firmware which is always 0) */
+	/* TODO: 0 for the first instance of (encoder-decoder), 1 for the
+	 * second one (except firmware which is always 0) */
 	coda_write(dev, 0, CODA_REG_BIT_RUN_INDEX);
 	coda_write(dev, codec_mode, CODA_REG_BIT_RUN_COD_STD);
 	coda_write(dev, cmd, CODA_REG_BIT_RUN_COMMAND);
@@ -154,8 +156,8 @@ static int coda_command_sync(struct coda_dev *dev, int codec_mode,
 
 	coda_command_async(dev, codec_mode, cmd);
 	while (coda_isbusy(dev)) {
-	if (timeout-- == 0)
-		return -ETIMEDOUT;
+		if (timeout-- == 0)
+			return -ETIMEDOUT;
 	};
 	return 0;
 }
