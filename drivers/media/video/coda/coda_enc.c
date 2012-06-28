@@ -1063,7 +1063,7 @@ static int coda_enc_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_MPEG_VIDEO_HEADER_MODE:
 		break;
 	default:
-		v4l2_err(&ctx->dev->v4l2_dev,
+		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
 			"Invalid control, id=%d, val=%d\n",
 			ctrl->id, ctrl->val);
 		return -EINVAL;
