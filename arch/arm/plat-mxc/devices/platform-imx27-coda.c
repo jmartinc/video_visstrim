@@ -20,8 +20,7 @@ const struct imx_imx27_coda_data imx27_coda_data __initconst = {
 #endif
 
 struct platform_device *__init imx_add_imx27_coda(
-		const struct imx_imx27_coda_data *data,
-		const struct coda_platform_data *pdata)
+		const struct imx_imx27_coda_data *data)
 {
 	struct resource res[] = {
 		{
@@ -34,6 +33,6 @@ struct platform_device *__init imx_add_imx27_coda(
 			.flags = IORESOURCE_IRQ,
 		},
 	};
-	return imx_add_platform_device_dmamask("coda", 0, res, 2, pdata,
-					sizeof(*pdata), DMA_BIT_MASK(32));
+	return imx_add_platform_device_dmamask("coda", 0, res, 2, NULL,
+					0, DMA_BIT_MASK(32));
 }

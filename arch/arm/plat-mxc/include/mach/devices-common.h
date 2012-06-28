@@ -90,8 +90,7 @@ struct imx_imx27_coda_data {
 	resource_size_t irq;
 };
 struct platform_device *__init imx_add_imx27_coda(
-		const struct imx_imx27_coda_data *data,
-		const struct coda_platform_data *pdata);
+		const struct imx_imx27_coda_data *data);
 
 struct imx_imx2_wdt_data {
 	int id;
