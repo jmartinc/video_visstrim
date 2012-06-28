@@ -340,7 +340,7 @@ static int vidioc_streamoff(struct file *file, void *priv,
 	return v4l2_m2m_streamoff(file, ctx->m2m_ctx, type);
 }
 
-int vidioc_s_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
+static int vidioc_s_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
 {
 	struct coda_ctx *ctx = fh_to_ctx(priv);
 
@@ -360,7 +360,7 @@ int vidioc_s_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
 	return 0;
 }
 
-int vidioc_g_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
+static int vidioc_g_parm(struct file *file, void *priv, struct v4l2_streamparm *a)
 {
 	struct coda_ctx *ctx = fh_to_ctx(priv);
 
