@@ -394,7 +394,7 @@ static int __devinit coda_probe(struct platform_device *pdev)
 	unsigned int bufsize;
 	int ret;
 
-	dev = kzalloc(sizeof *dev, GFP_KERNEL);
+	dev = devm_kzalloc(&pdev->dev, sizeof *dev, GFP_KERNEL);
 	if (!dev) {
 		dev_err(&pdev->dev, "Not enough memory for %s\n",
 			CODA_NAME);
@@ -405,10 +405,8 @@ static int __devinit coda_probe(struct platform_device *pdev)
 
 	dev->plat_dev = pdev;
 	dev->clk = clk_get(&pdev->dev, "vpu");
-	if (IS_ERR(dev->clk)) {
-		ret = PTR_ERR(dev->clk);
-		goto free_dev;
-	}
+	if (IS_ERR(dev->clk))
+		return PTR_ERR(dev->clk);
 
 	/* Get  memory for physical registers */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -475,8 +473,6 @@ static int __devinit coda_probe(struct platform_device *pdev)
 
 free_clk:
 	clk_put(dev->clk);
-free_dev:
-	kfree(dev);
 	return ret;
 }
 
@@ -493,7 +489,6 @@ static int coda_remove(struct platform_device *pdev)
 	dma_free_coherent(&pdev->dev, bufsize, &dev->enc_codebuf.vaddr,
 			  dev->enc_codebuf.paddr);
 	clk_put(dev->clk);
-	kfree(dev);
 
 	return 0;
 }
