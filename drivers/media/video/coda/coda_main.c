@@ -275,6 +275,7 @@ static int coda_hw_init(struct coda_dev *dev, const struct firmware *fw)
 	/* Load firmware */
 	coda_write(dev, 0, CODA_CMD_FIRMWARE_VERNUM);
 	if (coda_command_sync(dev, 0, CODA_COMMAND_FIRMWARE_GET)) {
+		clk_disable(dev->clk);
 		v4l2_err(&dev->v4l2_dev, "firmware get command error\n");
 		return -EIO;
 	}
@@ -290,6 +291,7 @@ static int coda_hw_init(struct coda_dev *dev, const struct firmware *fw)
 	    (major != CODA_SUPPORTED_MAJOR) ||
 	    (minor != CODA_SUPPORTED_MINOR) ||
 	    (release != CODA_SUPPORTED_RELEASE)) {
+		clk_disable(dev->clk);
 		v4l2_err(&dev->v4l2_dev, "Wrong firmware:\n product = 0x%04X\n"
 			" major = %d\n minor = %d\n release = %d\n",
 			product, major, minor, release);
