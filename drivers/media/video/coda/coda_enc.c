@@ -13,6 +13,8 @@
 
 #include <linux/irq.h>
 
+#include <mach/hardware.h>
+
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-mem2mem.h>
@@ -37,7 +39,12 @@
 #define W_ALIGN		1 /* multiple of 2 */
 #define H_ALIGN		1 /* multiple of 2 */
 
-static struct coda_fmt formats[] = {
+/*
+ * Add one array of supported formats for each version of Coda:
+ *  i.MX27 -> codadx6
+ *  i.MX51 -> coda9
+ */
+static struct coda_fmt codadx6_formats[] = {
 	{
 		.name = "YUV 4:2:0 Planar",
 		.fourcc = V4L2_PIX_FMT_YUV420,
@@ -55,20 +62,27 @@ static struct coda_fmt formats[] = {
 	},
 };
 
-#define NUM_FORMATS ARRAY_SIZE(formats)
-
 static struct coda_fmt *find_format(struct v4l2_format *f)
 {
+	struct coda_fmt *formats;
 	struct coda_fmt *fmt;
+	int num_formats;
 	unsigned int k;
 
-	for (k = 0; k < NUM_FORMATS; k++) {
+	if (cpu_is_mx27()) { /* codadx6 */
+		formats = codadx6_formats;
+		num_formats = ARRAY_SIZE(codadx6_formats);
+	} else { /* coda9 not yet implemented */
+		return NULL;
+	}
+
+	for (k = 0; k < num_formats; k++) {
 		fmt = &formats[k];
 		if (fmt->fourcc == f->fmt.pix.pixelformat)
 			break;
 	}
 
-	if (k == NUM_FORMATS)
+	if (k == num_formats)
 		return NULL;
 
 	return &formats[k];
@@ -90,10 +104,19 @@ static int vidioc_querycap(struct file *file, void *priv,
 
 static int enum_fmt(struct v4l2_fmtdesc *f, enum coda_fmt_type type)
 {
+	struct coda_fmt *formats;
 	struct coda_fmt *fmt;
+	int num_formats;
 	int i, num = 0;
 
-	for (i = 0; i < NUM_FORMATS; i++) {
+	if (cpu_is_mx27()) { /* codadx6 */
+		formats = codadx6_formats;
+		num_formats = ARRAY_SIZE(codadx6_formats);
+	} else { /* coda9 not yet implemented */
+		return -EINVAL;
+	}
+
+	for (i = 0; i < num_formats; i++) {
 		if (formats[i].type == type) {
 			if (num == f->index)
 				break;
@@ -101,7 +124,7 @@ static int enum_fmt(struct v4l2_fmtdesc *f, enum coda_fmt_type type)
 		}
 	}
 
-	if (i < NUM_FORMATS) {
+	if (i < num_formats) {
 		fmt = &formats[i];
 		strlcpy(f->description, fmt->name, sizeof(f->description) - 1);
 		f->pixelformat = fmt->fourcc;
@@ -202,6 +225,10 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	struct coda_ctx *ctx = fh_to_ctx(priv);
 
 	fmt = find_format(f);
+	/*
+	 * Since decoding support is not implemented yet do not allow
+	 * CODA_FMT_RAW formats in the capture interface.
+	 */
 	if (!fmt || !(fmt->type == CODA_FMT_ENC)) {
 		v4l2_err(&ctx->dev->v4l2_dev,
 			 "Fourcc format (0x%08x) invalid.\n",
@@ -219,6 +246,10 @@ static int vidioc_try_fmt_vid_out(struct file *file, void *priv,
 	struct coda_ctx *ctx = fh_to_ctx(priv);
 
 	fmt = find_format(f);
+	/*
+	 * Since decoding support is not implemented yet do not allow
+	 * CODA_FMT_ENC formats in the capture interface.
+	 */
 	if (!fmt || !(fmt->type == CODA_FMT_RAW)) {
 		v4l2_err(&ctx->dev->v4l2_dev,
 			 "Fourcc format (0x%08x) invalid.\n",
@@ -562,6 +593,9 @@ static void coda_device_run(void *m2m_priv)
 		pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE;
 	}
 
+	/* TODO: codec_mode is just a param for the codec, don't use to take
+	 * decissions (use coda_fmt instead)
+	 */
 	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
 		force_ipicture = 1;
 		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264)
@@ -682,8 +716,10 @@ void set_enc_default_params(struct coda_ctx *ctx)
 	ctx->aborting = 0;
 
 	/* Default formats for output and input queues */
-	ctx->q_data[V4L2_M2M_SRC].fmt = &formats[0];
-	ctx->q_data[V4L2_M2M_DST].fmt = &formats[1];
+	if (cpu_is_mx27()) { /* codadx6 */
+		ctx->q_data[V4L2_M2M_SRC].fmt = &codadx6_formats[0];
+		ctx->q_data[V4L2_M2M_DST].fmt = &codadx6_formats[1];
+	}
 }
 
 /*
