@@ -61,24 +61,24 @@ struct coda_aux_buf {
 
 struct coda_dev {
 	struct v4l2_device	v4l2_dev;
-	struct video_device	*vfd_enc;
+	struct video_device	*vfd;
 	struct platform_device	*plat_dev;
 
 	void __iomem		*regs_base;
 	struct clk		*clk;
 	int			irq;
 
-	struct coda_aux_buf	enc_codebuf;
-	struct coda_aux_buf	enc_workbuf;
-	struct coda_aux_buf	enc_parabuf;
+	struct coda_aux_buf	codebuf;
+	struct coda_aux_buf	workbuf;
+	struct coda_aux_buf	parabuf;
 
 	spinlock_t		irqlock;
 	struct mutex		dev_mutex;
-	struct v4l2_m2m_dev	*m2m_enc_dev;
-	struct vb2_alloc_ctx	*alloc_enc_ctx;
+	struct v4l2_m2m_dev	*m2m_dev;
+	struct vb2_alloc_ctx	*alloc_ctx;
 };
 
-struct coda_enc_params {
+struct coda_params {
 	u8			h264_intra_qp;
 	u8			h264_inter_qp;
 	u8			mpeg4_intra_qp;
@@ -91,8 +91,8 @@ struct coda_enc_params {
 	u32			slice_max_mb;
 };
 
-#define CODA_ENC_OUTPUT_BUFS	4
-#define CODA_ENC_CAPTURE_BUFS	2
+#define CODA_OUTPUT_BUFS	4
+#define CODA_CAPTURE_BUFS	2
 
 struct coda_ctx {
 	struct coda_dev			*dev;
@@ -102,7 +102,7 @@ struct coda_ctx {
 	u32				isequence;
 	struct coda_q_data		q_data[2];
 	enum coda_inst_type		inst_type;
-	struct coda_enc_params		enc_params;
+	struct coda_params		params;
 	struct v4l2_m2m_ctx		*m2m_ctx;
 	struct v4l2_ctrl_handler	ctrls;
 	struct v4l2_fh			fh;
