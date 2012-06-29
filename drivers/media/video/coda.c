@@ -28,7 +28,7 @@
 #include <media/v4l2-mem2mem.h>
 #include <media/videobuf2-dma-contig.h>
 
-#include "coda_regs.h"
+#include "coda.h"
 
 #define CODA_NAME		"coda"
 
@@ -50,7 +50,6 @@ MODULE_PARM_DESC(coda_debug, "Debug level (0-1)");
 
 #include <media/v4l2-device.h>
 #include <linux/io.h>
-#include "coda_regs.h"
 
 extern int coda_debug;
 
