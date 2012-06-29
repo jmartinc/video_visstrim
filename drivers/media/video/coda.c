@@ -1,5 +1,5 @@
 /*
- * CodaDx6 multi-standard codec IP
+ * Coda multi-standard codec IP
  *
  * Copyright (C) 2012 Vista Silicon S.L.
  *    Javier Martin, <javier.martin@vista-silicon.com>
@@ -16,6 +16,7 @@
 #include <linux/firmware.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/irq.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
@@ -26,6 +27,7 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-mem2mem.h>
+#include <media/videobuf2-core.h>
 #include <media/videobuf2-dma-contig.h>
 
 #include "coda.h"
@@ -43,15 +45,29 @@
 #define CODA_SUPPORTED_MINOR		2
 #define CODA_SUPPORTED_RELEASE	5
 
+#define CODA_OUTPUT_BUFS	4
+#define CODA_CAPTURE_BUFS	2
 
-int coda_debug = 3;
+#define CODA_MAX_WIDTH		720
+#define CODA_MAX_HEIGHT		576
+#define CODA_MAX_FRAME_SIZE	0x90000
+#define FMO_SLICE_SAVE_BUF_SIZE         (32)
+#define CODA_DEFAULT_GAMMA		4096
+
+#define MIN_W 176
+#define MIN_H 144
+#define MAX_W 720
+#define MAX_H 576
+
+#define S_ALIGN		1 /* multiple of 2 */
+#define W_ALIGN		1 /* multiple of 2 */
+#define H_ALIGN		1 /* multiple of 2 */
+
+#define fh_to_ctx(__fh) container_of(__fh, struct coda_ctx, fh)
+
+int coda_debug;
 module_param(coda_debug, int, 0);
 MODULE_PARM_DESC(coda_debug, "Debug level (0-1)");
-
-#include <media/v4l2-device.h>
-#include <linux/io.h>
-
-extern int coda_debug;
 
 enum {
 	V4L2_M2M_SRC = 0,
@@ -124,9 +140,6 @@ struct coda_params {
 	u32			slice_max_mb;
 };
 
-#define CODA_OUTPUT_BUFS	4
-#define CODA_CAPTURE_BUFS	2
-
 struct coda_ctx {
 	struct coda_dev			*dev;
 	int				aborting;
@@ -195,8 +208,6 @@ static int coda_command_sync(struct coda_dev *dev, int codec_mode,
 	return 0;
 }
 
-#define fh_to_ctx(__fh) container_of(__fh, struct coda_ctx, fh)
-
 struct coda_q_data *get_q_data(struct coda_ctx *ctx,
 					 enum v4l2_buf_type type)
 {
@@ -210,40 +221,6 @@ struct coda_q_data *get_q_data(struct coda_ctx *ctx,
 	}
 	return NULL;
 }
-
-/*
- * CodaDx6 multi-standard codec IP
- *
- * Copyright (C) 2012 Vista Silicon S.L.
- *    Javier Martin, <javier.martin@vista-silicon.com>
- *    Xavier Duret
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- */
-
-#include <linux/irq.h>
-
-#include <media/videobuf2-core.h>
-
-
-
-#define CODA_MAX_WIDTH		720
-#define CODA_MAX_HEIGHT		576
-#define CODA_MAX_FRAME_SIZE	0x90000
-#define FMO_SLICE_SAVE_BUF_SIZE         (32)
-#define CODA_DEFAULT_GAMMA		4096
-
-#define MIN_W 176
-#define MIN_H 144
-#define MAX_W 720
-#define MAX_H 576
-
-#define S_ALIGN		1 /* multiple of 2 */
-#define W_ALIGN		1 /* multiple of 2 */
-#define H_ALIGN		1 /* multiple of 2 */
 
 /*
  * Add one array of supported formats for each version of Coda:
@@ -1816,4 +1793,4 @@ module_platform_driver(coda_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Javier Martin <javier.martin@vista-silicon.com>");
-MODULE_DESCRIPTION("CodaDx6 multi-standard codec V4L2 driver");
+MODULE_DESCRIPTION("Coda multi-standard codec V4L2 driver");
