@@ -82,11 +82,7 @@ enum coda_fmt_type {
 enum coda_inst_type {
 	CODA_INST_INVALID,
 	CODA_INST_ENCODER,
-};
-
-enum coda_node_type {
-	CODA_NODE_INVALID = -1,
-	CODA_NODE_ENCODER = 0,
+	CODA_INST_DECODER,
 };
 
 struct coda_fmt {
@@ -808,7 +804,7 @@ static void coda_device_run(void *m2m_priv)
 		}
 	}
 
-	/* Encoder submit */
+	/* submit */
 	coda_write(dev, 0, CODA_CMD_ENC_PIC_ROT_MODE);
 	coda_write(dev, quant_param, CODA_CMD_ENC_PIC_QS);
 
@@ -1022,6 +1018,20 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
 		bitstream_size = q_data_dst->sizeimage;
 		dst_fourcc = q_data_dst->fmt->fourcc;
+
+		/* Find out whether coda must encode or decode */
+		if (q_data_src->fmt->type == CODA_FMT_RAW &&
+		    q_data_dst->fmt->type == CODA_FMT_ENC) {
+			ctx->inst_type = CODA_INST_ENCODER;
+		} else if (q_data_src->fmt->type == CODA_FMT_ENC &&
+			   q_data_dst->fmt->type == CODA_FMT_RAW) {
+			ctx->inst_type = CODA_INST_DECODER;
+			v4l2_err(&ctx->dev->v4l2_dev, "decoding not supported.\n");
+			return -EINVAL;
+		} else {
+			v4l2_err(&ctx->dev->v4l2_dev, "couldn't tell instance type.\n");
+			return -EINVAL;
+		}
 
 		if (!coda_is_initialized(dev)) {
 			v4l2_err(&ctx->dev->v4l2_dev, "coda is not initialized.\n");
@@ -1350,16 +1360,6 @@ int coda_ctrls_setup(struct coda_ctx *ctx)
 	return v4l2_ctrl_handler_setup(&ctx->ctrls);
 }
 
-static enum coda_node_type coda_get_node_type(struct file *file)
-{
-	struct video_device *vfd = video_devdata(file);
-
-	if (vfd->index == 0)
-		return CODA_NODE_ENCODER;
-	else /* decoder not supported */
-		return CODA_NODE_INVALID;
-}
-
 static int coda_queue_init(void *priv, struct vb2_queue *src_vq,
 		      struct vb2_queue *dst_vq)
 {
@@ -1371,12 +1371,7 @@ static int coda_queue_init(void *priv, struct vb2_queue *src_vq,
 	src_vq->io_modes = VB2_MMAP;
 	src_vq->drv_priv = ctx;
 	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
-	if (ctx->inst_type == CODA_INST_ENCODER) {
-		src_vq->ops = get_qops();
-	} else {
-		v4l2_err(&ctx->dev->v4l2_dev, "Instance not supported\n");
-		return -EINVAL;
-	}
+	src_vq->ops = get_qops();
 	src_vq->mem_ops = &vb2_dma_contig_memops;
 
 	ret = vb2_queue_init(src_vq);
@@ -1388,12 +1383,7 @@ static int coda_queue_init(void *priv, struct vb2_queue *src_vq,
 	dst_vq->io_modes = VB2_MMAP;
 	dst_vq->drv_priv = ctx;
 	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
-	if (ctx->inst_type == CODA_INST_ENCODER) {
-		dst_vq->ops = get_qops();
-	} else {
-		v4l2_err(&ctx->dev->v4l2_dev, "Instance not supported\n");
-		return -EINVAL;
-	}
+	dst_vq->ops = get_qops();
 	dst_vq->mem_ops = &vb2_dma_contig_memops;
 
 	return vb2_queue_init(dst_vq);
@@ -1414,27 +1404,20 @@ static int coda_open(struct file *file)
 	v4l2_fh_add(&ctx->fh);
 	ctx->dev = dev;
 
-	if (coda_get_node_type(file) == CODA_NODE_ENCODER) {
-		ctx->inst_type = CODA_INST_ENCODER;
-		set_default_params(ctx);
-		ctx->m2m_ctx = v4l2_m2m_ctx_init(dev->m2m_dev, ctx,
-						 &coda_queue_init);
-		if (IS_ERR(ctx->m2m_ctx)) {
-			int ret = PTR_ERR(ctx->m2m_ctx);
+	set_default_params(ctx);
+	ctx->m2m_ctx = v4l2_m2m_ctx_init(dev->m2m_dev, ctx,
+					 &coda_queue_init);
+	if (IS_ERR(ctx->m2m_ctx)) {
+		int ret = PTR_ERR(ctx->m2m_ctx);
 
-			v4l2_err(&dev->v4l2_dev, "%s return error (%d)\n",
-				 __func__, ret);
-			goto err;
-		}
-		ret = coda_ctrls_setup(ctx);
-		if (ret) {
-			v4l2_err(&dev->v4l2_dev, "failed to setup coda controls\n");
+		v4l2_err(&dev->v4l2_dev, "%s return error (%d)\n",
+			 __func__, ret);
+		goto err;
+	}
+	ret = coda_ctrls_setup(ctx);
+	if (ret) {
+		v4l2_err(&dev->v4l2_dev, "failed to setup coda controls\n");
 
-			goto err;
-		}
-	} else {
-		v4l2_err(&dev->v4l2_dev, "node type not supported\n");
-		ret = -EINVAL;
 		goto err;
 	}
 
@@ -1610,7 +1593,6 @@ static void coda_fw_callback(const struct firmware *fw, void *context)
 		return;
 	}
 
-	/* Encoder device */
 	vfd = video_device_alloc();
 	if (!vfd) {
 		v4l2_err(&dev->v4l2_dev, "Failed to allocate video device\n");
@@ -1643,7 +1625,7 @@ static void coda_fw_callback(const struct firmware *fw, void *context)
 		v4l2_err(&dev->v4l2_dev, "Failed to register video device\n");
 		goto rel_m2m;
 	}
-	v4l2_info(&dev->v4l2_dev, "encoder registered as /dev/video%d\n",
+	v4l2_info(&dev->v4l2_dev, "codec registered as /dev/video%d\n",
 		  vfd->num);
 
 	return;
@@ -1737,7 +1719,6 @@ static int __devinit coda_probe(struct platform_device *pdev)
 
 	mutex_init(&dev->dev_mutex);
 
-	/* Encoder */
 	/* allocate auxiliary buffers for the BIT processor */
 	bufsize = CODA_CODE_BUF_SIZE + CODA_WORK_BUF_SIZE +
 		CODA_PARA_BUF_SIZE;
@@ -1785,7 +1766,6 @@ static struct platform_driver coda_driver = {
 	.driver	= {
 		.name	= CODA_NAME,
 		.owner	= THIS_MODULE,
-		/* TODO: pm ops? */
 	},
 };
 
