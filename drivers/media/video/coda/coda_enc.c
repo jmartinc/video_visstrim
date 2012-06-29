@@ -539,15 +539,17 @@ static void coda_device_run(void *m2m_priv)
 	struct coda_q_data *q_data_src, *q_data_dst;
 	struct vb2_buffer *src_buf, *dst_buf;
 	struct coda_dev *dev = ctx->dev;
-	int force_ipicture, quant_param;
+	int force_ipicture;
+	int quant_param = 0;
 	u32 picture_y, picture_cb, picture_cr;
 	u32 pic_stream_buffer_addr, pic_stream_buffer_size;
+	u32 dst_fourcc;
 
 	src_buf = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
 	dst_buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
 	q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 	q_data_dst = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
-
+	dst_fourcc = q_data_dst->fmt->fourcc;
 
 	src_buf->v4l2_buf.sequence = ctx->isequence;
 	dst_buf->v4l2_buf.sequence = ctx->isequence;
@@ -593,22 +595,34 @@ static void coda_device_run(void *m2m_priv)
 		pic_stream_buffer_size = CODA_ENC_MAX_FRAME_SIZE;
 	}
 
-	/* TODO: codec_mode is just a param for the codec, don't use to take
-	 * decissions (use coda_fmt instead)
-	 */
 	if (src_buf->v4l2_buf.flags & V4L2_BUF_FLAG_KEYFRAME) {
 		force_ipicture = 1;
-		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264)
+		switch (dst_fourcc) {
+		case V4L2_PIX_FMT_H264:
 			quant_param = ctx->enc_params.h264_intra_qp;
-		else
+			break;
+		case V4L2_PIX_FMT_MPEG4:
 			quant_param = ctx->enc_params.mpeg4_intra_qp;
-
+			break;
+		default:
+			v4l2_warn(&ctx->dev->v4l2_dev,
+				"cannot set intra qp, fmt not supported\n");
+			break;
+		}
 	} else {
 		force_ipicture = 0;
-		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264)
+		switch (dst_fourcc) {
+		case V4L2_PIX_FMT_H264:
 			quant_param = ctx->enc_params.h264_inter_qp;
-		else
+			break;
+		case V4L2_PIX_FMT_MPEG4:
 			quant_param = ctx->enc_params.mpeg4_inter_qp;
+			break;
+		default:
+			v4l2_warn(&ctx->dev->v4l2_dev,
+				"cannot set inter qp, fmt not supported\n");
+			break;
+		}
 	}
 
 	/* Encoder submit */
@@ -831,11 +845,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			return -EFAULT;
 		}
 
-		if (dst_fourcc == V4L2_PIX_FMT_H264)
-			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_H264;
-		else if (dst_fourcc == V4L2_PIX_FMT_MPEG4)
-			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
-
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR_0);
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR_0);
 		coda_write(dev, 3 << 3, CODA_REG_BIT_STREAM_CTRL);
@@ -850,14 +859,18 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, ctx->enc_params.framerate,
 			   CODA_CMD_ENC_SEQ_SRC_F_RATE);
 
-		if (dst_fourcc == V4L2_PIX_FMT_MPEG4) {
+		switch (dst_fourcc) {
+		case V4L2_PIX_FMT_MPEG4:
+			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_M4S2;
 			coda_write(dev, CODA_ENCODE_MPEG4, CODA_CMD_ENC_SEQ_COD_STD);
 			value  = (0 & CODA_MP4PARAM_VERID_MASK) << CODA_MP4PARAM_VERID_OFFSET;
 			value |= (0 & CODA_MP4PARAM_INTRADCVLCTHR_MASK) << CODA_MP4PARAM_INTRADCVLCTHR_OFFSET;
 			value |= (0 & CODA_MP4PARAM_REVERSIBLEVLCENABLE_MASK) << CODA_MP4PARAM_REVERSIBLEVLCENABLE_OFFSET;
 			value |=  0 & CODA_MP4PARAM_DATAPARTITIONENABLE_MASK;
 			coda_write(dev, value, CODA_CMD_ENC_SEQ_MP4_PARA);
-		} else if (dst_fourcc == V4L2_PIX_FMT_H264) {
+			break;
+		case V4L2_PIX_FMT_H264:
+			ctx->enc_params.codec_mode = CODA_MODE_ENCODE_H264;
 			coda_write(dev, CODA_ENCODE_H264, CODA_CMD_ENC_SEQ_COD_STD);
 			value  = (0 & CODA_264PARAM_DEBLKFILTEROFFSETBETA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETBETA_OFFSET;
 			value |= (0 & CODA_264PARAM_DEBLKFILTEROFFSETALPHA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETALPHA_OFFSET;
@@ -865,6 +878,11 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			value |= (0 & CODA_264PARAM_CONSTRAINEDINTRAPREDFLAG_MASK) << CODA_264PARAM_CONSTRAINEDINTRAPREDFLAG_OFFSET;
 			value |=  0 & CODA_264PARAM_CHROMAQPOFFSET_MASK;
 			coda_write(dev, value, CODA_CMD_ENC_SEQ_264_PARA);
+			break;
+		default:
+			v4l2_err(&ctx->dev->v4l2_dev,
+				 "dst format (0x%08x) invalid.\n", dst_fourcc);
+			return -EINVAL;
 		}
 
 		value  = (ctx->enc_params.slice_max_mb & CODA_SLICING_SIZE_MASK) << CODA_SLICING_SIZE_OFFSET;
@@ -900,7 +918,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		value |= (0 & CODA_OPTION_SLICEREPORT_MASK) << CODA_OPTION_SLICEREPORT_OFFSET;
 		coda_write(dev, value, CODA_CMD_ENC_SEQ_OPTION);
 
-		if (ctx->enc_params.codec_mode == CODA_MODE_ENCODE_H264) {
+		if (dst_fourcc == V4L2_PIX_FMT_H264) {
 			value  = (FMO_SLICE_SAVE_BUF_SIZE << 7);
 			value |= (0 & CODA_FMOPARAM_TYPE_MASK) << CODA_FMOPARAM_TYPE_OFFSET;
 			value |=  0 & CODA_FMOPARAM_SLICENUM_MASK;
@@ -942,7 +960,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		/* Save stream headers */
 		buf = v4l2_m2m_next_dst_buf(ctx->m2m_ctx);
-		if (dst_fourcc == V4L2_PIX_FMT_H264) {
+		switch (dst_fourcc) {
+		case V4L2_PIX_FMT_H264:
 			/*
 			 * Get SPS in the first frame and copy it to an
 			 * intermediate buffer.
@@ -975,7 +994,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0),
 			       ctx->vpu_header_size[1]);
 			ctx->vpu_header_size[2] = 0;
-		} else { /* MPEG4 */
+			break;
+		case V4L2_PIX_FMT_MPEG4:
 			/*
 			 * Get VOS in the first frame and copy it to an
 			 * intermediate buffer
@@ -1015,6 +1035,10 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
 			memcpy(&ctx->vpu_header[2][0], vb2_plane_vaddr(buf, 0),
 			       ctx->vpu_header_size[2]);
+			break;
+		default:
+			/* No more formats need to save headers at the moment */
+			break;
 		}
 	}
 	return 0;
