@@ -115,7 +115,6 @@ struct coda_dev {
 
 	struct coda_aux_buf	codebuf;
 	struct coda_aux_buf	workbuf;
-	struct coda_aux_buf	parabuf;
 
 	spinlock_t		irqlock;
 	struct mutex		dev_mutex;
@@ -152,6 +151,7 @@ struct coda_ctx {
 	int				gopcounter;
 	char				vpu_header[3][64];
 	int				vpu_header_size[3];
+	struct coda_aux_buf		parabuf;
 };
 
 static inline void coda_write(struct coda_dev *dev, u32 data, u32 reg)
@@ -1037,7 +1037,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			v4l2_err(&ctx->dev->v4l2_dev, "coda is not initialized.\n");
 			return -EFAULT;
 		}
-
+		coda_write(dev, ctx->parabuf.paddr, CODA_REG_BIT_PARA_BUF_ADDR);
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR_0);
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR_0);
 		coda_write(dev, 3 << 3, CODA_REG_BIT_STREAM_CTRL);
@@ -1135,7 +1135,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			u32 *p;
 
 			buf = src_vq->bufs[i];
-			p = ctx->dev->parabuf.vaddr;
+			p = ctx->parabuf.vaddr;
 
 			p[i * 3] = vb2_dma_contig_plane_dma_addr(buf, 0);
 			p[i * 3 + 1] = p[i * 3] + q_data_src->width *
@@ -1423,6 +1423,14 @@ static int coda_open(struct file *file)
 
 	ctx->fh.ctrl_handler = &ctx->ctrls;
 
+	ctx->parabuf.vaddr = dma_alloc_coherent(&dev->plat_dev->dev,
+			CODA_PARA_BUF_SIZE, &ctx->parabuf.paddr, GFP_KERNEL);
+	if (!ctx->parabuf.vaddr) {
+		v4l2_err(&dev->v4l2_dev, "failed to allocate parabuf");
+		ret = -ENOMEM;
+		goto err;
+	}
+
 	clk_enable(dev->clk);
 
 	v4l2_dbg(1, coda_debug, &dev->v4l2_dev, "Created instance %p\n",
@@ -1445,6 +1453,8 @@ static int coda_release(struct file *file)
 	v4l2_dbg(1, coda_debug, &dev->v4l2_dev, "Releasing instance %p\n",
 		 ctx);
 
+	dma_free_coherent(&dev->plat_dev->dev, CODA_PARA_BUF_SIZE,
+		ctx->parabuf.vaddr, ctx->parabuf.paddr);
 	v4l2_m2m_ctx_release(ctx->m2m_ctx);
 	v4l2_ctrl_handler_free(&ctx->ctrls);
 	clk_disable(dev->clk);
@@ -1519,8 +1529,6 @@ static int coda_hw_init(struct coda_dev *dev, const struct firmware *fw)
 	/* Tell the BIT where to find everything it needs */
 	coda_write(dev, dev->workbuf.paddr,
 		      CODA_REG_BIT_WORK_BUF_ADDR);
-	coda_write(dev, dev->parabuf.paddr,
-		      CODA_REG_BIT_PARA_BUF_ADDR);
 	coda_write(dev, dev->codebuf.paddr,
 		      CODA_REG_BIT_CODE_BUF_ADDR);
 	coda_write(dev, 0, CODA_REG_BIT_CODE_RUN);
@@ -1719,9 +1727,8 @@ static int __devinit coda_probe(struct platform_device *pdev)
 
 	mutex_init(&dev->dev_mutex);
 
-	/* allocate auxiliary buffers for the BIT processor */
-	bufsize = CODA_CODE_BUF_SIZE + CODA_WORK_BUF_SIZE +
-		CODA_PARA_BUF_SIZE;
+	/* allocate auxiliary per-device buffers for the BIT processor */
+	bufsize = CODA_CODE_BUF_SIZE + CODA_WORK_BUF_SIZE;
 	dev->codebuf.vaddr = dma_alloc_coherent(&pdev->dev, bufsize,
 						    &dev->codebuf.paddr,
 						    GFP_KERNEL);
@@ -1733,8 +1740,6 @@ static int __devinit coda_probe(struct platform_device *pdev)
 
 	dev->workbuf.vaddr = dev->codebuf.vaddr + CODA_CODE_BUF_SIZE;
 	dev->workbuf.paddr = dev->codebuf.paddr + CODA_CODE_BUF_SIZE;
-	dev->parabuf.vaddr = dev->workbuf.vaddr + CODA_WORK_BUF_SIZE;
-	dev->parabuf.paddr = dev->workbuf.paddr + CODA_WORK_BUF_SIZE;
 
 	return coda_firmware_request(dev);
 
@@ -1746,8 +1751,7 @@ free_clk:
 static int coda_remove(struct platform_device *pdev)
 {
 	struct coda_dev *dev = platform_get_drvdata(pdev);
-	unsigned int bufsize = CODA_CODE_BUF_SIZE + CODA_WORK_BUF_SIZE +
-				CODA_PARA_BUF_SIZE;
+	unsigned int bufsize = CODA_CODE_BUF_SIZE + CODA_WORK_BUF_SIZE;
 
 	video_unregister_device(dev->vfd);
 	v4l2_m2m_release(dev->m2m_dev);
