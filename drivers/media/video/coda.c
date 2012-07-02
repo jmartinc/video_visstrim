@@ -37,8 +37,10 @@
 #define CODA_MAX_INSTANCES	4
 
 #define CODA_FMO_BUF_SIZE	32
-#define CODA_CODE_BUF_SIZE	(64 * 1024)
-#define CODA_WORK_BUF_SIZE	(288 * 1024 + CODA_FMO_BUF_SIZE * 8 * 1024)
+#define CODADX6_CODE_BUF_SIZE	(64 * 1024)
+#define CODA9_CODE_BUF_SIZE	(200 * 1024)
+#define CODADX6_WORK_BUF_SIZE	(288 * 1024 + CODA_FMO_BUF_SIZE * 8 * 1024)
+#define CODA9_WORK_BUF_SIZE	(512 * 1024 + CODA_FMO_BUF_SIZE * 8 * 1024)
 #define CODA_PARA_BUF_SIZE	(10 * 1024)
 #define CODA_ISRAM_SIZE	(2048 * 2)
 
@@ -1049,13 +1051,27 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, ctx->parabuf.paddr, CODA_REG_BIT_PARA_BUF_ADDR);
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR(ctx->idx));
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR(ctx->idx));
-		coda_write(dev, 3 << 3, CODA_REG_BIT_STREAM_CTRL);
+		if (is_codadx6()) {
+			/*
+			 * We should use (CODADX6_STREAM_BUF_PIC_RESET |
+			 * CODADX6_STREAM_BUF_PIC_FLUSH) but it doesn't work
+			 * with firmware 2.2.5.
+			 */
+			coda_write(dev, (3 << 3), CODA_REG_BIT_STREAM_CTRL);
+		} else {
+			coda_write(dev, CODA9_STREAM_BUF_PIC_RESET |
+				CODA9_STREAM_BUF_PIC_FLUSH, CODA_REG_BIT_STREAM_CTRL);
+		}
 
 		/* Configure the coda */
 		coda_write(dev, 0xFFFF4C00, CODA_REG_BIT_SEARCH_RAM_BASE_ADDR);
 
 		/* Could set rotation here if needed */
-		value = (q_data_src->width & CODA_PICWIDTH_MASK) << CODA_PICWIDTH_OFFSET;
+		if (is_codadx6()) {
+			value = (q_data_src->width & CODADX6_PICWIDTH_MASK) << CODADX6_PICWIDTH_OFFSET;
+		} else {
+			value = (q_data_src->width & CODA9_PICWIDTH_MASK) << CODA9_PICWIDTH_OFFSET;
+		}
 		value |= (q_data_src->height & CODA_PICHEIGHT_MASK) << CODA_PICHEIGHT_OFFSET;
 		coda_write(dev, value, CODA_CMD_ENC_SEQ_SRC_SIZE);
 		coda_write(dev, ctx->params.framerate,
@@ -1548,8 +1564,11 @@ static int coda_hw_init(struct coda_dev *dev, const struct firmware *fw)
 	coda_write(dev, 0, CODA_REG_BIT_CODE_RUN);
 
 	/* Set default values */
-	coda_write(dev, CODA_STREAM_UNDOCUMENTED,
-		      CODA_REG_BIT_STREAM_CTRL);
+	if (is_codadx6()) {
+		coda_write(dev, CODADX6_STREAM_BUF_PIC_FLUSH, CODA_REG_BIT_STREAM_CTRL);
+	} else {
+		coda_write(dev, CODA9_STREAM_BUF_PIC_FLUSH, CODA_REG_BIT_STREAM_CTRL);
+	}
 	coda_write(dev, 0, CODA_REG_BIT_FRAME_MEM_CTRL);
 	coda_write(dev, CODA_INT_INTERRUPT_ENABLE,
 		      CODA_REG_BIT_INT_ENABLE);
@@ -1746,7 +1765,11 @@ static int __devinit coda_probe(struct platform_device *pdev)
 	mutex_init(&dev->dev_mutex);
 
 	/* allocate auxiliary per-device buffers for the BIT processor */
-	bufsize = CODA_CODE_BUF_SIZE + CODA_WORK_BUF_SIZE;
+	if (is_codadx6()) {
+		bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE;
+	} else {
+		bufsize = CODA9_CODE_BUF_SIZE + CODA9_WORK_BUF_SIZE;
+	}
 	dev->codebuf.vaddr = dma_alloc_coherent(&pdev->dev, bufsize,
 						    &dev->codebuf.paddr,
 						    GFP_KERNEL);
@@ -1756,8 +1779,13 @@ static int __devinit coda_probe(struct platform_device *pdev)
 		goto free_clk;
 	}
 
-	dev->workbuf.vaddr = dev->codebuf.vaddr + CODA_CODE_BUF_SIZE;
-	dev->workbuf.paddr = dev->codebuf.paddr + CODA_CODE_BUF_SIZE;
+	if (is_codadx6()) {
+		dev->workbuf.vaddr = dev->codebuf.vaddr + CODADX6_CODE_BUF_SIZE;
+		dev->workbuf.paddr = dev->codebuf.paddr + CODADX6_CODE_BUF_SIZE;
+	} else {
+		dev->workbuf.vaddr = dev->codebuf.vaddr + CODA9_CODE_BUF_SIZE;
+		dev->workbuf.paddr = dev->codebuf.paddr + CODA9_CODE_BUF_SIZE;
+	}
 
 	return coda_firmware_request(dev);
 
@@ -1769,7 +1797,13 @@ free_clk:
 static int coda_remove(struct platform_device *pdev)
 {
 	struct coda_dev *dev = platform_get_drvdata(pdev);
-	unsigned int bufsize = CODA_CODE_BUF_SIZE + CODA_WORK_BUF_SIZE;
+	unsigned int bufsize;
+
+	if (is_codadx6()) {
+		bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE;
+	} else {
+		bufsize = CODA9_CODE_BUF_SIZE + CODA9_WORK_BUF_SIZE;
+	}
 
 	video_unregister_device(dev->vfd);
 	v4l2_m2m_release(dev->m2m_dev);
