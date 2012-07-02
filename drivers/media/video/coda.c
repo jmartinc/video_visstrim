@@ -65,7 +65,8 @@
 #define W_ALIGN		1 /* multiple of 2 */
 #define H_ALIGN		1 /* multiple of 2 */
 
-#define fh_to_ctx(__fh) container_of(__fh, struct coda_ctx, fh)
+#define fh_to_ctx(__fh)	container_of(__fh, struct coda_ctx, fh)
+#define is_codadx6()	cpu_is_mx27()
 
 int coda_debug;
 module_param(coda_debug, int, 0);
@@ -257,7 +258,7 @@ static struct coda_fmt *find_format(struct v4l2_format *f)
 	int num_formats;
 	unsigned int k;
 
-	if (cpu_is_mx27()) { /* codadx6 */
+	if (is_codadx6()) {
 		formats = codadx6_formats;
 		num_formats = ARRAY_SIZE(codadx6_formats);
 	} else { /* coda9 not yet implemented */
@@ -297,7 +298,7 @@ static int enum_fmt(struct v4l2_fmtdesc *f, enum coda_fmt_type type)
 	int num_formats;
 	int i, num = 0;
 
-	if (cpu_is_mx27()) { /* codadx6 */
+	if (is_codadx6()) {
 		formats = codadx6_formats;
 		num_formats = ARRAY_SIZE(codadx6_formats);
 	} else { /* coda9 not yet implemented */
@@ -917,7 +918,7 @@ void set_default_params(struct coda_ctx *ctx)
 	ctx->aborting = 0;
 
 	/* Default formats for output and input queues */
-	if (cpu_is_mx27()) { /* codadx6 */
+	if (is_codadx6()) {
 		ctx->q_data[V4L2_M2M_SRC].fmt = &codadx6_formats[0];
 		ctx->q_data[V4L2_M2M_DST].fmt = &codadx6_formats[1];
 	}
@@ -1062,7 +1063,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		switch (dst_fourcc) {
 		case V4L2_PIX_FMT_MPEG4:
-			ctx->params.codec_mode = CODA_MODE_ENCODE_M4S2;
+			ctx->params.codec_mode = is_codadx6() ? CODADX6_MODE_ENCODE_MP4 : CODA9_MODE_ENCODE_MP4;
 			coda_write(dev, CODA_ENCODE_MPEG4, CODA_CMD_ENC_SEQ_COD_STD);
 			value  = (0 & CODA_MP4PARAM_VERID_MASK) << CODA_MP4PARAM_VERID_OFFSET;
 			value |= (0 & CODA_MP4PARAM_INTRADCVLCTHR_MASK) << CODA_MP4PARAM_INTRADCVLCTHR_OFFSET;
@@ -1071,8 +1072,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, value, CODA_CMD_ENC_SEQ_MP4_PARA);
 			break;
 		case V4L2_PIX_FMT_H264:
-			ctx->params.codec_mode = CODA_MODE_ENCODE_H264;
-			coda_write(dev, CODA_MODE_ENCODE_H264, CODA_CMD_ENC_SEQ_COD_STD);
+			ctx->params.codec_mode = is_codadx6() ? CODADX6_MODE_ENCODE_H264 : CODA9_MODE_ENCODE_H264;
+			coda_write(dev, CODA_ENCODE_H264, CODA_CMD_ENC_SEQ_COD_STD);
 			value  = (0 & CODA_264PARAM_DEBLKFILTEROFFSETBETA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETBETA_OFFSET;
 			value |= (0 & CODA_264PARAM_DEBLKFILTEROFFSETALPHA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETALPHA_OFFSET;
 			value |= (0 & CODA_264PARAM_DISABLEDEBLK_MASK) << CODA_264PARAM_DISABLEDEBLK_OFFSET;
@@ -1669,7 +1670,7 @@ static int coda_firmware_request(struct coda_dev *dev)
 {
 	char *fw;
 
-	if (cpu_is_mx27()) {
+	if (is_codadx6()) {
 		fw = "v4l-codadx6-imx27.bin";
 	} else {
 		/* Not supported yet */

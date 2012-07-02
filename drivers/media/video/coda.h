@@ -15,18 +15,17 @@
 #define _REGS_CODA_H_
 
 /* HW registers */
-#define CODA_REG_BIT_CODE_RUN		0x000
+#define CODA_REG_BIT_CODE_RUN			0x000
 #define		CODA_REG_RUN_ENABLE		(1 << 0)
-#define CODA_REG_BIT_CODE_DOWN		0x004
-/* Internal SRAM short address in the BIT */
+#define CODA_REG_BIT_CODE_DOWN			0x004
 #define 	CODA_DOWN_ADDRESS_SET(x)	(((x) & 0xffff) << 16)
-#define		CODA_DOWN_DATA_SET(x)	((x) & 0xffff)
+#define		CODA_DOWN_DATA_SET(x)		((x) & 0xffff)
 #define CODA_REG_BIT_HOST_IN_REQ		0x008
-#define CODA_REG_BIT_INT_CLEAR		0x00C
+#define CODA_REG_BIT_INT_CLEAR			0x00C
 #define		CODA_REG_BIT_INT_CLEAR_SET	0x1
 #define CODA_REG_BIT_INT_STATUS		0x010
 #define CODA_REG_BIT_CODE_RESET		0x014
-#define		CODA_REG_RESET_ENABLE	(1 << 0)
+#define		CODA_REG_RESET_ENABLE		(1 << 0)
 #define CODA_REG_BIT_CUR_PC			0x018
 
 /* Static SW registers */
@@ -35,37 +34,43 @@
 #define CODA_REG_BIT_PARA_BUF_ADDR		0x108
 #define CODA_REG_BIT_STREAM_CTRL		0x10C
 #define		CODA_STREAM_UNDOCUMENTED	(1 << 2)
-		/* Stream Full Empty Check Disable */
 #define 	CODA_STREAM_CHKDIS_OFFSET	(1 << 1)
-		/* Stream Endianess */
 #define		CODA_STREAM_ENDIAN_SELECT	(1 << 0)
 #define CODA_REG_BIT_FRAME_MEM_CTRL		0x110
-		/* Image Endianess */
 #define 	CODA_IMAGE_ENDIAN_SELECT	(1 << 0)
 #define CODA_REG_BIT_RD_PTR(x)			(0x120 + 8 * (x))
 #define CODA_REG_BIT_WR_PTR(x)			(0x124 + 8 * (x))
-#define CODA_REG_BIT_SEARCH_RAM_BASE_ADDR  0x140
+#define CODA_REG_BIT_SEARCH_RAM_BASE_ADDR	0x140
 #define CODA_REG_BIT_BUSY			0x160
-#define 	CODA_REG_BIT_BUSY_FLAG	1
-#define CODA_REG_BIT_RUN_COMMAND           0x164
-#define 	CODA_COMMAND_SEQ_INIT                         1
-#define 	CODA_COMMAND_SEQ_END                          2
-#define 	CODA_COMMAND_PIC_RUN                          3
-#define 	CODA_COMMAND_SET_FRAME_BUF                    4
-#define 	CODA_COMMAND_ENCODE_HEADER                    5
-#define 	CODA_COMMAND_ENC_PARA_SET                     6
-#define 	CODA_COMMAND_DEC_PARA_SET                     7
-#define 	CODA_COMMAND_DEC_BUF_FLUSH                    8
-#define 	CODA_COMMAND_RC_CHANGE_PARAMETER              9
-#define 	CODA_COMMAND_FIRMWARE_GET                     0xf
-#define CODA_REG_BIT_RUN_INDEX		0x168
+#define 	CODA_REG_BIT_BUSY_FLAG		1
+#define CODA_REG_BIT_RUN_COMMAND		0x164
+#define 	CODA_COMMAND_SEQ_INIT		1
+#define 	CODA_COMMAND_SEQ_END		2
+#define 	CODA_COMMAND_PIC_RUN		3
+#define 	CODA_COMMAND_SET_FRAME_BUF	4
+#define 	CODA_COMMAND_ENCODE_HEADER	5
+#define 	CODA_COMMAND_ENC_PARA_SET	6
+#define 	CODA_COMMAND_DEC_PARA_SET	7
+#define 	CODA_COMMAND_DEC_BUF_FLUSH	8
+#define 	CODA_COMMAND_RC_CHANGE_PARAMETER 9
+#define 	CODA_COMMAND_FIRMWARE_GET	0xf
+#define CODA_REG_BIT_RUN_INDEX			0x168
 #define		CODA_INDEX_SET(x)		((x) & 0x3)
 #define CODA_REG_BIT_RUN_COD_STD		0x16C
-#define 	CODA_MODE_DECODE_M4S2	0
-#define 	CODA_MODE_ENCODE_M4S2	1
-#define 	CODA_MODE_DECODE_H264	2
-#define 	CODA_MODE_ENCODE_H264	3
-#define 	CODA_MODE_DECODE_WVC1	4
+#define 	CODADX6_MODE_DECODE_MP4		0
+#define 	CODADX6_MODE_ENCODE_MP4		1
+#define 	CODADX6_MODE_DECODE_H264	2
+#define 	CODADX6_MODE_ENCODE_H264	3
+#define		CODA9_MODE_DECODE_H264		0
+#define		CODA9_MODE_DECODE_VC1		1
+#define		CODA9_MODE_DECODE_MP2		2
+#define		CODA9_MODE_DECODE_MP4		3
+#define		CODA9_MODE_DECODE_DV3		3
+#define		CODA9_MODE_DECODE_RV		4
+#define		CODA9_MODE_DECODE_MJPG		5
+#define		CODA9_MODE_ENCODE_H264		8
+#define		CODA9_MODE_ENCODE_MP4		11
+#define		CODA9_MODE_ENCODE_MJPG		13
 #define 	CODA_MODE_INVALID		0xffff
 #define CODA_REG_BIT_INT_ENABLE		0x170
 #define		CODA_INT_INTERRUPT_ENABLE	(1 << 3)
