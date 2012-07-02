@@ -34,6 +34,8 @@
 
 #define CODA_NAME		"coda"
 
+#define CODA_MAX_INSTANCES	4
+
 #define CODA_FMO_BUF_SIZE	32
 #define CODA_CODE_BUF_SIZE	(64 * 1024)
 #define CODA_WORK_BUF_SIZE	(288 * 1024 + CODA_FMO_BUF_SIZE * 8 * 1024)
@@ -120,6 +122,7 @@ struct coda_dev {
 	struct mutex		dev_mutex;
 	struct v4l2_m2m_dev	*m2m_dev;
 	struct vb2_alloc_ctx	*alloc_ctx;
+	int			instances;
 };
 
 struct coda_params {
@@ -152,6 +155,7 @@ struct coda_ctx {
 	char				vpu_header[3][64];
 	int				vpu_header_size[3];
 	struct coda_aux_buf		parabuf;
+	int				idx;
 };
 
 static inline void coda_write(struct coda_dev *dev, u32 data, u32 reg)
@@ -180,28 +184,35 @@ static inline int coda_is_initialized(struct coda_dev *dev)
 	return (coda_read(dev, CODA_REG_BIT_CUR_PC) != 0);
 }
 
-static void coda_command_async(struct coda_dev *dev, int codec_mode,
-				  int cmd)
-{
-	coda_write(dev, CODA_REG_BIT_BUSY_FLAG, CODA_REG_BIT_BUSY);
-	/* TODO: 0 for the first instance of (encoder-decoder), 1 for the
-	 * second one (except firmware which is always 0) */
-	coda_write(dev, 0, CODA_REG_BIT_RUN_INDEX);
-	coda_write(dev, codec_mode, CODA_REG_BIT_RUN_COD_STD);
-	coda_write(dev, cmd, CODA_REG_BIT_RUN_COMMAND);
-}
-
-static int coda_command_sync(struct coda_dev *dev, int codec_mode,
-				int cmd)
+int coda_wait_timeout(struct coda_dev *dev)
 {
 	unsigned long timeout = jiffies + msecs_to_jiffies(1000);
 
-	coda_command_async(dev, codec_mode, cmd);
 	while (coda_isbusy(dev)) {
 		if (time_after(jiffies, timeout))
 			return -ETIMEDOUT;
 	};
 	return 0;
+}
+
+static void coda_command_async(struct coda_ctx *ctx, int codec_mode,
+				  int cmd)
+{
+	struct coda_dev *dev = ctx->dev;
+	coda_write(dev, CODA_REG_BIT_BUSY_FLAG, CODA_REG_BIT_BUSY);
+
+	coda_write(dev, ctx->idx, CODA_REG_BIT_RUN_INDEX);
+	coda_write(dev, codec_mode, CODA_REG_BIT_RUN_COD_STD);
+	coda_write(dev, cmd, CODA_REG_BIT_RUN_COMMAND);
+}
+
+static int coda_command_sync(struct coda_ctx *ctx, int codec_mode,
+				int cmd)
+{
+	struct coda_dev *dev = ctx->dev;
+
+	coda_command_async(ctx, codec_mode, cmd);
+	return coda_wait_timeout(dev);
 }
 
 struct coda_q_data *get_q_data(struct coda_ctx *ctx,
@@ -823,7 +834,7 @@ static void coda_device_run(void *m2m_priv)
 	coda_write(dev, pic_stream_buffer_addr, CODA_CMD_ENC_PIC_BB_START);
 	coda_write(dev, pic_stream_buffer_size / 1024,
 		   CODA_CMD_ENC_PIC_BB_SIZE);
-	coda_command_async(dev, ctx->params.codec_mode,
+	coda_command_async(ctx, ctx->params.codec_mode,
 			   CODA_COMMAND_PIC_RUN);
 }
 
@@ -1118,7 +1129,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, value, CODA_CMD_ENC_SEQ_FMO);
 		}
 
-		if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_SEQ_INIT)) {
+		if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_SEQ_INIT)) {
 			v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_SEQ_INIT timeout\n");
 			return -ETIMEDOUT;
 		}
@@ -1146,7 +1157,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		coda_write(dev, src_vq->num_buffers, CODA_CMD_SET_FRAME_BUF_NUM);
 		coda_write(dev, q_data_src->width, CODA_CMD_SET_FRAME_BUF_STRIDE);
-		if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_SET_FRAME_BUF)) {
+		if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_SET_FRAME_BUF)) {
 			v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_SET_FRAME_BUF timeout\n");
 			return -ETIMEDOUT;
 		}
@@ -1162,7 +1173,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_H264_SPS, CODA_CMD_ENC_HEADER_CODE);
-			if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
+			if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
@@ -1178,7 +1189,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_H264_PPS, CODA_CMD_ENC_HEADER_CODE);
-			if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
+			if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
@@ -1196,7 +1207,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_MP4V_VOS, CODA_CMD_ENC_HEADER_CODE);
-			if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
+			if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
@@ -1208,7 +1219,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_MP4V_VIS, CODA_CMD_ENC_HEADER_CODE);
-			if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
+			if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");
 				return -ETIMEDOUT;
 			}
@@ -1220,7 +1231,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, vb2_dma_contig_plane_dma_addr(buf, 0), CODA_CMD_ENC_HEADER_BB_START);
 			coda_write(dev, bitstream_size, CODA_CMD_ENC_HEADER_BB_SIZE);
 			coda_write(dev, CODA_HEADER_MP4V_VOL, CODA_CMD_ENC_HEADER_CODE);
-			if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
+			if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_ENCODE_HEADER)) {
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");
 				return -ETIMEDOUT;
 			}
@@ -1240,7 +1251,6 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 static int coda_stop_streaming(struct vb2_queue *q)
 {
 	struct coda_ctx *ctx = vb2_get_drv_priv(q);
-	struct coda_dev *dev = ctx->dev;
 
 	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT) {
 		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
@@ -1255,7 +1265,7 @@ static int coda_stop_streaming(struct vb2_queue *q)
 	if (!ctx->rawstreamon & !ctx->compstreamon) {
 		v4l2_dbg(1, coda_debug, &ctx->dev->v4l2_dev,
 			 "%s: sent command 'SEQ_END' to coda\n", __func__);
-		if (coda_command_sync(dev, ctx->params.codec_mode, CODA_COMMAND_SEQ_END)) {
+		if (coda_command_sync(ctx, ctx->params.codec_mode, CODA_COMMAND_SEQ_END)) {
 			v4l2_err(&ctx->dev->v4l2_dev,
 				 "CODA_COMMAND_SEQ_END failed\n");
 			return -ETIMEDOUT;
@@ -1395,6 +1405,9 @@ static int coda_open(struct file *file)
 	struct coda_ctx *ctx = NULL;
 	int ret = 0;
 
+	if (dev->instances >= CODA_MAX_INSTANCES)
+		return -EBUSY;
+
 	ctx = kzalloc(sizeof *ctx, GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
@@ -1431,10 +1444,12 @@ static int coda_open(struct file *file)
 		goto err;
 	}
 
+	ctx->idx = dev->instances++;
+
 	clk_enable(dev->clk);
 
-	v4l2_dbg(1, coda_debug, &dev->v4l2_dev, "Created instance %p\n",
-		 ctx);
+	v4l2_dbg(1, coda_debug, &dev->v4l2_dev, "Created instance %d (%p)\n",
+		 ctx->idx, ctx);
 
 	return 0;
 
@@ -1453,6 +1468,7 @@ static int coda_release(struct file *file)
 	v4l2_dbg(1, coda_debug, &dev->v4l2_dev, "Releasing instance %p\n",
 		 ctx);
 
+	dev->instances--;
 	dma_free_coherent(&dev->plat_dev->dev, CODA_PARA_BUF_SIZE,
 		ctx->parabuf.vaddr, ctx->parabuf.paddr);
 	v4l2_m2m_ctx_release(ctx->m2m_ctx);
@@ -1551,7 +1567,11 @@ static int coda_hw_init(struct coda_dev *dev, const struct firmware *fw)
 
 	/* Load firmware */
 	coda_write(dev, 0, CODA_CMD_FIRMWARE_VERNUM);
-	if (coda_command_sync(dev, 0, CODA_COMMAND_FIRMWARE_GET)) {
+	coda_write(dev, CODA_REG_BIT_BUSY_FLAG, CODA_REG_BIT_BUSY);
+	coda_write(dev, 0, CODA_REG_BIT_RUN_INDEX);
+	coda_write(dev, 0, CODA_REG_BIT_RUN_COD_STD);
+	coda_write(dev, CODA_COMMAND_FIRMWARE_GET, CODA_REG_BIT_RUN_COMMAND);
+	if (coda_wait_timeout(dev)) {
 		clk_disable(dev->clk);
 		v4l2_err(&dev->v4l2_dev, "firmware get command error\n");
 		return -EIO;
