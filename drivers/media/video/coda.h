@@ -42,8 +42,8 @@
 #define CODA_REG_BIT_FRAME_MEM_CTRL		0x110
 		/* Image Endianess */
 #define 	CODA_IMAGE_ENDIAN_SELECT	(1 << 0)
-#define CODA_REG_BIT_RD_PTR_0              0x120
-#define CODA_REG_BIT_WR_PTR_0              0x124
+#define CODA_REG_BIT_RD_PTR(x)			(0x120 + 8 * (x))
+#define CODA_REG_BIT_WR_PTR(x)			(0x124 + 8 * (x))
 #define CODA_REG_BIT_SEARCH_RAM_BASE_ADDR  0x140
 #define CODA_REG_BIT_BUSY			0x160
 #define 	CODA_REG_BIT_BUSY_FLAG	1

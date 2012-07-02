@@ -661,7 +661,7 @@ int coda_isr(struct coda_dev *dev)
 	/* Get results from the coda */
 	coda_read(dev, CODA_RET_ENC_PIC_TYPE);
 	start_ptr = coda_read(dev, CODA_CMD_ENC_PIC_BB_START);
-	wr_ptr = coda_read(dev, CODA_REG_BIT_WR_PTR_0);
+	wr_ptr = coda_read(dev, CODA_REG_BIT_WR_PTR(ctx->idx));
 	/* Calculate bytesused field */
 	if (dst_buf->v4l2_buf.sequence == 0) {
 		dst_buf->v4l2_planes[0].bytesused = (wr_ptr - start_ptr) +
@@ -1046,8 +1046,8 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			return -EFAULT;
 		}
 		coda_write(dev, ctx->parabuf.paddr, CODA_REG_BIT_PARA_BUF_ADDR);
-		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR_0);
-		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR_0);
+		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR(ctx->idx));
+		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR(ctx->idx));
 		coda_write(dev, 3 << 3, CODA_REG_BIT_STREAM_CTRL);
 
 		/* Configure the coda */
@@ -1174,7 +1174,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
+			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR(ctx->idx)) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
 			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0),
 			       ctx->vpu_header_size[0]);
@@ -1190,7 +1190,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
+			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR(ctx->idx)) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
 			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0),
 			       ctx->vpu_header_size[1]);
@@ -1208,7 +1208,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER timeout\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
+			ctx->vpu_header_size[0] = coda_read(dev, CODA_REG_BIT_WR_PTR(ctx->idx)) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
 			memcpy(&ctx->vpu_header[0][0], vb2_plane_vaddr(buf, 0),
 			       ctx->vpu_header_size[0]);
@@ -1220,7 +1220,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
+			ctx->vpu_header_size[1] = coda_read(dev, CODA_REG_BIT_WR_PTR(ctx->idx)) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
 			memcpy(&ctx->vpu_header[1][0], vb2_plane_vaddr(buf, 0),
 			       ctx->vpu_header_size[1]);
@@ -1232,7 +1232,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 				v4l2_err(&ctx->dev->v4l2_dev, "CODA_COMMAND_ENCODE_HEADER failed\n");
 				return -ETIMEDOUT;
 			}
-			ctx->vpu_header_size[2] = coda_read(dev, CODA_REG_BIT_WR_PTR_0) -
+			ctx->vpu_header_size[2] = coda_read(dev, CODA_REG_BIT_WR_PTR(ctx->idx)) -
 					coda_read(dev, CODA_CMD_ENC_HEADER_BB_START);
 			memcpy(&ctx->vpu_header[2][0], vb2_plane_vaddr(buf, 0),
 			       ctx->vpu_header_size[2]);
