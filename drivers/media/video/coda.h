@@ -82,27 +82,24 @@
  * issued.
  */
 /* Encoder Sequence Initialization */
-#define CODA_CMD_ENC_SEQ_BB_START          0x180
-#define CODA_CMD_ENC_SEQ_BB_SIZE           0x184
-#define CODA_CMD_ENC_SEQ_OPTION            0x188
-#define 	CODA_OPTION_GAMMA_OFFSET                      7
-#define 	CODA_OPTION_GAMMA_MASK                        0x01
-#define 	CODA_OPTION_LIMITQP_OFFSET                    6
-#define 	CODA_OPTION_LIMITQP_MASK                      0x01
-#define 	CODA_OPTION_RCINTRAQP_OFFSET                  5
-#define 	CODA_OPTION_RCINTRAQP_MASK                    0x01
-#define 	CODA_OPTION_FMO_OFFSET                        4
-#define 	CODA_OPTION_FMO_MASK                          0x01
-// /* There is no bit 3 */
-// #define 	CODA_OPTION_AUD_OFFSET                        2
-// #define 	CODA_OPTION_AUD_MASK                          0x01
-#define 	CODA_OPTION_SLICEREPORT_OFFSET                1
-#define 	CODA_OPTION_SLICEREPORT_MASK                  0x01
-// /* There is no bit 0 */
-#define CODA_CMD_ENC_SEQ_COD_STD           0x18C
-#define 	CODA_ENCODE_MPEG4                             0
-#define 	CODA_ENCODE_H263                              1
-#define 	CODA_ENCODE_H264                              2
+#define CODA_CMD_ENC_SEQ_BB_START				0x180
+#define CODA_CMD_ENC_SEQ_BB_SIZE				0x184
+#define CODA_CMD_ENC_SEQ_OPTION				0x188
+#define 	CODA_OPTION_GAMMA_OFFSET			7
+#define 	CODA_OPTION_GAMMA_MASK				0x01
+#define 	CODA_OPTION_LIMITQP_OFFSET			6
+#define 	CODA_OPTION_LIMITQP_MASK			0x01
+#define 	CODA_OPTION_RCINTRAQP_OFFSET			5
+#define 	CODA_OPTION_RCINTRAQP_MASK			0x01
+#define 	CODA_OPTION_FMO_OFFSET				4
+#define 	CODA_OPTION_FMO_MASK				0x01
+#define 	CODA_OPTION_SLICEREPORT_OFFSET			1
+#define 	CODA_OPTION_SLICEREPORT_MASK			0x01
+#define CODA_CMD_ENC_SEQ_COD_STD				0x18C
+#define 	CODA_STD_MPEG4					0
+#define 	CODA_STD_H263					1
+#define 	CODA_STD_H264					2
+#define		CODA_STD_MJPG					3
 #define CODA_CMD_ENC_SEQ_SRC_SIZE          0x190
 #define 	CODA_PICWIDTH_OFFSET                          10
 #define 	CODA_PICWIDTH_MASK                            0x3ff
