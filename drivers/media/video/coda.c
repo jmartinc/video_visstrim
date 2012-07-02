@@ -1677,7 +1677,7 @@ static int coda_firmware_request(struct coda_dev *dev)
 	}
 
 	return request_firmware_nowait(THIS_MODULE, true,
-		fw, &dev->plat_dev->dev,GFP_KERNEL, dev, coda_fw_callback);
+		fw, &dev->plat_dev->dev, GFP_KERNEL, dev, coda_fw_callback);
 }
 
 static int __devinit coda_probe(struct platform_device *pdev)
