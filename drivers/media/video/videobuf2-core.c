@@ -1157,6 +1157,7 @@ int vb2_qbuf(struct vb2_queue *q, struct v4l2_buffer *b)
 	 */
 	list_add_tail(&vb->queued_entry, &q->queued_list);
 	vb->state = VB2_BUF_STATE_QUEUED;
+	vb->v4l2_buf.sequence = b->sequence;
 
 	/*
 	 * If already streaming, give the buffer to driver for processing.
