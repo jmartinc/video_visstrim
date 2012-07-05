@@ -1459,7 +1459,9 @@ static int coda_open(struct file *file)
 		goto err;
 	}
 
+	coda_lock(ctx);
 	ctx->idx = dev->instances++;
+	coda_unlock(ctx);
 
 	clk_prepare_enable(dev->clk_per);
 	clk_prepare_enable(dev->clk_ahb);
@@ -1484,7 +1486,10 @@ static int coda_release(struct file *file)
 	v4l2_dbg(1, coda_debug, &dev->v4l2_dev, "Releasing instance %p\n",
 		 ctx);
 
+	coda_lock(ctx);
 	dev->instances--;
+	coda_unlock(ctx);
+
 	dma_free_coherent(&dev->plat_dev->dev, CODA_PARA_BUF_SIZE,
 		ctx->parabuf.vaddr, ctx->parabuf.paddr);
 	v4l2_m2m_ctx_release(ctx->m2m_ctx);
@@ -1502,8 +1507,12 @@ static unsigned int coda_poll(struct file *file,
 				 struct poll_table_struct *wait)
 {
 	struct coda_ctx *ctx = fh_to_ctx(file->private_data);
+	int ret;
 
-	return v4l2_m2m_poll(file, ctx->m2m_ctx, wait);
+	coda_lock(ctx);
+	ret = v4l2_m2m_poll(file, ctx->m2m_ctx, wait);
+	coda_unlock(ctx);
+	return ret;
 }
 
 static int coda_mmap(struct file *file, struct vm_area_struct *vma)
