@@ -118,6 +118,8 @@
 #define CSISR_ECC_INT		(1 << 1)
 #define CSISR_DRDY		(1 << 0)
 
+#define CSICR1_FMT_MASK	 (CSICR1_PACK_DIR | CSICR1_SWAP16_EN)
+
 #define CSICR1			0x00
 #define CSICR2			0x04
 #define CSISR			(cpu_is_mx27() ? 0x08 : 0x18)
@@ -230,6 +232,7 @@ struct mx2_prp_cfg {
 	u32 src_pixel;
 	u32 ch1_pixel;
 	u32 irq_flags;
+	u32 csicr1;
 };
 
 /* prp resizing parameters */
@@ -330,6 +333,7 @@ static struct mx2_fmt_cfg mx27_emma_prp_table[] = {
 			.ch1_pixel	= 0x2ca00565, /* RGB565 */
 			.irq_flags	= PRP_INTR_RDERR | PRP_INTR_CH1WERR |
 						PRP_INTR_CH1FC | PRP_INTR_LBOVF,
+			.csicr1		= 0,
 		}
 	},
 	{
@@ -343,6 +347,21 @@ static struct mx2_fmt_cfg mx27_emma_prp_table[] = {
 			.irq_flags	= PRP_INTR_RDERR | PRP_INTR_CH2WERR |
 					PRP_INTR_CH2FC | PRP_INTR_LBOVF |
 					PRP_INTR_CH2OVF,
+			.csicr1		= CSICR1_PACK_DIR,
+		}
+	},
+	{
+		.in_fmt		= V4L2_MBUS_FMT_UYVY8_2X8,
+		.out_fmt	= V4L2_PIX_FMT_YUV420,
+		.cfg		= {
+			.channel	= 2,
+			.in_fmt		= PRP_CNTL_DATA_IN_YUV422,
+			.out_fmt	= PRP_CNTL_CH2_OUT_YUV420,
+			.src_pixel	= 0x22000888, /* YUV422 (YUYV) */
+			.irq_flags	= PRP_INTR_RDERR | PRP_INTR_CH2WERR |
+					PRP_INTR_CH2FC | PRP_INTR_LBOVF |
+					PRP_INTR_CH2OVF,
+			.csicr1		= CSICR1_SWAP16_EN,
 		}
 	},
 };
@@ -1018,14 +1037,14 @@ static int mx2_camera_set_bus_param(struct soc_camera_device *icd)
 		return ret;
 	}
 
+	csicr1 = (csicr1 & ~CSICR1_FMT_MASK) | pcdev->emma_prp->cfg.csicr1;
+
 	if (common_flags & V4L2_MBUS_PCLK_SAMPLE_RISING)
 		csicr1 |= CSICR1_REDGE;
 	if (common_flags & V4L2_MBUS_VSYNC_ACTIVE_HIGH)
 		csicr1 |= CSICR1_SOF_POL;
 	if (common_flags & V4L2_MBUS_HSYNC_ACTIVE_HIGH)
 		csicr1 |= CSICR1_HSYNC_POL;
-	if (pcdev->platform_flags & MX2_CAMERA_SWAP16)
-		csicr1 |= CSICR1_SWAP16_EN;
 	if (pcdev->platform_flags & MX2_CAMERA_EXT_VSYNC)
 		csicr1 |= CSICR1_EXT_VSYNC;
 	if (pcdev->platform_flags & MX2_CAMERA_CCIR)
@@ -1036,8 +1055,6 @@ static int mx2_camera_set_bus_param(struct soc_camera_device *icd)
 		csicr1 |= CSICR1_GCLK_MODE;
 	if (pcdev->platform_flags & MX2_CAMERA_INV_DATA)
 		csicr1 |= CSICR1_INV_DATA;
-	if (pcdev->platform_flags & MX2_CAMERA_PACK_DIR_MSB)
-		csicr1 |= CSICR1_PACK_DIR;
 
 	pcdev->csicr1 = csicr1;
 
@@ -1112,7 +1129,8 @@ static int mx2_camera_get_formats(struct soc_camera_device *icd,
 		return 0;
 	}
 
-	if (code == V4L2_MBUS_FMT_YUYV8_2X8) {
+	if (code == V4L2_MBUS_FMT_YUYV8_2X8 ||
+	    code == V4L2_MBUS_FMT_UYVY8_2X8) {
 		formats++;
 		if (xlate) {
 			/*
