@@ -337,6 +337,32 @@ static struct mx2_fmt_cfg mx27_emma_prp_table[] = {
 		}
 	},
 	{
+		.in_fmt		= V4L2_MBUS_FMT_UYVY8_2X8,
+		.out_fmt	= V4L2_PIX_FMT_YUYV,
+		.cfg		= {
+			.channel	= 1,
+			.in_fmt		= PRP_CNTL_DATA_IN_YUV422,
+			.out_fmt	= PRP_CNTL_CH1_OUT_YUV422,
+			.src_pixel	= 0x22000888, /* YUV422 (YUYV) */
+			.ch1_pixel	= 0x62000888, /* YUV422 (YUYV) */
+			.irq_flags	= PRP_INTR_RDERR | PRP_INTR_CH1WERR |
+						PRP_INTR_CH1FC | PRP_INTR_LBOVF,
+		}
+	},
+	{
+		.in_fmt		= V4L2_MBUS_FMT_YUYV8_2X8,
+		.out_fmt	= V4L2_PIX_FMT_YUYV,
+		.cfg		= {
+			.channel	= 1,
+			.in_fmt		= PRP_CNTL_DATA_IN_YUV422,
+			.out_fmt	= PRP_CNTL_CH1_OUT_YUV422,
+			.src_pixel	= 0x22000888, /* YUV422 (YUYV) */
+			.ch1_pixel	= 0x62000888, /* YUV422 (YUYV) */
+			.irq_flags	= PRP_INTR_RDERR | PRP_INTR_CH1WERR |
+						PRP_INTR_CH1FC | PRP_INTR_LBOVF,
+		}
+	},
+	{
 		.in_fmt		= V4L2_MBUS_FMT_YUYV8_2X8,
 		.out_fmt	= V4L2_PIX_FMT_YUV420,
 		.cfg		= {
