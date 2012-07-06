@@ -91,6 +91,10 @@ enum coda_inst_type {
 	CODA_INST_DECODER,
 };
 
+enum coda_devtype {
+	CODA_DX6 = 0xf001,
+};
+
 struct coda_fmt {
 	char *name;
 	u32 fourcc;
@@ -114,6 +118,7 @@ struct coda_dev {
 	struct v4l2_device	v4l2_dev;
 	struct video_device	*vfd;
 	struct platform_device	*plat_dev;
+	enum coda_devtype       devtype;
 
 	void __iomem		*regs_base;
 	struct clk		*clk_per;
@@ -1717,9 +1722,19 @@ static int coda_firmware_request(struct coda_dev *dev)
 		fw, &dev->plat_dev->dev, GFP_KERNEL, dev, coda_fw_callback);
 }
 
+enum coda_platforms {
+	CODA_IMX27,
+};
+
+static struct platform_device_id coda_platform_ids[] = {
+	[CODA_IMX27] = { .name = "coda-imx27", .driver_data = CODA_DX6 },
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(platform, coda_platform_ids);
+
 #ifdef CONFIG_OF
 static const struct of_device_id coda_dt_ids[] = {
-       { .compatible = "fsl,imx27-vpu" },
+       { .compatible = "fsl,imx27-vpu", .data = &coda_platform_ids[CODA_IMX27] },
        { /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(platform, coda_dt_ids);
@@ -1727,6 +1742,11 @@ MODULE_DEVICE_TABLE(platform, coda_dt_ids);
 
 static int __devinit coda_probe(struct platform_device *pdev)
 {
+#ifdef CONFIG_OF
+	const struct of_device_id *of_id =
+			of_match_device(coda_dt_ids, &pdev->dev);
+#endif
+	const struct platform_device_id *pdev_id;
 	struct coda_dev *dev;
 	struct resource *res;
 	unsigned int bufsize;
@@ -1814,6 +1834,16 @@ static int __devinit coda_probe(struct platform_device *pdev)
 		dev->workbuf.paddr = dev->codebuf.paddr + CODA9_CODE_BUF_SIZE;
 	}
 
+#ifdef CONFIG_OF
+	pdev_id = of_id ? of_id->data : platform_get_device_id(pdev);
+#else
+	pdev_id = platform_get_device_id(pdev);
+#endif
+	if (!pdev_id)
+		return -EINVAL;
+
+	dev->devtype = pdev_id->driver_data;
+
 	return coda_firmware_request(dev);
 }
 
@@ -1846,6 +1876,7 @@ static struct platform_driver coda_driver = {
 		.owner	= THIS_MODULE,
 		.of_match_table = of_match_ptr(coda_dt_ids),
 	},
+	.id_table = coda_platform_ids,
 };
 
 module_platform_driver(coda_driver);
