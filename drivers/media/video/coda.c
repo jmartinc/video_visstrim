@@ -1844,6 +1844,8 @@ static int __devinit coda_probe(struct platform_device *pdev)
 
 	dev->devtype = pdev_id->driver_data;
 
+	platform_set_drvdata(pdev, dev);
+
 	return coda_firmware_request(dev);
 }
 
