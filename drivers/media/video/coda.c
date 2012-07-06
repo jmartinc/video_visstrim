@@ -18,6 +18,7 @@
 #include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/videodev2.h>
@@ -1716,6 +1717,14 @@ static int coda_firmware_request(struct coda_dev *dev)
 		fw, &dev->plat_dev->dev, GFP_KERNEL, dev, coda_fw_callback);
 }
 
+#ifdef CONFIG_OF
+static const struct of_device_id coda_dt_ids[] = {
+       { .compatible = "fsl,imx27-vpu" },
+       { /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(platform, coda_dt_ids);
+#endif
+
 static int __devinit coda_probe(struct platform_device *pdev)
 {
 	struct coda_dev *dev;
@@ -1835,6 +1844,7 @@ static struct platform_driver coda_driver = {
 	.driver	= {
 		.name	= CODA_NAME,
 		.owner	= THIS_MODULE,
+		.of_match_table = of_match_ptr(coda_dt_ids),
 	},
 };
 
