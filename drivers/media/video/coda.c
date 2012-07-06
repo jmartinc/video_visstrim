@@ -69,7 +69,6 @@
 #define H_ALIGN		1 /* multiple of 2 */
 
 #define fh_to_ctx(__fh)	container_of(__fh, struct coda_ctx, fh)
-#define is_codadx6()	cpu_is_mx27()
 
 int coda_debug;
 module_param(coda_debug, int, 0);
@@ -260,17 +259,19 @@ static struct coda_fmt codadx6_formats[] = {
 	},
 };
 
-static struct coda_fmt *find_format(struct v4l2_format *f)
+static struct coda_fmt *find_format(struct coda_dev *dev, struct v4l2_format *f)
 {
 	struct coda_fmt *formats;
 	struct coda_fmt *fmt;
 	int num_formats;
 	unsigned int k;
 
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		formats = codadx6_formats;
 		num_formats = ARRAY_SIZE(codadx6_formats);
-	} else { /* coda9 not yet implemented */
+		break;
+	default: /* Other versions not yet implemented */
 		return NULL;
 	}
 
@@ -300,17 +301,22 @@ static int vidioc_querycap(struct file *file, void *priv,
 	return 0;
 }
 
-static int enum_fmt(struct v4l2_fmtdesc *f, enum coda_fmt_type type)
+static int enum_fmt(void *priv, struct v4l2_fmtdesc *f,
+			enum coda_fmt_type type)
 {
+	struct coda_ctx *ctx = fh_to_ctx(priv);
+	struct coda_dev *dev = ctx->dev;
 	struct coda_fmt *formats;
 	struct coda_fmt *fmt;
 	int num_formats;
 	int i, num = 0;
 
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		formats = codadx6_formats;
 		num_formats = ARRAY_SIZE(codadx6_formats);
-	} else { /* coda9 not yet implemented */
+		break;
+	default: /* Other versions not yet implemented */
 		return -EINVAL;
 	}
 
@@ -336,13 +342,13 @@ static int enum_fmt(struct v4l2_fmtdesc *f, enum coda_fmt_type type)
 static int vidioc_enum_fmt_vid_cap(struct file *file, void *priv,
 				   struct v4l2_fmtdesc *f)
 {
-	return enum_fmt(f, CODA_FMT_ENC);
+	return enum_fmt(priv, f, CODA_FMT_ENC);
 }
 
 static int vidioc_enum_fmt_vid_out(struct file *file, void *priv,
 				   struct v4l2_fmtdesc *f)
 {
-	return enum_fmt(f, CODA_FMT_RAW);
+	return enum_fmt(priv, f, CODA_FMT_RAW);
 }
 
 static int vidioc_g_fmt(struct coda_ctx *ctx, struct v4l2_format *f)
@@ -384,11 +390,11 @@ static int vidioc_g_fmt_vid_cap(struct file *file, void *priv,
 	return vidioc_g_fmt(fh_to_ctx(priv), f);
 }
 
-static int vidioc_try_fmt(struct v4l2_format *f)
+static int vidioc_try_fmt(struct coda_dev *dev, struct v4l2_format *f)
 {
 	enum v4l2_field field;
 
-	if (!find_format(f))
+	if (!find_format(dev, f))
 		return -EINVAL;
 
 	field = f->fmt.pix.field;
@@ -422,7 +428,7 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	struct coda_fmt *fmt;
 	struct coda_ctx *ctx = fh_to_ctx(priv);
 
-	fmt = find_format(f);
+	fmt = find_format(ctx->dev, f);
 	/*
 	 * Since decoding support is not implemented yet do not allow
 	 * CODA_FMT_RAW formats in the capture interface.
@@ -434,16 +440,16 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 		return -EINVAL;
 	}
 
-	return vidioc_try_fmt(f);
+	return vidioc_try_fmt(ctx->dev, f);
 }
 
 static int vidioc_try_fmt_vid_out(struct file *file, void *priv,
 				  struct v4l2_format *f)
 {
-	struct coda_fmt *fmt;
 	struct coda_ctx *ctx = fh_to_ctx(priv);
+	struct coda_fmt *fmt;
 
-	fmt = find_format(f);
+	fmt = find_format(ctx->dev, f);
 	/*
 	 * Since decoding support is not implemented yet do not allow
 	 * CODA_FMT formats in the capture interface.
@@ -455,7 +461,7 @@ static int vidioc_try_fmt_vid_out(struct file *file, void *priv,
 		return -EINVAL;
 	}
 
-	return vidioc_try_fmt(f);
+	return vidioc_try_fmt(ctx->dev, f);
 }
 
 static int vidioc_s_fmt(struct coda_ctx *ctx, struct v4l2_format *f)
@@ -477,11 +483,11 @@ static int vidioc_s_fmt(struct coda_ctx *ctx, struct v4l2_format *f)
 		return -EBUSY;
 	}
 
-	ret = vidioc_try_fmt(f);
+	ret = vidioc_try_fmt(ctx->dev, f);
 	if (ret)
 		return ret;
 
-	q_data->fmt		= find_format(f);
+	q_data->fmt		= find_format(ctx->dev, f);
 	if (q_data->fmt->fourcc == V4L2_PIX_FMT_YUV420) {
 		q_data->width		= f->fmt.pix.width;
 		q_data->height		= f->fmt.pix.height;
@@ -502,7 +508,7 @@ static int vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 {
 	int ret;
 
-	ret = vidioc_try_fmt_vid_cap(file, fh_to_ctx(priv), f);
+	ret = vidioc_try_fmt_vid_cap(file, priv, f);
 	if (ret)
 		return ret;
 
@@ -514,7 +520,7 @@ static int vidioc_s_fmt_vid_out(struct file *file, void *priv,
 {
 	int ret;
 
-	ret = vidioc_try_fmt_vid_out(file, fh_to_ctx(priv), f);
+	ret = vidioc_try_fmt_vid_out(file, priv, f);
 	if (ret)
 		return ret;
 
@@ -921,15 +927,22 @@ struct v4l2_m2m_ops *get_m2m_ops(void)
 
 void set_default_params(struct coda_ctx *ctx)
 {
+	struct coda_dev *dev = ctx->dev;
+
 	ctx->params.codec_mode = CODA_MODE_INVALID;
 	ctx->params.framerate = 30;
 	ctx->reference = NULL;
 	ctx->aborting = 0;
 
 	/* Default formats for output and input queues */
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		ctx->q_data[V4L2_M2M_SRC].fmt = &codadx6_formats[0];
 		ctx->q_data[V4L2_M2M_DST].fmt = &codadx6_formats[1];
+		break;
+	default:
+		/* No default format for not implemented versions */
+		break;
 	}
 }
 
@@ -1058,14 +1071,16 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, ctx->parabuf.paddr, CODA_REG_BIT_PARA_BUF_ADDR);
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR(ctx->idx));
 		coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR(ctx->idx));
-		if (is_codadx6()) {
+		switch (dev->devtype) {
+		case CODA_DX6:
 			/*
 			 * We should use (CODADX6_STREAM_BUF_PIC_RESET |
 			 * CODADX6_STREAM_BUF_PIC_FLUSH) but it doesn't work
 			 * with firmware 2.2.5.
 			 */
 			coda_write(dev, (3 << 3), CODA_REG_BIT_STREAM_CTRL);
-		} else {
+			break;
+		default:
 			coda_write(dev, CODA9_STREAM_BUF_PIC_RESET |
 				CODA9_STREAM_BUF_PIC_FLUSH, CODA_REG_BIT_STREAM_CTRL);
 		}
@@ -1074,9 +1089,11 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 		coda_write(dev, 0xFFFF4C00, CODA_REG_BIT_SEARCH_RAM_BASE_ADDR);
 
 		/* Could set rotation here if needed */
-		if (is_codadx6()) {
+		switch (dev->devtype) {
+		case CODA_DX6:
 			value = (q_data_src->width & CODADX6_PICWIDTH_MASK) << CODADX6_PICWIDTH_OFFSET;
-		} else {
+			break;
+		default:
 			value = (q_data_src->width & CODA9_PICWIDTH_MASK) << CODA9_PICWIDTH_OFFSET;
 		}
 		value |= (q_data_src->height & CODA_PICHEIGHT_MASK) << CODA_PICHEIGHT_OFFSET;
@@ -1086,7 +1103,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		switch (dst_fourcc) {
 		case V4L2_PIX_FMT_MPEG4:
-			ctx->params.codec_mode = is_codadx6() ? CODADX6_MODE_ENCODE_MP4 : CODA9_MODE_ENCODE_MP4;
+			ctx->params.codec_mode = (dev->devtype == CODA_DX6) ? CODADX6_MODE_ENCODE_MP4 : CODA9_MODE_ENCODE_MP4;
 			coda_write(dev, CODA_STD_MPEG4, CODA_CMD_ENC_SEQ_COD_STD);
 			value  = (0 & CODA_MP4PARAM_VERID_MASK) << CODA_MP4PARAM_VERID_OFFSET;
 			value |= (0 & CODA_MP4PARAM_INTRADCVLCTHR_MASK) << CODA_MP4PARAM_INTRADCVLCTHR_OFFSET;
@@ -1095,7 +1112,7 @@ static int coda_start_streaming(struct vb2_queue *q, unsigned int count)
 			coda_write(dev, value, CODA_CMD_ENC_SEQ_MP4_PARA);
 			break;
 		case V4L2_PIX_FMT_H264:
-			ctx->params.codec_mode = is_codadx6() ? CODADX6_MODE_ENCODE_H264 : CODA9_MODE_ENCODE_H264;
+			ctx->params.codec_mode = (dev->devtype == CODA_DX6) ? CODADX6_MODE_ENCODE_H264 : CODA9_MODE_ENCODE_H264;
 			coda_write(dev, CODA_STD_H264, CODA_CMD_ENC_SEQ_COD_STD);
 			value  = (0 & CODA_264PARAM_DEBLKFILTEROFFSETBETA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETBETA_OFFSET;
 			value |= (0 & CODA_264PARAM_DEBLKFILTEROFFSETALPHA_MASK) << CODA_264PARAM_DEBLKFILTEROFFSETALPHA_OFFSET;
@@ -1583,9 +1600,11 @@ static int coda_hw_init(struct coda_dev *dev, const struct firmware *fw)
 	coda_write(dev, 0, CODA_REG_BIT_CODE_RUN);
 
 	/* Set default values */
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		coda_write(dev, CODADX6_STREAM_BUF_PIC_FLUSH, CODA_REG_BIT_STREAM_CTRL);
-	} else {
+		break;
+	default:
 		coda_write(dev, CODA9_STREAM_BUF_PIC_FLUSH, CODA_REG_BIT_STREAM_CTRL);
 	}
 	coda_write(dev, 0, CODA_REG_BIT_FRAME_MEM_CTRL);
@@ -1711,9 +1730,11 @@ static int coda_firmware_request(struct coda_dev *dev)
 {
 	char *fw;
 
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		fw = "v4l-codadx6-imx27.bin";
-	} else {
+		break;
+	default:
 		/* Not supported yet */
 		return -ENOENT;
 	}
@@ -1813,9 +1834,11 @@ static int __devinit coda_probe(struct platform_device *pdev)
 	mutex_init(&dev->dev_mutex);
 
 	/* allocate auxiliary per-device buffers for the BIT processor */
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE;
-	} else {
+		break;
+	default:
 		bufsize = CODA9_CODE_BUF_SIZE + CODA9_WORK_BUF_SIZE;
 	}
 	dev->codebuf.vaddr = dma_alloc_coherent(&pdev->dev, bufsize,
@@ -1826,10 +1849,12 @@ static int __devinit coda_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		dev->workbuf.vaddr = dev->codebuf.vaddr + CODADX6_CODE_BUF_SIZE;
 		dev->workbuf.paddr = dev->codebuf.paddr + CODADX6_CODE_BUF_SIZE;
-	} else {
+		break;
+	default:
 		dev->workbuf.vaddr = dev->codebuf.vaddr + CODA9_CODE_BUF_SIZE;
 		dev->workbuf.paddr = dev->codebuf.paddr + CODA9_CODE_BUF_SIZE;
 	}
@@ -1854,9 +1879,11 @@ static int coda_remove(struct platform_device *pdev)
 	struct coda_dev *dev = platform_get_drvdata(pdev);
 	unsigned int bufsize;
 
-	if (is_codadx6()) {
+	switch (dev->devtype) {
+	case CODA_DX6:
 		bufsize = CODADX6_CODE_BUF_SIZE + CODADX6_WORK_BUF_SIZE;
-	} else {
+		break;
+	default:
 		bufsize = CODA9_CODE_BUF_SIZE + CODA9_WORK_BUF_SIZE;
 	}
 
