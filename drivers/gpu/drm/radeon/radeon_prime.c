@@ -23,11 +23,10 @@
  *
  * Authors: Alex Deucher
  */
-#include "drmP.h"
-#include "drm.h"
+#include <drm/drmP.h>
 
 #include "radeon.h"
-#include "radeon_drm.h"
+#include <drm/radeon_drm.h>
 
 #include <linux/dma-buf.h>
 
@@ -169,11 +168,17 @@ struct dma_buf *radeon_gem_prime_export(struct drm_device *dev,
 	struct radeon_bo *bo = gem_to_radeon_bo(obj);
 	int ret = 0;
 
-	/* pin buffer into GTT */
-	ret = radeon_bo_pin(bo, RADEON_GEM_DOMAIN_GTT, NULL);
-	if (ret)
+	ret = radeon_bo_reserve(bo, false);
+	if (unlikely(ret != 0))
 		return ERR_PTR(ret);
 
+	/* pin buffer into GTT */
+	ret = radeon_bo_pin(bo, RADEON_GEM_DOMAIN_GTT, NULL);
+	if (ret) {
+		radeon_bo_unreserve(bo);
+		return ERR_PTR(ret);
+	}
+	radeon_bo_unreserve(bo);
 	return dma_buf_export(bo, &radeon_dmabuf_ops, obj->size, flags);
 }
 
@@ -189,6 +194,7 @@ struct drm_gem_object *radeon_gem_prime_import(struct drm_device *dev,
 		bo = dma_buf->priv;
 		if (bo->gem_base.dev == dev) {
 			drm_gem_object_reference(&bo->gem_base);
+			dma_buf_put(dma_buf);
 			return &bo->gem_base;
 		}
 	}

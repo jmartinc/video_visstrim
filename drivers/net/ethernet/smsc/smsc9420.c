@@ -1577,7 +1577,7 @@ static const struct net_device_ops smsc9420_netdev_ops = {
 #endif /* CONFIG_NET_POLL_CONTROLLER */
 };
 
-static int __devinit
+static int
 smsc9420_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct net_device *dev;
@@ -1640,8 +1640,7 @@ smsc9420_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto out_free_io_4;
 
 	/* descriptors are aligned due to the nature of pci_alloc_consistent */
-	pd->tx_ring = (struct smsc9420_dma_desc *)
-	    (pd->rx_ring + RX_RING_SIZE);
+	pd->tx_ring = (pd->rx_ring + RX_RING_SIZE);
 	pd->tx_dma_addr = pd->rx_dma_addr +
 	    sizeof(struct smsc9420_dma_desc) * RX_RING_SIZE;
 
@@ -1703,7 +1702,7 @@ out_0:
 	return -ENODEV;
 }
 
-static void __devexit smsc9420_remove(struct pci_dev *pdev)
+static void smsc9420_remove(struct pci_dev *pdev)
 {
 	struct net_device *dev;
 	struct smsc9420_pdata *pd;
@@ -1737,7 +1736,7 @@ static struct pci_driver smsc9420_driver = {
 	.name = DRV_NAME,
 	.id_table = smsc9420_id_table,
 	.probe = smsc9420_probe,
-	.remove = __devexit_p(smsc9420_remove),
+	.remove = smsc9420_remove,
 #ifdef CONFIG_PM
 	.suspend = smsc9420_suspend,
 	.resume = smsc9420_resume,

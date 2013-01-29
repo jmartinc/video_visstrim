@@ -347,8 +347,7 @@ ia64_sync_itc (unsigned int master)
 /*
  * Ideally sets up per-cpu profiling hooks.  Doesn't do much now...
  */
-static inline void __devinit
-smp_setup_percpu_timer (void)
+static inline void smp_setup_percpu_timer(void)
 {
 }
 
@@ -382,7 +381,6 @@ smp_callin (void)
 	set_numa_node(cpu_to_node_map[cpuid]);
 	set_numa_mem(local_memory_node(cpu_to_node_map[cpuid]));
 
-	ipi_call_lock_irq();
 	spin_lock(&vector_lock);
 	/* Setup the per cpu irq handling data structures */
 	__setup_vector_irq(cpuid);
@@ -390,7 +388,6 @@ smp_callin (void)
 	set_cpu_online(cpuid, true);
 	per_cpu(cpu_state, cpuid) = CPU_ONLINE;
 	spin_unlock(&vector_lock);
-	ipi_call_unlock_irq();
 
 	smp_setup_percpu_timer();
 
@@ -460,11 +457,6 @@ start_secondary (void *unused)
 
 	cpu_idle();
 	return 0;
-}
-
-struct pt_regs * __cpuinit idle_regs(struct pt_regs *regs)
-{
-	return NULL;
 }
 
 static int __cpuinit
@@ -570,7 +562,7 @@ smp_prepare_cpus (unsigned int max_cpus)
 	}
 }
 
-void __devinit smp_prepare_boot_cpu(void)
+void smp_prepare_boot_cpu(void)
 {
 	set_cpu_online(smp_processor_id(), true);
 	cpu_set(smp_processor_id(), cpu_callin_map);
@@ -720,8 +712,7 @@ smp_cpus_done (unsigned int dummy)
 	       (int)num_online_cpus(), bogosum/(500000/HZ), (bogosum/(5000/HZ))%100);
 }
 
-static inline void __devinit
-set_cpu_sibling_map(int cpu)
+static inline void set_cpu_sibling_map(int cpu)
 {
 	int i;
 
@@ -800,8 +791,7 @@ init_smp_config(void)
  * identify_siblings(cpu) gets called from identify_cpu. This populates the 
  * information related to logical execution units in per_cpu_data structure.
  */
-void __devinit
-identify_siblings(struct cpuinfo_ia64 *c)
+void identify_siblings(struct cpuinfo_ia64 *c)
 {
 	long status;
 	u16 pltid;

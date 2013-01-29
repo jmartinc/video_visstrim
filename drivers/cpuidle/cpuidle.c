@@ -68,9 +68,9 @@ static cpuidle_enter_t cpuidle_enter_ops;
 int cpuidle_play_dead(void)
 {
 	struct cpuidle_device *dev = __this_cpu_read(cpuidle_devices);
-	struct cpuidle_driver *drv = cpuidle_get_driver();
+	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
 	int i, dead_state = -1;
-	int power_usage = -1;
+	int power_usage = INT_MAX;
 
 	if (!drv)
 		return -ENODEV;
@@ -92,6 +92,33 @@ int cpuidle_play_dead(void)
 }
 
 /**
+ * cpuidle_enter_state - enter the state and update stats
+ * @dev: cpuidle device for this cpu
+ * @drv: cpuidle driver for this cpu
+ * @next_state: index into drv->states of the state to enter
+ */
+int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
+		int next_state)
+{
+	int entered_state;
+
+	entered_state = cpuidle_enter_ops(dev, drv, next_state);
+
+	if (entered_state >= 0) {
+		/* Update cpuidle counters */
+		/* This can be moved to within driver enter routine
+		 * but that results in multiple copies of same code.
+		 */
+		dev->states_usage[entered_state].time += dev->last_residency;
+		dev->states_usage[entered_state].usage++;
+	} else {
+		dev->last_residency = 0;
+	}
+
+	return entered_state;
+}
+
+/**
  * cpuidle_idle_call - the main idle loop
  *
  * NOTE: no locks or semaphores should be used here
@@ -100,7 +127,7 @@ int cpuidle_play_dead(void)
 int cpuidle_idle_call(void)
 {
 	struct cpuidle_device *dev = __this_cpu_read(cpuidle_devices);
-	struct cpuidle_driver *drv = cpuidle_get_driver();
+	struct cpuidle_driver *drv;
 	int next_state, entered_state;
 
 	if (off)
@@ -113,18 +140,15 @@ int cpuidle_idle_call(void)
 	if (!dev || !dev->enabled)
 		return -EBUSY;
 
-#if 0
-	/* shows regressions, re-enable for 2.6.29 */
-	/*
-	 * run any timers that can be run now, at this point
-	 * before calculating the idle duration etc.
-	 */
-	hrtimer_peek_ahead_timers();
-#endif
+	drv = cpuidle_get_cpu_driver(dev);
 
 	/* ask the governor for the next state */
 	next_state = cpuidle_curr_governor->select(drv, dev);
 	if (need_resched()) {
+		dev->last_residency = 0;
+		/* give the governor an opportunity to reflect on the outcome */
+		if (cpuidle_curr_governor->reflect)
+			cpuidle_curr_governor->reflect(dev, next_state);
 		local_irq_enable();
 		return 0;
 	}
@@ -132,22 +156,14 @@ int cpuidle_idle_call(void)
 	trace_power_start_rcuidle(POWER_CSTATE, next_state, dev->cpu);
 	trace_cpu_idle_rcuidle(next_state, dev->cpu);
 
-	entered_state = cpuidle_enter_ops(dev, drv, next_state);
+	if (cpuidle_state_is_coupled(dev, drv, next_state))
+		entered_state = cpuidle_enter_state_coupled(dev, drv,
+							    next_state);
+	else
+		entered_state = cpuidle_enter_state(dev, drv, next_state);
 
 	trace_power_end_rcuidle(dev->cpu);
 	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, dev->cpu);
-
-	if (entered_state >= 0) {
-		/* Update cpuidle counters */
-		/* This can be moved to within driver enter routine
-		 * but that results in multiple copies of same code.
-		 */
-		dev->states_usage[entered_state].time +=
-				(unsigned long long)dev->last_residency;
-		dev->states_usage[entered_state].usage++;
-	} else {
-		dev->last_residency = 0;
-	}
 
 	/* give the governor an opportunity to reflect on the outcome */
 	if (cpuidle_curr_governor->reflect)
@@ -200,6 +216,22 @@ void cpuidle_resume_and_unlock(void)
 }
 
 EXPORT_SYMBOL_GPL(cpuidle_resume_and_unlock);
+
+/* Currently used in suspend/resume path to suspend cpuidle */
+void cpuidle_pause(void)
+{
+	mutex_lock(&cpuidle_lock);
+	cpuidle_uninstall_idle_handler();
+	mutex_unlock(&cpuidle_lock);
+}
+
+/* Currently used in suspend/resume path to resume cpuidle */
+void cpuidle_resume(void)
+{
+	mutex_lock(&cpuidle_lock);
+	cpuidle_install_idle_handler();
+	mutex_unlock(&cpuidle_lock);
+}
 
 /**
  * cpuidle_wrap_enter - performs timekeeping and irqen around enter function
@@ -265,7 +297,7 @@ static void poll_idle_init(struct cpuidle_driver *drv)
 	state->power_usage = -1;
 	state->flags = 0;
 	state->enter = poll_idle;
-	state->disable = 0;
+	state->disabled = false;
 }
 #else
 static void poll_idle_init(struct cpuidle_driver *drv) {}
@@ -281,12 +313,19 @@ static void poll_idle_init(struct cpuidle_driver *drv) {}
 int cpuidle_enable_device(struct cpuidle_device *dev)
 {
 	int ret, i;
-	struct cpuidle_driver *drv = cpuidle_get_driver();
+	struct cpuidle_driver *drv;
+
+	if (!dev)
+		return -EINVAL;
 
 	if (dev->enabled)
 		return 0;
+
+	drv = cpuidle_get_cpu_driver(dev);
+
 	if (!drv || !cpuidle_curr_governor)
 		return -EIO;
+
 	if (!dev->state_count)
 		dev->state_count = drv->state_count;
 
@@ -301,7 +340,8 @@ int cpuidle_enable_device(struct cpuidle_device *dev)
 
 	poll_idle_init(drv);
 
-	if ((ret = cpuidle_add_state_sysfs(dev)))
+	ret = cpuidle_add_device_sysfs(dev);
+	if (ret)
 		return ret;
 
 	if (cpuidle_curr_governor->enable &&
@@ -322,7 +362,7 @@ int cpuidle_enable_device(struct cpuidle_device *dev)
 	return 0;
 
 fail_sysfs:
-	cpuidle_remove_state_sysfs(dev);
+	cpuidle_remove_device_sysfs(dev);
 
 	return ret;
 }
@@ -338,17 +378,20 @@ EXPORT_SYMBOL_GPL(cpuidle_enable_device);
  */
 void cpuidle_disable_device(struct cpuidle_device *dev)
 {
-	if (!dev->enabled)
+	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
+
+	if (!dev || !dev->enabled)
 		return;
-	if (!cpuidle_get_driver() || !cpuidle_curr_governor)
+
+	if (!drv || !cpuidle_curr_governor)
 		return;
 
 	dev->enabled = 0;
 
 	if (cpuidle_curr_governor->disable)
-		cpuidle_curr_governor->disable(cpuidle_get_driver(), dev);
+		cpuidle_curr_governor->disable(drv, dev);
 
-	cpuidle_remove_state_sysfs(dev);
+	cpuidle_remove_device_sysfs(dev);
 	enabled_devices--;
 }
 
@@ -364,25 +407,31 @@ EXPORT_SYMBOL_GPL(cpuidle_disable_device);
 static int __cpuidle_register_device(struct cpuidle_device *dev)
 {
 	int ret;
-	struct device *cpu_dev = get_cpu_device((unsigned long)dev->cpu);
-	struct cpuidle_driver *cpuidle_driver = cpuidle_get_driver();
+	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
 
-	if (!dev)
+	if (!try_module_get(drv->owner))
 		return -EINVAL;
-	if (!try_module_get(cpuidle_driver->owner))
-		return -EINVAL;
-
-	init_completion(&dev->kobj_unregister);
 
 	per_cpu(cpuidle_devices, dev->cpu) = dev;
 	list_add(&dev->device_list, &cpuidle_detected_devices);
-	if ((ret = cpuidle_add_sysfs(cpu_dev))) {
-		module_put(cpuidle_driver->owner);
-		return ret;
-	}
+	ret = cpuidle_add_sysfs(dev);
+	if (ret)
+		goto err_sysfs;
+
+	ret = cpuidle_coupled_register_device(dev);
+	if (ret)
+		goto err_coupled;
 
 	dev->registered = 1;
 	return 0;
+
+err_coupled:
+	cpuidle_remove_sysfs(dev);
+err_sysfs:
+	list_del(&dev->device_list);
+	per_cpu(cpuidle_devices, dev->cpu) = NULL;
+	module_put(drv->owner);
+	return ret;
 }
 
 /**
@@ -392,6 +441,9 @@ static int __cpuidle_register_device(struct cpuidle_device *dev)
 int cpuidle_register_device(struct cpuidle_device *dev)
 {
 	int ret;
+
+	if (!dev)
+		return -EINVAL;
 
 	mutex_lock(&cpuidle_lock);
 
@@ -417,8 +469,7 @@ EXPORT_SYMBOL_GPL(cpuidle_register_device);
  */
 void cpuidle_unregister_device(struct cpuidle_device *dev)
 {
-	struct device *cpu_dev = get_cpu_device((unsigned long)dev->cpu);
-	struct cpuidle_driver *cpuidle_driver = cpuidle_get_driver();
+	struct cpuidle_driver *drv = cpuidle_get_cpu_driver(dev);
 
 	if (dev->registered == 0)
 		return;
@@ -427,14 +478,15 @@ void cpuidle_unregister_device(struct cpuidle_device *dev)
 
 	cpuidle_disable_device(dev);
 
-	cpuidle_remove_sysfs(cpu_dev);
+	cpuidle_remove_sysfs(dev);
 	list_del(&dev->device_list);
-	wait_for_completion(&dev->kobj_unregister);
 	per_cpu(cpuidle_devices, dev->cpu) = NULL;
+
+	cpuidle_coupled_unregister_device(dev);
 
 	cpuidle_resume_and_unlock();
 
-	module_put(cpuidle_driver->owner);
+	module_put(drv->owner);
 }
 
 EXPORT_SYMBOL_GPL(cpuidle_unregister_device);

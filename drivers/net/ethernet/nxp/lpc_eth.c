@@ -44,7 +44,6 @@
 #include <linux/of_net.h>
 #include <linux/types.h>
 
-#include <linux/delay.h>
 #include <linux/io.h>
 #include <mach/board.h>
 #include <mach/platform.h>
@@ -52,7 +51,6 @@
 
 #define MODNAME "lpc-eth"
 #define DRV_VERSION "1.00"
-#define PHYDEF_ADDR 0x00
 
 #define ENET_MAXF_SIZE 1536
 #define ENET_RX_DESC 48
@@ -348,28 +346,15 @@ static phy_interface_t lpc_phy_interface_mode(struct device *dev)
 						   "phy-mode", NULL);
 		if (mode && !strcmp(mode, "mii"))
 			return PHY_INTERFACE_MODE_MII;
-		return PHY_INTERFACE_MODE_RMII;
 	}
-
-	/* non-DT */
-#ifdef CONFIG_ARCH_LPC32XX_MII_SUPPORT
-	return PHY_INTERFACE_MODE_MII;
-#else
 	return PHY_INTERFACE_MODE_RMII;
-#endif
 }
 
 static bool use_iram_for_net(struct device *dev)
 {
 	if (dev && dev->of_node)
 		return of_property_read_bool(dev->of_node, "use-iram");
-
-	/* non-DT */
-#ifdef CONFIG_ARCH_LPC32XX_IRAM_FOR_NET
-	return true;
-#else
 	return false;
-#endif
 }
 
 /* Receive Status information word */
@@ -416,9 +401,6 @@ static bool use_iram_for_net(struct device *dev)
 #define TXDESC_CONTROL_LAST		(1 << 30)
 #define TXDESC_CONTROL_INT		(1 << 31)
 
-static int lpc_eth_hard_start_xmit(struct sk_buff *skb,
-				   struct net_device *ndev);
-
 /*
  * Structure of a TX/RX descriptors and RX status
  */
@@ -440,7 +422,7 @@ struct netdata_local {
 	spinlock_t		lock;
 	void __iomem		*net_base;
 	u32			msg_enable;
-	struct sk_buff		*skb[ENET_TX_DESC];
+	unsigned int		skblen[ENET_TX_DESC];
 	unsigned int		last_tx_idx;
 	unsigned int		num_used_tx_buffs;
 	struct mii_bus		*mii_bus;
@@ -903,12 +885,11 @@ err_out:
 static void __lpc_handle_xmit(struct net_device *ndev)
 {
 	struct netdata_local *pldat = netdev_priv(ndev);
-	struct sk_buff *skb;
 	u32 txcidx, *ptxstat, txstat;
 
 	txcidx = readl(LPC_ENET_TXCONSUMEINDEX(pldat->net_base));
 	while (pldat->last_tx_idx != txcidx) {
-		skb = pldat->skb[pldat->last_tx_idx];
+		unsigned int skblen = pldat->skblen[pldat->last_tx_idx];
 
 		/* A buffer is available, get buffer status */
 		ptxstat = &pldat->tx_stat_v[pldat->last_tx_idx];
@@ -945,9 +926,8 @@ static void __lpc_handle_xmit(struct net_device *ndev)
 		} else {
 			/* Update stats */
 			ndev->stats.tx_packets++;
-			ndev->stats.tx_bytes += skb->len;
+			ndev->stats.tx_bytes += skblen;
 		}
-		dev_kfree_skb_irq(skb);
 
 		txcidx = readl(LPC_ENET_TXCONSUMEINDEX(pldat->net_base));
 	}
@@ -1132,7 +1112,7 @@ static int lpc_eth_hard_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	memcpy(pldat->tx_buff_v + txidx * ENET_MAXF_SIZE, skb->data, len);
 
 	/* Save the buffer and increment the buffer counter */
-	pldat->skb[txidx] = skb;
+	pldat->skblen[txidx] = len;
 	pldat->num_used_tx_buffs++;
 
 	/* Start transmit */
@@ -1147,6 +1127,7 @@ static int lpc_eth_hard_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	spin_unlock_irq(&pldat->lock);
 
+	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
 
@@ -1238,9 +1219,6 @@ static int lpc_eth_open(struct net_device *ndev)
 	if (netif_msg_ifup(pldat))
 		dev_dbg(&pldat->pdev->dev, "enabling %s\n", ndev->name);
 
-	if (!is_valid_ether_addr(ndev->dev_addr))
-		return -EADDRNOTAVAIL;
-
 	__lpc_eth_clock_enable(pldat, true);
 
 	/* Reset and initialize */
@@ -1320,6 +1298,7 @@ static const struct net_device_ops lpc_netdev_ops = {
 	.ndo_set_rx_mode	= lpc_eth_set_multicast_list,
 	.ndo_do_ioctl		= lpc_eth_ioctl,
 	.ndo_set_mac_address	= lpc_set_mac_address,
+	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_change_mtu		= eth_change_mtu,
 };
 
@@ -1442,7 +1421,7 @@ static int lpc_eth_drv_probe(struct platform_device *pdev)
 			res->start);
 	netdev_dbg(ndev, "IO address size      :%d\n",
 			res->end - res->start + 1);
-	netdev_err(ndev, "IO address (mapped)  :0x%p\n",
+	netdev_dbg(ndev, "IO address (mapped)  :0x%p\n",
 			pldat->net_base);
 	netdev_dbg(ndev, "IRQ number           :%d\n", ndev->irq);
 	netdev_dbg(ndev, "DMA buffer size      :%d\n", pldat->dma_buff_size);
@@ -1543,6 +1522,7 @@ static int lpc_eth_drv_remove(struct platform_device *pdev)
 				  pldat->dma_buff_base_p);
 	free_irq(ndev->irq, ndev);
 	iounmap(pldat->net_base);
+	mdiobus_unregister(pldat->mii_bus);
 	mdiobus_free(pldat->mii_bus);
 	clk_disable(pldat->clk);
 	clk_put(pldat->clk);
@@ -1615,7 +1595,7 @@ MODULE_DEVICE_TABLE(of, lpc_eth_match);
 
 static struct platform_driver lpc_eth_driver = {
 	.probe		= lpc_eth_drv_probe,
-	.remove		= __devexit_p(lpc_eth_drv_remove),
+	.remove		= lpc_eth_drv_remove,
 #ifdef CONFIG_PM
 	.suspend	= lpc_eth_drv_suspend,
 	.resume		= lpc_eth_drv_resume,

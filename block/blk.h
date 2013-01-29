@@ -18,6 +18,9 @@ static inline void __blk_get_queue(struct request_queue *q)
 	kobject_get(&q->kobj);
 }
 
+int blk_init_rl(struct request_list *rl, struct request_queue *q,
+		gfp_t gfp_mask);
+void blk_exit_rl(struct request_list *rl);
 void init_request_from_bio(struct request *req, struct bio *bio);
 void blk_rq_bio_prep(struct request_queue *q, struct request *rq,
 			struct bio *bio);
@@ -33,7 +36,6 @@ bool __blk_end_bidi_request(struct request *rq, int error,
 void blk_rq_timed_out_timer(unsigned long data);
 void blk_delete_timer(struct request *);
 void blk_add_timer(struct request *);
-void __generic_unplug_device(struct request_queue *);
 
 /*
  * Internal atomic flags for request handling
@@ -94,7 +96,7 @@ static inline struct request *__elv_next_request(struct request_queue *q)
 			q->flush_queue_delayed = 1;
 			return NULL;
 		}
-		if (unlikely(blk_queue_dead(q)) ||
+		if (unlikely(blk_queue_dying(q)) ||
 		    !q->elevator->type->ops.elevator_dispatch_fn(q, 0))
 			return NULL;
 	}
@@ -143,6 +145,8 @@ int blk_try_merge(struct request *rq, struct bio *bio);
 
 void blk_queue_congestion_threshold(struct request_queue *q);
 
+void __blk_run_queue_uncond(struct request_queue *q);
+
 int blk_dev_init(void);
 
 
@@ -169,14 +173,13 @@ static inline int queue_congestion_off_threshold(struct request_queue *q)
  *
  *	a) it's attached to a gendisk, and
  *	b) the queue had IO stats enabled when this request was started, and
- *	c) it's a file system request or a discard request
+ *	c) it's a file system request
  */
 static inline int blk_do_io_stat(struct request *rq)
 {
 	return rq->rq_disk &&
 	       (rq->cmd_flags & REQ_IO_STAT) &&
-	       (rq->cmd_type == REQ_TYPE_FS ||
-	        (rq->cmd_flags & REQ_DISCARD));
+		(rq->cmd_type == REQ_TYPE_FS);
 }
 
 /*

@@ -14,11 +14,10 @@
 #include <linux/of.h>
 #include <linux/err.h>
 
-#include <mach/hardware.h>
-#include <mach/common.h>
-
 #include "crm-regs-imx5.h"
 #include "clk.h"
+#include "common.h"
+#include "hardware.h"
 
 /* Low-power Audio Playback Mode clock */
 static const char *lp_apm_sel[] = { "osc", };
@@ -39,16 +38,17 @@ static const char *ssi_ext2_com_sels[] = { "ssi_ext2_podf", "ssi2_root_gate", };
 static const char *emi_slow_sel[] = { "main_bus", "ahb", };
 static const char *usb_phy_sel_str[] = { "osc", "usb_phy_podf", };
 static const char *mx51_ipu_di0_sel[] = { "di_pred", "osc", "ckih1", "tve_di", };
-static const char *mx53_ipu_di0_sel[] = { "di_pred", "osc", "ckih1", "di_pll4_podf", "dummy", "ldb_di0", };
+static const char *mx53_ipu_di0_sel[] = { "di_pred", "osc", "ckih1", "di_pll4_podf", "dummy", "ldb_di0_gate", };
 static const char *mx53_ldb_di0_sel[] = { "pll3_sw", "pll4_sw", };
 static const char *mx51_ipu_di1_sel[] = { "di_pred", "osc", "ckih1", "tve_di", "ipp_di1", };
-static const char *mx53_ipu_di1_sel[] = { "di_pred", "osc", "ckih1", "tve_di", "ipp_di1", "ldb_di1", };
+static const char *mx53_ipu_di1_sel[] = { "di_pred", "osc", "ckih1", "tve_di", "ipp_di1", "ldb_di1_gate", };
 static const char *mx53_ldb_di1_sel[] = { "pll3_sw", "pll4_sw", };
 static const char *mx51_tve_ext_sel[] = { "osc", "ckih1", };
 static const char *mx53_tve_ext_sel[] = { "pll4_sw", "ckih1", };
 static const char *tve_sel[] = { "tve_pred", "tve_ext_sel", };
 static const char *ipu_sel[] = { "axi_a", "axi_b", "emi_slow_gate", "ahb", };
 static const char *vpu_sel[] = { "axi_a", "axi_b", "emi_slow_gate", "ahb", };
+static const char *mx53_can_sel[] = { "ipg", "ckih1", "ckih2", "lp_apm", };
 
 enum imx5_clks {
 	dummy, ckil, osc, ckih1, ckih2, ahb, ipg, axi_a, axi_b, uart_pred,
@@ -58,7 +58,7 @@ enum imx5_clks {
 	tve_s, uart1_ipg_gate, uart1_per_gate, uart2_ipg_gate,
 	uart2_per_gate, uart3_ipg_gate, uart3_per_gate, i2c1_gate, i2c2_gate,
 	gpt_ipg_gate, pwm1_ipg_gate, pwm1_hf_gate, pwm2_ipg_gate, pwm2_hf_gate,
-	gpt_gate, fec_gate, usboh3_per_gate, esdhc1_ipg_gate, esdhc2_ipg_gate,
+	gpt_hf_gate, fec_gate, usboh3_per_gate, esdhc1_ipg_gate, esdhc2_ipg_gate,
 	esdhc3_ipg_gate, esdhc4_ipg_gate, ssi1_ipg_gate, ssi2_ipg_gate,
 	ssi3_ipg_gate, ecspi1_ipg_gate, ecspi1_per_gate, ecspi2_ipg_gate,
 	ecspi2_per_gate, cspi_ipg_gate, sdma_gate, emi_slow_gate, ipu_s,
@@ -81,10 +81,13 @@ enum imx5_clks {
 	ssi1_root_podf, ssi2_root_pred, ssi2_root_podf, ssi_ext1_pred,
 	ssi_ext1_podf, ssi_ext2_pred, ssi_ext2_podf, ssi1_root_gate,
 	ssi2_root_gate, ssi3_root_gate, ssi_ext1_gate, ssi_ext2_gate,
+	epit1_ipg_gate, epit1_hf_gate, epit2_ipg_gate, epit2_hf_gate,
+	can_sel, can1_serial_gate, can1_ipg_gate,
 	clk_max
 };
 
 static struct clk *clk[clk_max];
+static struct clk_onecell_data clk_data;
 
 static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 		unsigned long rate_osc, unsigned long rate_ckih1,
@@ -104,12 +107,12 @@ static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 				periph_apm_sel, ARRAY_SIZE(periph_apm_sel));
 	clk[main_bus] = imx_clk_mux("main_bus", MXC_CCM_CBCDR, 25, 1,
 				main_bus_sel, ARRAY_SIZE(main_bus_sel));
-	clk[per_lp_apm] = imx_clk_mux("per_lp_apm", MXC_CCM_CBCDR, 1, 1,
+	clk[per_lp_apm] = imx_clk_mux("per_lp_apm", MXC_CCM_CBCMR, 1, 1,
 				per_lp_apm_sel, ARRAY_SIZE(per_lp_apm_sel));
 	clk[per_pred1] = imx_clk_divider("per_pred1", "per_lp_apm", MXC_CCM_CBCDR, 6, 2);
 	clk[per_pred2] = imx_clk_divider("per_pred2", "per_pred1", MXC_CCM_CBCDR, 3, 3);
 	clk[per_podf] = imx_clk_divider("per_podf", "per_pred2", MXC_CCM_CBCDR, 0, 3);
-	clk[per_root] = imx_clk_mux("per_root", MXC_CCM_CBCDR, 1, 0,
+	clk[per_root] = imx_clk_mux("per_root", MXC_CCM_CBCMR, 0, 1,
 				per_root_sel, ARRAY_SIZE(per_root_sel));
 	clk[ahb] = imx_clk_divider("ahb", "main_bus", MXC_CCM_CBCDR, 10, 3);
 	clk[ahb_max] = imx_clk_gate2("ahb_max", "ahb", MXC_CCM_CCGR0, 28);
@@ -167,12 +170,12 @@ static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 	clk[uart3_per_gate] = imx_clk_gate2("uart3_per_gate", "uart_root", MXC_CCM_CCGR1, 16);
 	clk[i2c1_gate] = imx_clk_gate2("i2c1_gate", "per_root", MXC_CCM_CCGR1, 18);
 	clk[i2c2_gate] = imx_clk_gate2("i2c2_gate", "per_root", MXC_CCM_CCGR1, 20);
-	clk[gpt_ipg_gate] = imx_clk_gate2("gpt_ipg_gate", "ipg", MXC_CCM_CCGR2, 20);
 	clk[pwm1_ipg_gate] = imx_clk_gate2("pwm1_ipg_gate", "ipg", MXC_CCM_CCGR2, 10);
-	clk[pwm1_hf_gate] = imx_clk_gate2("pwm1_hf_gate", "ipg", MXC_CCM_CCGR2, 12);
+	clk[pwm1_hf_gate] = imx_clk_gate2("pwm1_hf_gate", "per_root", MXC_CCM_CCGR2, 12);
 	clk[pwm2_ipg_gate] = imx_clk_gate2("pwm2_ipg_gate", "ipg", MXC_CCM_CCGR2, 14);
-	clk[pwm2_hf_gate] = imx_clk_gate2("pwm2_hf_gate", "ipg", MXC_CCM_CCGR2, 16);
-	clk[gpt_gate] = imx_clk_gate2("gpt_gate", "ipg", MXC_CCM_CCGR2, 18);
+	clk[pwm2_hf_gate] = imx_clk_gate2("pwm2_hf_gate", "per_root", MXC_CCM_CCGR2, 16);
+	clk[gpt_ipg_gate] = imx_clk_gate2("gpt_ipg_gate", "ipg", MXC_CCM_CCGR2, 18);
+	clk[gpt_hf_gate] = imx_clk_gate2("gpt_hf_gate", "per_root", MXC_CCM_CCGR2, 20);
 	clk[fec_gate] = imx_clk_gate2("fec_gate", "ipg", MXC_CCM_CCGR2, 24);
 	clk[usboh3_gate] = imx_clk_gate2("usboh3_gate", "ipg", MXC_CCM_CCGR2, 26);
 	clk[usboh3_per_gate] = imx_clk_gate2("usboh3_per_gate", "usboh3_podf", MXC_CCM_CCGR2, 28);
@@ -226,13 +229,17 @@ static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 	clk[ssi3_root_gate] = imx_clk_gate2("ssi3_root_gate", "ssi3_root_sel", MXC_CCM_CCGR3, 26);
 	clk[ssi_ext1_gate] = imx_clk_gate2("ssi_ext1_gate", "ssi_ext1_com_sel", MXC_CCM_CCGR3, 28);
 	clk[ssi_ext2_gate] = imx_clk_gate2("ssi_ext2_gate", "ssi_ext2_com_sel", MXC_CCM_CCGR3, 30);
+	clk[epit1_ipg_gate] = imx_clk_gate2("epit1_ipg_gate", "ipg", MXC_CCM_CCGR2, 2);
+	clk[epit1_hf_gate] = imx_clk_gate2("epit1_hf_gate", "per_root", MXC_CCM_CCGR2, 4);
+	clk[epit2_ipg_gate] = imx_clk_gate2("epit2_ipg_gate", "ipg", MXC_CCM_CCGR2, 6);
+	clk[epit2_hf_gate] = imx_clk_gate2("epit2_hf_gate", "per_root", MXC_CCM_CCGR2, 8);
 
 	for (i = 0; i < ARRAY_SIZE(clk); i++)
 		if (IS_ERR(clk[i]))
 			pr_err("i.MX5 clk %d: register failed with %ld\n",
 				i, PTR_ERR(clk[i]));
 	
-	clk_register_clkdev(clk[gpt_gate], "per", "imx-gpt.0");
+	clk_register_clkdev(clk[gpt_hf_gate], "per", "imx-gpt.0");
 	clk_register_clkdev(clk[gpt_ipg_gate], "ipg", "imx-gpt.0");
 	clk_register_clkdev(clk[uart1_per_gate], "per", "imx21-uart.0");
 	clk_register_clkdev(clk[uart1_ipg_gate], "ipg", "imx21-uart.0");
@@ -248,11 +255,11 @@ static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 	clk_register_clkdev(clk[ecspi1_ipg_gate], "ipg", "imx51-ecspi.0");
 	clk_register_clkdev(clk[ecspi2_per_gate], "per", "imx51-ecspi.1");
 	clk_register_clkdev(clk[ecspi2_ipg_gate], "ipg", "imx51-ecspi.1");
-	clk_register_clkdev(clk[cspi_ipg_gate], NULL, "imx51-cspi.0");
+	clk_register_clkdev(clk[cspi_ipg_gate], NULL, "imx35-cspi.2");
 	clk_register_clkdev(clk[pwm1_ipg_gate], "pwm", "mxc_pwm.0");
 	clk_register_clkdev(clk[pwm2_ipg_gate], "pwm", "mxc_pwm.1");
-	clk_register_clkdev(clk[i2c1_gate], NULL, "imx-i2c.0");
-	clk_register_clkdev(clk[i2c2_gate], NULL, "imx-i2c.1");
+	clk_register_clkdev(clk[i2c1_gate], NULL, "imx21-i2c.0");
+	clk_register_clkdev(clk[i2c2_gate], NULL, "imx21-i2c.1");
 	clk_register_clkdev(clk[usboh3_per_gate], "per", "mxc-ehci.0");
 	clk_register_clkdev(clk[usboh3_gate], "ipg", "mxc-ehci.0");
 	clk_register_clkdev(clk[usboh3_gate], "ahb", "mxc-ehci.0");
@@ -265,7 +272,7 @@ static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 	clk_register_clkdev(clk[usboh3_per_gate], "per", "fsl-usb2-udc");
 	clk_register_clkdev(clk[usboh3_gate], "ipg", "fsl-usb2-udc");
 	clk_register_clkdev(clk[usboh3_gate], "ahb", "fsl-usb2-udc");
-	clk_register_clkdev(clk[nfc_gate], NULL, "mxc_nand");
+	clk_register_clkdev(clk[nfc_gate], NULL, "imx51-nand");
 	clk_register_clkdev(clk[ssi1_ipg_gate], NULL, "imx-ssi.0");
 	clk_register_clkdev(clk[ssi2_ipg_gate], NULL, "imx-ssi.1");
 	clk_register_clkdev(clk[ssi3_ipg_gate], NULL, "imx-ssi.2");
@@ -279,6 +286,11 @@ static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 	clk_register_clkdev(clk[dummy], NULL, "imx-keypad");
 	clk_register_clkdev(clk[tve_gate], NULL, "imx-tve.0");
 	clk_register_clkdev(clk[ipu_di1_gate], "di1", "imx-tve.0");
+	clk_register_clkdev(clk[gpc_dvfs], "gpc_dvfs", NULL);
+	clk_register_clkdev(clk[epit1_ipg_gate], "ipg", "imx-epit.0");
+	clk_register_clkdev(clk[epit1_hf_gate], "per", "imx-epit.0");
+	clk_register_clkdev(clk[epit2_ipg_gate], "ipg", "imx-epit.1");
+	clk_register_clkdev(clk[epit2_hf_gate], "per", "imx-epit.1");
 
 	/* Set SDHC parents to be PLL2 */
 	clk_set_parent(clk[esdhc_a_sel], clk[pll2_sw]);
@@ -293,6 +305,11 @@ static void __init mx5_clocks_common_init(unsigned long rate_ckil,
 	clk_prepare_enable(clk[aips_tz2]); /* fec */
 	clk_prepare_enable(clk[spba]);
 	clk_prepare_enable(clk[emi_fast_gate]); /* fec */
+	clk_prepare_enable(clk[emi_slow_gate]); /* eim */
+	clk_prepare_enable(clk[mipi_hsc1_gate]);
+	clk_prepare_enable(clk[mipi_hsc2_gate]);
+	clk_prepare_enable(clk[mipi_esc_gate]);
+	clk_prepare_enable(clk[mipi_hsp_gate]);
 	clk_prepare_enable(clk[tmax1]);
 	clk_prepare_enable(clk[tmax2]); /* esdhc2, fec */
 	clk_prepare_enable(clk[tmax3]); /* esdhc1, esdhc4 */
@@ -302,6 +319,8 @@ int __init mx51_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 			unsigned long rate_ckih1, unsigned long rate_ckih2)
 {
 	int i;
+	u32 val;
+	struct device_node *np;
 
 	clk[pll1_sw] = imx_clk_pllv2("pll1_sw", "osc", MX51_DPLL1_BASE);
 	clk[pll2_sw] = imx_clk_pllv2("pll2_sw", "osc", MX51_DPLL2_BASE);
@@ -330,17 +349,20 @@ int __init mx51_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 			pr_err("i.MX51 clk %d: register failed with %ld\n",
 				i, PTR_ERR(clk[i]));
 
+	np = of_find_compatible_node(NULL, NULL, "fsl,imx51-ccm");
+	clk_data.clks = clk;
+	clk_data.clk_num = ARRAY_SIZE(clk);
+	of_clk_add_provider(np, of_clk_src_onecell_get, &clk_data);
+
 	mx5_clocks_common_init(rate_ckil, rate_osc, rate_ckih1, rate_ckih2);
 
-	clk_register_clkdev(clk[hsi2c_gate], NULL, "imx-i2c.2");
+	clk_register_clkdev(clk[hsi2c_gate], NULL, "imx21-i2c.2");
 	clk_register_clkdev(clk[mx51_mipi], "mipi_hsp", NULL);
 	clk_register_clkdev(clk[vpu_gate], NULL, "imx51-vpu.0");
 	clk_register_clkdev(clk[fec_gate], NULL, "imx27-fec.0");
-	clk_register_clkdev(clk[gpc_dvfs], "gpc_dvfs", NULL);
-	clk_register_clkdev(clk[ipu_gate], "bus", "imx51-ipu");
-	clk_register_clkdev(clk[ipu_di0_gate], "di0", "imx51-ipu");
-	clk_register_clkdev(clk[ipu_di1_gate], "di1", "imx51-ipu");
-	clk_register_clkdev(clk[ipu_gate], "hsp", "imx51-ipu");
+	clk_register_clkdev(clk[ipu_gate], "bus", "40000000.ipu");
+	clk_register_clkdev(clk[ipu_di0_gate], "di0", "40000000.ipu");
+	clk_register_clkdev(clk[ipu_di1_gate], "di1", "40000000.ipu");
 	clk_register_clkdev(clk[usb_phy_gate], "phy", "mxc-ehci.0");
 	clk_register_clkdev(clk[esdhc1_ipg_gate], "ipg", "sdhci-esdhc-imx51.0");
 	clk_register_clkdev(clk[dummy], "ahb", "sdhci-esdhc-imx51.0");
@@ -354,9 +376,6 @@ int __init mx51_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 	clk_register_clkdev(clk[esdhc4_ipg_gate], "ipg", "sdhci-esdhc-imx51.3");
 	clk_register_clkdev(clk[dummy], "ahb", "sdhci-esdhc-imx51.3");
 	clk_register_clkdev(clk[esdhc4_per_gate], "per", "sdhci-esdhc-imx51.3");
-	clk_register_clkdev(clk[ssi1_ipg_gate], NULL, "83fcc000.ssi");
-	clk_register_clkdev(clk[ssi2_ipg_gate], NULL, "70014000.ssi");
-	clk_register_clkdev(clk[ssi3_ipg_gate], NULL, "83fe8000.ssi");
 
 	/* set the usboh3 parent to pll2_sw */
 	clk_set_parent(clk[usboh3_sel], clk[pll2_sw]);
@@ -366,12 +385,26 @@ int __init mx51_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 	clk_set_rate(clk[esdhc_b_podf], 166250000);
 
 	/* System timer */
-	mxc_timer_init(NULL, MX51_IO_ADDRESS(MX51_GPT1_BASE_ADDR),
-		MX51_INT_GPT);
+	mxc_timer_init(MX51_IO_ADDRESS(MX51_GPT1_BASE_ADDR), MX51_INT_GPT);
 
 	clk_prepare_enable(clk[iim_gate]);
 	imx_print_silicon_rev("i.MX51", mx51_revision());
 	clk_disable_unprepare(clk[iim_gate]);
+
+	/*
+	 * Reference Manual says: Functionality of CCDR[18] and CLPCR[23] is no
+	 * longer supported. Set to one for better power saving.
+	 *
+	 * The effect of not setting these bits is that MIPI clocks can't be
+	 * enabled without the IPU clock being enabled aswell.
+	 */
+	val = readl(MXC_CCM_CCDR);
+	val |= 1 << 18;
+	writel(val, MXC_CCM_CCDR);
+
+	val = readl(MXC_CCM_CLPCR);
+	val |= 1 << 23;
+	writel(val, MXC_CCM_CLPCR);
 
 	return 0;
 }
@@ -381,6 +414,7 @@ int __init mx53_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 {
 	int i;
 	unsigned long r;
+	struct device_node *np;
 
 	clk[pll1_sw] = imx_clk_pllv2("pll1_sw", "osc", MX53_DPLL1_BASE);
 	clk[pll2_sw] = imx_clk_pllv2("pll2_sw", "osc", MX53_DPLL2_BASE);
@@ -412,8 +446,12 @@ int __init mx53_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 	clk[esdhc4_per_gate] = imx_clk_gate2("esdhc4_per_gate", "esdhc_d_sel", MXC_CCM_CCGR3, 14);
 	clk[usb_phy1_gate] = imx_clk_gate2("usb_phy1_gate", "usb_phy_sel", MXC_CCM_CCGR4, 10);
 	clk[usb_phy2_gate] = imx_clk_gate2("usb_phy2_gate", "usb_phy_sel", MXC_CCM_CCGR4, 12);
-	clk[can2_serial_gate] = imx_clk_gate2("can2_serial_gate", "ipg", MXC_CCM_CCGR4, 6);
-	clk[can2_ipg_gate] = imx_clk_gate2("can2_ipg_gate", "ipg", MXC_CCM_CCGR4, 8);
+	clk[can_sel] = imx_clk_mux("can_sel", MXC_CCM_CSCMR2, 6, 2,
+				mx53_can_sel, ARRAY_SIZE(mx53_can_sel));
+	clk[can1_serial_gate] = imx_clk_gate2("can1_serial_gate", "can_sel", MXC_CCM_CCGR6, 22);
+	clk[can1_ipg_gate] = imx_clk_gate2("can1_ipg_gate", "ipg", MXC_CCM_CCGR6, 20);
+	clk[can2_serial_gate] = imx_clk_gate2("can2_serial_gate", "can_sel", MXC_CCM_CCGR4, 8);
+	clk[can2_ipg_gate] = imx_clk_gate2("can2_ipg_gate", "ipg", MXC_CCM_CCGR4, 6);
 	clk[i2c3_gate] = imx_clk_gate2("i2c3_gate", "per_root", MXC_CCM_CCGR1, 22);
 
 	for (i = 0; i < ARRAY_SIZE(clk); i++)
@@ -421,15 +459,20 @@ int __init mx53_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 			pr_err("i.MX53 clk %d: register failed with %ld\n",
 				i, PTR_ERR(clk[i]));
 
+	np = of_find_compatible_node(NULL, NULL, "fsl,imx53-ccm");
+	clk_data.clks = clk;
+	clk_data.clk_num = ARRAY_SIZE(clk);
+	of_clk_add_provider(np, of_clk_src_onecell_get, &clk_data);
+
 	mx5_clocks_common_init(rate_ckil, rate_osc, rate_ckih1, rate_ckih2);
 
 	clk_register_clkdev(clk[vpu_gate], NULL, "imx53-vpu.0");
-	clk_register_clkdev(clk[i2c3_gate], NULL, "imx-i2c.2");
+	clk_register_clkdev(clk[i2c3_gate], NULL, "imx21-i2c.2");
 	clk_register_clkdev(clk[fec_gate], NULL, "imx25-fec.0");
-	clk_register_clkdev(clk[ipu_gate], "bus", "imx53-ipu");
-	clk_register_clkdev(clk[ipu_di0_gate], "di0", "imx53-ipu");
-	clk_register_clkdev(clk[ipu_di1_gate], "di1", "imx53-ipu");
-	clk_register_clkdev(clk[ipu_gate], "hsp", "imx53-ipu");
+	clk_register_clkdev(clk[ipu_gate], "bus", "18000000.ipu");
+	clk_register_clkdev(clk[ipu_di0_gate], "di0", "18000000.ipu");
+	clk_register_clkdev(clk[ipu_di1_gate], "di1", "18000000.ipu");
+	clk_register_clkdev(clk[ipu_gate], "hsp", "18000000.ipu");
 	clk_register_clkdev(clk[usb_phy1_gate], "usb_phy1", "mxc-ehci.0");
 	clk_register_clkdev(clk[esdhc1_ipg_gate], "ipg", "sdhci-esdhc-imx53.0");
 	clk_register_clkdev(clk[dummy], "ahb", "sdhci-esdhc-imx53.0");
@@ -443,17 +486,13 @@ int __init mx53_clocks_init(unsigned long rate_ckil, unsigned long rate_osc,
 	clk_register_clkdev(clk[esdhc4_ipg_gate], "ipg", "sdhci-esdhc-imx53.3");
 	clk_register_clkdev(clk[dummy], "ahb", "sdhci-esdhc-imx53.3");
 	clk_register_clkdev(clk[esdhc4_per_gate], "per", "sdhci-esdhc-imx53.3");
-	clk_register_clkdev(clk[ssi1_ipg_gate], NULL, "63fcc000.ssi");
-	clk_register_clkdev(clk[ssi2_ipg_gate], NULL, "50014000.ssi");
-	clk_register_clkdev(clk[ssi3_ipg_gate], NULL, "63fd0000.ssi");
 
 	/* set SDHC root clock to 200MHZ*/
 	clk_set_rate(clk[esdhc_a_podf], 200000000);
 	clk_set_rate(clk[esdhc_b_podf], 200000000);
 
 	/* System timer */
-	mxc_timer_init(NULL, MX53_IO_ADDRESS(MX53_GPT1_BASE_ADDR),
-		MX53_INT_GPT);
+	mxc_timer_init(MX53_IO_ADDRESS(MX53_GPT1_BASE_ADDR), MX53_INT_GPT);
 
 	clk_prepare_enable(clk[iim_gate]);
 	imx_print_silicon_rev("i.MX53", mx53_revision());

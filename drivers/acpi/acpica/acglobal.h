@@ -70,7 +70,7 @@
 
 /*
  * Enable "slack" in the AML interpreter?  Default is FALSE, and the
- * interpreter strictly follows the ACPI specification.  Setting to TRUE
+ * interpreter strictly follows the ACPI specification. Setting to TRUE
  * allows the interpreter to ignore certain errors and/or bad AML constructs.
  *
  * Currently, these features are enabled by this flag:
@@ -152,26 +152,6 @@ u8 acpi_gbl_reduced_hardware;
 /* Do not disassemble buffers to resource descriptors */
 
 ACPI_EXTERN u8 ACPI_INIT_GLOBAL(acpi_gbl_no_resource_disassembly, FALSE);
-
-/*****************************************************************************
- *
- * Debug support
- *
- ****************************************************************************/
-
-/* Procedure nesting level for debug output */
-
-extern u32 acpi_gbl_nesting_level;
-
-ACPI_EXTERN u32 acpi_gpe_count;
-ACPI_EXTERN u32 acpi_fixed_event_count[ACPI_NUM_FIXED_EVENTS];
-
-/* Support for dynamic control method tracing mechanism */
-
-ACPI_EXTERN u32 acpi_gbl_original_dbg_level;
-ACPI_EXTERN u32 acpi_gbl_original_dbg_layer;
-ACPI_EXTERN u32 acpi_gbl_trace_dbg_level;
-ACPI_EXTERN u32 acpi_gbl_trace_dbg_layer;
 
 /*****************************************************************************
  *
@@ -259,15 +239,6 @@ ACPI_EXTERN acpi_spinlock acpi_gbl_hardware_lock;	/* For ACPI H/W except GPE reg
  *
  ****************************************************************************/
 
-#ifdef ACPI_DBG_TRACK_ALLOCATIONS
-
-/* Lists for tracking memory allocations */
-
-ACPI_EXTERN struct acpi_memory_list *acpi_gbl_global_list;
-ACPI_EXTERN struct acpi_memory_list *acpi_gbl_ns_node_list;
-ACPI_EXTERN u8 acpi_gbl_display_final_mem_stats;
-#endif
-
 /* Object caches */
 
 ACPI_EXTERN acpi_cache_t *acpi_gbl_namespace_cache;
@@ -278,8 +249,7 @@ ACPI_EXTERN acpi_cache_t *acpi_gbl_operand_cache;
 
 /* Global handlers */
 
-ACPI_EXTERN struct acpi_object_notify_handler acpi_gbl_device_notify;
-ACPI_EXTERN struct acpi_object_notify_handler acpi_gbl_system_notify;
+ACPI_EXTERN struct acpi_global_notify_handler acpi_gbl_global_notify[2];
 ACPI_EXTERN acpi_exception_handler acpi_gbl_exception_handler;
 ACPI_EXTERN acpi_init_handler acpi_gbl_init_handler;
 ACPI_EXTERN acpi_tbl_handler acpi_gbl_table_handler;
@@ -327,13 +297,14 @@ extern const char *acpi_gbl_region_types[ACPI_NUM_PREDEFINED_REGIONS];
 
 #endif
 
-/* Exception codes */
+#ifdef ACPI_DBG_TRACK_ALLOCATIONS
 
-extern char const *acpi_gbl_exception_names_env[];
-extern char const *acpi_gbl_exception_names_pgm[];
-extern char const *acpi_gbl_exception_names_tbl[];
-extern char const *acpi_gbl_exception_names_aml[];
-extern char const *acpi_gbl_exception_names_ctrl[];
+/* Lists for tracking memory allocations */
+
+ACPI_EXTERN struct acpi_memory_list *acpi_gbl_global_list;
+ACPI_EXTERN struct acpi_memory_list *acpi_gbl_ns_node_list;
+ACPI_EXTERN u8 acpi_gbl_display_final_mem_stats;
+#endif
 
 /*****************************************************************************
  *
@@ -405,10 +376,32 @@ ACPI_EXTERN struct acpi_gpe_block_info
 #if (!ACPI_REDUCED_HARDWARE)
 
 ACPI_EXTERN u8 acpi_gbl_all_gpes_initialized;
-ACPI_EXTERN ACPI_GBL_EVENT_HANDLER acpi_gbl_global_event_handler;
+ACPI_EXTERN acpi_gbl_event_handler acpi_gbl_global_event_handler;
 ACPI_EXTERN void *acpi_gbl_global_event_handler_context;
 
 #endif				/* !ACPI_REDUCED_HARDWARE */
+
+/*****************************************************************************
+ *
+ * Debug support
+ *
+ ****************************************************************************/
+
+/* Procedure nesting level for debug output */
+
+extern u32 acpi_gbl_nesting_level;
+
+/* Event counters */
+
+ACPI_EXTERN u32 acpi_gpe_count;
+ACPI_EXTERN u32 acpi_fixed_event_count[ACPI_NUM_FIXED_EVENTS];
+
+/* Support for dynamic control method tracing mechanism */
+
+ACPI_EXTERN u32 acpi_gbl_original_dbg_level;
+ACPI_EXTERN u32 acpi_gbl_original_dbg_layer;
+ACPI_EXTERN u32 acpi_gbl_trace_dbg_level;
+ACPI_EXTERN u32 acpi_gbl_trace_dbg_layer;
 
 /*****************************************************************************
  *
@@ -435,10 +428,11 @@ ACPI_EXTERN u8 acpi_gbl_db_opt_stats;
 ACPI_EXTERN u8 acpi_gbl_db_opt_ini_methods;
 
 ACPI_EXTERN char *acpi_gbl_db_args[ACPI_DEBUGGER_MAX_ARGS];
-ACPI_EXTERN char acpi_gbl_db_line_buf[80];
-ACPI_EXTERN char acpi_gbl_db_parsed_buf[80];
-ACPI_EXTERN char acpi_gbl_db_scope_buf[40];
-ACPI_EXTERN char acpi_gbl_db_debug_filename[40];
+ACPI_EXTERN acpi_object_type acpi_gbl_db_arg_types[ACPI_DEBUGGER_MAX_ARGS];
+ACPI_EXTERN char acpi_gbl_db_line_buf[ACPI_DB_LINE_BUFFER_SIZE];
+ACPI_EXTERN char acpi_gbl_db_parsed_buf[ACPI_DB_LINE_BUFFER_SIZE];
+ACPI_EXTERN char acpi_gbl_db_scope_buf[80];
+ACPI_EXTERN char acpi_gbl_db_debug_filename[80];
 ACPI_EXTERN u8 acpi_gbl_db_output_to_file;
 ACPI_EXTERN char *acpi_gbl_db_buffer;
 ACPI_EXTERN char *acpi_gbl_db_filename;
@@ -462,5 +456,13 @@ ACPI_EXTERN u32 acpi_gbl_size_of_node_entries;
 ACPI_EXTERN u32 acpi_gbl_size_of_acpi_objects;
 
 #endif				/* ACPI_DEBUGGER */
+
+/*****************************************************************************
+ *
+ * Info/help support
+ *
+ ****************************************************************************/
+
+extern const struct ah_predefined_name asl_predefined_info[];
 
 #endif				/* __ACGLOBAL_H__ */

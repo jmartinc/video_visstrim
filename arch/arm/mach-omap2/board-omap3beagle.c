@@ -24,6 +24,7 @@
 #include <linux/input.h>
 #include <linux/gpio_keys.h>
 #include <linux/opp.h>
+#include <linux/cpu.h>
 
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
@@ -33,25 +34,26 @@
 #include <linux/regulator/machine.h>
 #include <linux/i2c/twl.h>
 
-#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/flash.h>
 
-#include <plat/board.h>
-#include "common.h"
 #include <video/omapdss.h>
 #include <video/omap-panel-tfp410.h>
-#include <plat/gpmc.h>
-#include <plat/nand.h>
-#include <plat/usb.h>
-#include <plat/omap_device.h>
+#include <linux/platform_data/mtd-nand-omap2.h>
 
+#include "common.h"
+#include "omap_device.h"
+#include "gpmc.h"
+#include "soc.h"
 #include "mux.h"
 #include "hsmmc.h"
 #include "pm.h"
+#include "board-flash.h"
 #include "common-board-devices.h"
+
+#define	NAND_CS	0
 
 /*
  * OMAP3 Beagle revision
@@ -81,13 +83,13 @@ static u8 omap3_beagle_version;
 static struct {
 	int mmc1_gpio_wp;
 	int usb_pwr_level;
-	int reset_gpio;
+	int dvi_pd_gpio;
 	int usr_button_gpio;
 	int mmc_caps;
 } beagle_config = {
 	.mmc1_gpio_wp = -EINVAL,
 	.usb_pwr_level = GPIOF_OUT_INIT_LOW,
-	.reset_gpio = 129,
+	.dvi_pd_gpio = -EINVAL,
 	.usr_button_gpio = 4,
 	.mmc_caps = MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA,
 };
@@ -126,21 +128,21 @@ static void __init omap3_beagle_init_rev(void)
 		printk(KERN_INFO "OMAP3 Beagle Rev: Ax/Bx\n");
 		omap3_beagle_version = OMAP3BEAGLE_BOARD_AXBX;
 		beagle_config.mmc1_gpio_wp = 29;
-		beagle_config.reset_gpio = 170;
+		beagle_config.dvi_pd_gpio = 170;
 		beagle_config.usr_button_gpio = 7;
 		break;
 	case 6:
 		printk(KERN_INFO "OMAP3 Beagle Rev: C1/C2/C3\n");
 		omap3_beagle_version = OMAP3BEAGLE_BOARD_C1_3;
 		beagle_config.mmc1_gpio_wp = 23;
-		beagle_config.reset_gpio = 170;
+		beagle_config.dvi_pd_gpio = 170;
 		beagle_config.usr_button_gpio = 7;
 		break;
 	case 5:
 		printk(KERN_INFO "OMAP3 Beagle Rev: C4\n");
 		omap3_beagle_version = OMAP3BEAGLE_BOARD_C4;
 		beagle_config.mmc1_gpio_wp = 23;
-		beagle_config.reset_gpio = 170;
+		beagle_config.dvi_pd_gpio = 170;
 		beagle_config.usr_button_gpio = 7;
 		break;
 	case 0:
@@ -274,11 +276,9 @@ static int beagle_twl_gpio_setup(struct device *dev,
 		if (r)
 			pr_err("%s: unable to configure nDVI_PWR_EN\n",
 				__func__);
-		r = gpio_request_one(gpio + 2, GPIOF_OUT_INIT_HIGH,
-				     "DVI_LDO_EN");
-		if (r)
-			pr_err("%s: unable to configure DVI_LDO_EN\n",
-				__func__);
+
+		beagle_config.dvi_pd_gpio = gpio + 2;
+
 	} else {
 		/*
 		 * REVISIT: need ehci-omap hooks for external VBUS
@@ -287,7 +287,7 @@ static int beagle_twl_gpio_setup(struct device *dev,
 		if (gpio_request_one(gpio + 1, GPIOF_IN, "EHCI_nOC"))
 			pr_err("%s: unable to configure EHCI_nOC\n", __func__);
 	}
-	dvi_panel.power_down_gpio = beagle_config.reset_gpio;
+	dvi_panel.power_down_gpio = beagle_config.dvi_pd_gpio;
 
 	gpio_request_one(gpio + TWL4030_GPIO_MAX, beagle_config.usb_pwr_level,
 			"nEN_USB_PWR");
@@ -299,9 +299,6 @@ static int beagle_twl_gpio_setup(struct device *dev,
 }
 
 static struct twl4030_gpio_platform_data beagle_gpio_data = {
-	.gpio_base	= OMAP_MAX_GPIO_LINES,
-	.irq_base	= TWL4030_GPIO_IRQ_BASE,
-	.irq_end	= TWL4030_GPIO_IRQ_END,
 	.use_leds	= true,
 	.pullups	= BIT(1),
 	.pulldowns	= BIT(2) | BIT(6) | BIT(7) | BIT(8) | BIT(13)
@@ -435,7 +432,7 @@ static struct platform_device *omap3_beagle_devices[] __initdata = {
 
 static const struct usbhs_omap_board_data usbhs_bdata __initconst = {
 
-	.port_mode[0] = OMAP_EHCI_PORT_MODE_PHY,
+	.port_mode[0] = OMAP_USBHS_PORT_MODE_UNUSED,
 	.port_mode[1] = OMAP_EHCI_PORT_MODE_PHY,
 	.port_mode[2] = OMAP_USBHS_PORT_MODE_UNUSED,
 
@@ -451,27 +448,31 @@ static struct omap_board_mux board_mux[] __initdata = {
 };
 #endif
 
-static void __init beagle_opp_init(void)
+static int __init beagle_opp_init(void)
 {
 	int r = 0;
 
-	/* Initialize the omap3 opp table */
-	if (omap3_opp_init()) {
+	if (!machine_is_omap3_beagle())
+		return 0;
+
+	/* Initialize the omap3 opp table if not already created. */
+	r = omap3_opp_init();
+	if (IS_ERR_VALUE(r) && (r != -EEXIST)) {
 		pr_err("%s: opp default init failed\n", __func__);
-		return;
+		return r;
 	}
 
 	/* Custom OPP enabled for all xM versions */
 	if (cpu_is_omap3630()) {
 		struct device *mpu_dev, *iva_dev;
 
-		mpu_dev = omap_device_get_by_hwmod_name("mpu");
+		mpu_dev = get_cpu_device(0);
 		iva_dev = omap_device_get_by_hwmod_name("iva");
 
-		if (!mpu_dev || !iva_dev) {
+		if (IS_ERR(mpu_dev) || IS_ERR(iva_dev)) {
 			pr_err("%s: Aiee.. no mpu/dsp devices? %p %p\n",
 				__func__, mpu_dev, iva_dev);
-			return;
+			return -ENODEV;
 		}
 		/* Enable MPU 1GHz and lower opps */
 		r = opp_enable(mpu_dev, 800000000);
@@ -491,15 +492,16 @@ static void __init beagle_opp_init(void)
 			opp_disable(iva_dev, 660000000);
 		}
 	}
-	return;
+	return 0;
 }
+device_initcall(beagle_opp_init);
 
 static void __init omap3_beagle_init(void)
 {
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	omap3_beagle_init_rev();
 
-	if (beagle_config.mmc1_gpio_wp != -EINVAL)
+	if (gpio_is_valid(beagle_config.mmc1_gpio_wp))
 		omap_mux_init_gpio(beagle_config.mmc1_gpio_wp, OMAP_PIN_INPUT);
 	mmc[0].caps = beagle_config.mmc_caps;
 	omap_hsmmc_init(mmc);
@@ -510,19 +512,19 @@ static void __init omap3_beagle_init(void)
 
 	platform_add_devices(omap3_beagle_devices,
 			ARRAY_SIZE(omap3_beagle_devices));
+	if (gpio_is_valid(beagle_config.dvi_pd_gpio))
+		omap_mux_init_gpio(beagle_config.dvi_pd_gpio, OMAP_PIN_OUTPUT);
 	omap_display_init(&beagle_dss_data);
 	omap_serial_init();
 	omap_sdrc_init(mt46h32m32lf6_sdrc_params,
 				  mt46h32m32lf6_sdrc_params);
 
-	omap_mux_init_gpio(170, OMAP_PIN_INPUT);
-	/* REVISIT leave DVI powered down until it's needed ... */
-	gpio_request_one(170, GPIOF_OUT_INIT_HIGH, "DVI_nPD");
-
 	usb_musb_init(NULL);
 	usbhs_init(&usbhs_bdata);
-	omap_nand_flash_init(NAND_BUSWIDTH_16, omap3beagle_nand_partitions,
-			     ARRAY_SIZE(omap3beagle_nand_partitions));
+	board_nand_init(omap3beagle_nand_partitions,
+			ARRAY_SIZE(omap3beagle_nand_partitions), NAND_CS,
+			NAND_BUSWIDTH_16, NULL);
+	omap_twl4030_audio_init("omap3beagle");
 
 	/* Ensure msecure is mux'd to be able to set the RTC. */
 	omap_mux_init_signal("sys_drm_msecure", OMAP_PIN_OFF_OUTPUT_HIGH);
@@ -530,8 +532,6 @@ static void __init omap3_beagle_init(void)
 	/* Ensure SDRC pins are mux'd for self-refresh */
 	omap_mux_init_signal("sdrc_cke0", OMAP_PIN_OUTPUT);
 	omap_mux_init_signal("sdrc_cke1", OMAP_PIN_OUTPUT);
-
-	beagle_opp_init();
 }
 
 MACHINE_START(OMAP3_BEAGLE, "OMAP3 Beagle Board")
@@ -545,5 +545,5 @@ MACHINE_START(OMAP3_BEAGLE, "OMAP3 Beagle Board")
 	.init_machine	= omap3_beagle_init,
 	.init_late	= omap3_init_late,
 	.timer		= &omap3_secure_timer,
-	.restart	= omap_prcm_restart,
+	.restart	= omap3xxx_restart,
 MACHINE_END

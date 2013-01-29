@@ -11,7 +11,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/clk.h>
-#include <linux/cpufreq.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/err.h>
@@ -32,6 +31,8 @@ static void __iomem *twd_base;
 
 static struct clk *twd_clk;
 static unsigned long twd_timer_rate;
+static bool common_setup_called;
+static DEFINE_PER_CPU(bool, percpu_setup_called);
 
 static struct clock_event_device __percpu **twd_evt;
 static int twd_ppi;
@@ -43,10 +44,10 @@ static void twd_set_mode(enum clock_event_mode mode,
 
 	switch (mode) {
 	case CLOCK_EVT_MODE_PERIODIC:
-		/* timer load already set up */
 		ctrl = TWD_TIMER_CONTROL_ENABLE | TWD_TIMER_CONTROL_IT_ENABLE
 			| TWD_TIMER_CONTROL_PERIODIC;
-		__raw_writel(twd_timer_rate / HZ, twd_base + TWD_TIMER_LOAD);
+		__raw_writel(DIV_ROUND_CLOSEST(twd_timer_rate, HZ),
+			twd_base + TWD_TIMER_LOAD);
 		break;
 	case CLOCK_EVT_MODE_ONESHOT:
 		/* period set, and timer enabled in 'next_event' hook */
@@ -96,7 +97,52 @@ static void twd_timer_stop(struct clock_event_device *clk)
 	disable_percpu_irq(clk->irq);
 }
 
-#ifdef CONFIG_CPU_FREQ
+#ifdef CONFIG_COMMON_CLK
+
+/*
+ * Updates clockevent frequency when the cpu frequency changes.
+ * Called on the cpu that is changing frequency with interrupts disabled.
+ */
+static void twd_update_frequency(void *new_rate)
+{
+	twd_timer_rate = *((unsigned long *) new_rate);
+
+	clockevents_update_freq(*__this_cpu_ptr(twd_evt), twd_timer_rate);
+}
+
+static int twd_rate_change(struct notifier_block *nb,
+	unsigned long flags, void *data)
+{
+	struct clk_notifier_data *cnd = data;
+
+	/*
+	 * The twd clock events must be reprogrammed to account for the new
+	 * frequency.  The timer is local to a cpu, so cross-call to the
+	 * changing cpu.
+	 */
+	if (flags == POST_RATE_CHANGE)
+		smp_call_function(twd_update_frequency,
+				  (void *)&cnd->new_rate, 1);
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block twd_clk_nb = {
+	.notifier_call = twd_rate_change,
+};
+
+static int twd_clk_init(void)
+{
+	if (twd_evt && *__this_cpu_ptr(twd_evt) && !IS_ERR(twd_clk))
+		return clk_notifier_register(twd_clk, &twd_clk_nb);
+
+	return 0;
+}
+core_initcall(twd_clk_init);
+
+#elif defined (CONFIG_CPU_FREQ)
+
+#include <linux/cpufreq.h>
 
 /*
  * Updates clockevent frequency when the cpu frequency changes.
@@ -204,17 +250,9 @@ static struct clk *twd_get_clock(void)
 		return clk;
 	}
 
-	err = clk_prepare(clk);
+	err = clk_prepare_enable(clk);
 	if (err) {
-		pr_err("smp_twd: clock failed to prepare: %d\n", err);
-		clk_put(clk);
-		return ERR_PTR(err);
-	}
-
-	err = clk_enable(clk);
-	if (err) {
-		pr_err("smp_twd: clock failed to enable: %d\n", err);
-		clk_unprepare(clk);
+		pr_err("smp_twd: clock failed to prepare+enable: %d\n", err);
 		clk_put(clk);
 		return ERR_PTR(err);
 	}
@@ -228,15 +266,45 @@ static struct clk *twd_get_clock(void)
 static int __cpuinit twd_timer_setup(struct clock_event_device *clk)
 {
 	struct clock_event_device **this_cpu_clk;
+	int cpu = smp_processor_id();
 
-	if (!twd_clk)
+	/*
+	 * If the basic setup for this CPU has been done before don't
+	 * bother with the below.
+	 */
+	if (per_cpu(percpu_setup_called, cpu)) {
+		__raw_writel(0, twd_base + TWD_TIMER_CONTROL);
+		clockevents_register_device(*__this_cpu_ptr(twd_evt));
+		enable_percpu_irq(clk->irq, 0);
+		return 0;
+	}
+	per_cpu(percpu_setup_called, cpu) = true;
+
+	/*
+	 * This stuff only need to be done once for the entire TWD cluster
+	 * during the runtime of the system.
+	 */
+	if (!common_setup_called) {
 		twd_clk = twd_get_clock();
 
-	if (!IS_ERR_OR_NULL(twd_clk))
-		twd_timer_rate = clk_get_rate(twd_clk);
-	else
-		twd_calibrate_rate();
+		/*
+		 * We use IS_ERR_OR_NULL() here, because if the clock stubs
+		 * are active we will get a valid clk reference which is
+		 * however NULL and will return the rate 0. In that case we
+		 * need to calibrate the rate instead.
+		 */
+		if (!IS_ERR_OR_NULL(twd_clk))
+			twd_timer_rate = clk_get_rate(twd_clk);
+		else
+			twd_calibrate_rate();
 
+		common_setup_called = true;
+	}
+
+	/*
+	 * The following is done once per CPU the first time .setup() is
+	 * called.
+	 */
 	__raw_writel(0, twd_base + TWD_TIMER_CONTROL);
 
 	clk->name = "local_timer";
@@ -322,10 +390,8 @@ void __init twd_local_timer_of_register(void)
 	int err;
 
 	np = of_find_matching_node(NULL, twd_of_match);
-	if (!np) {
-		err = -ENODEV;
-		goto out;
-	}
+	if (!np)
+		return;
 
 	twd_ppi = irq_of_parse_and_map(np, 0);
 	if (!twd_ppi) {

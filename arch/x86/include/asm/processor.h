@@ -61,6 +61,19 @@ static inline void *current_text_addr(void)
 # define ARCH_MIN_MMSTRUCT_ALIGN	0
 #endif
 
+enum tlb_infos {
+	ENTRIES,
+	NR_INFO
+};
+
+extern u16 __read_mostly tlb_lli_4k[NR_INFO];
+extern u16 __read_mostly tlb_lli_2m[NR_INFO];
+extern u16 __read_mostly tlb_lli_4m[NR_INFO];
+extern u16 __read_mostly tlb_lld_4k[NR_INFO];
+extern u16 __read_mostly tlb_lld_2m[NR_INFO];
+extern u16 __read_mostly tlb_lld_4m[NR_INFO];
+extern s8  __read_mostly tlb_flushall_shift;
+
 /*
  *  CPU type and hardware bug flags. Kept separately for each CPU.
  *  Members of this structure are referenced in head.S, so think twice
@@ -165,8 +178,6 @@ static inline int hlt_works(int cpu)
 
 extern void cpu_detect(struct cpuinfo_x86 *c);
 
-extern struct pt_regs *idle_regs(struct pt_regs *);
-
 extern void early_cpu_init(void);
 extern void identify_boot_cpu(void);
 extern void identify_secondary_cpu(struct cpuinfo_x86 *);
@@ -174,7 +185,7 @@ extern void print_cpu_info(struct cpuinfo_x86 *);
 void print_cpu_msr(struct cpuinfo_x86 *);
 extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
 extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
-extern unsigned short num_cache_leaves;
+extern void init_amd_cacheinfo(struct cpuinfo_x86 *c);
 
 extern void detect_extended_topology(struct cpuinfo_x86 *c);
 extern void detect_ht(struct cpuinfo_x86 *c);
@@ -410,7 +421,6 @@ DECLARE_INIT_PER_CPU(irq_stack_union);
 
 DECLARE_PER_CPU(char *, irq_stack_ptr);
 DECLARE_PER_CPU(unsigned int, irq_count);
-extern unsigned long kernel_eflags;
 extern asmlinkage void ignore_sysret(void);
 #else	/* X86_64 */
 #ifdef CONFIG_CC_STACKPROTECTOR
@@ -576,11 +586,6 @@ typedef struct {
 } mm_segment_t;
 
 
-/*
- * create a kernel thread without removing it from tasklists
- */
-extern int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
-
 /* Free all resources held by a thread. */
 extern void release_thread(struct task_struct *);
 
@@ -665,18 +670,29 @@ static inline void sync_core(void)
 {
 	int tmp;
 
-#if defined(CONFIG_M386) || defined(CONFIG_M486)
-	if (boot_cpu_data.x86 < 5)
-		/* There is no speculative execution.
-		 * jmp is a barrier to prefetching. */
-		asm volatile("jmp 1f\n1:\n" ::: "memory");
-	else
+#ifdef CONFIG_M486
+	/*
+	 * Do a CPUID if available, otherwise do a jump.  The jump
+	 * can conveniently enough be the jump around CPUID.
+	 */
+	asm volatile("cmpl %2,%1\n\t"
+		     "jl 1f\n\t"
+		     "cpuid\n"
+		     "1:"
+		     : "=a" (tmp)
+		     : "rm" (boot_cpu_data.cpuid_level), "ri" (0), "0" (1)
+		     : "ebx", "ecx", "edx", "memory");
+#else
+	/*
+	 * CPUID is a barrier to speculative execution.
+	 * Prefetched instructions are automatically
+	 * invalidated when modified.
+	 */
+	asm volatile("cpuid"
+		     : "=a" (tmp)
+		     : "0" (1)
+		     : "ebx", "ecx", "edx", "memory");
 #endif
-		/* cpuid is a barrier to speculative execution.
-		 * Prefetched instructions are automatically
-		 * invalidated when modified. */
-		asm volatile("cpuid" : "=a" (tmp) : "0" (1)
-			     : "ebx", "ecx", "edx", "memory");
 }
 
 static inline void __monitor(const void *eax, unsigned long ecx,
@@ -745,6 +761,8 @@ static inline void update_debugctlmsr(unsigned long debugctlmsr)
 #endif
 	wrmsrl(MSR_IA32_DEBUGCTLMSR, debugctlmsr);
 }
+
+extern void set_task_blockstep(struct task_struct *task, bool on);
 
 /*
  * from system description table in BIOS. Mostly for MCA use, but

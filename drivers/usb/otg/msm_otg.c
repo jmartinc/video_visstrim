@@ -1555,9 +1555,9 @@ static int __init msm_otg_probe(struct platform_device *pdev)
 	phy->otg->set_host = msm_otg_set_host;
 	phy->otg->set_peripheral = msm_otg_set_peripheral;
 
-	ret = usb_set_transceiver(&motg->phy);
+	ret = usb_add_phy(&motg->phy, USB_PHY_TYPE_USB2);
 	if (ret) {
-		dev_err(&pdev->dev, "usb_set_transceiver failed\n");
+		dev_err(&pdev->dev, "usb_add_phy failed\n");
 		goto free_irq;
 	}
 
@@ -1606,7 +1606,7 @@ free_motg:
 	return ret;
 }
 
-static int __devexit msm_otg_remove(struct platform_device *pdev)
+static int msm_otg_remove(struct platform_device *pdev)
 {
 	struct msm_otg *motg = platform_get_drvdata(pdev);
 	struct usb_phy *phy = &motg->phy;
@@ -1624,7 +1624,7 @@ static int __devexit msm_otg_remove(struct platform_device *pdev)
 	device_init_wakeup(&pdev->dev, 0);
 	pm_runtime_disable(&pdev->dev);
 
-	usb_set_transceiver(NULL);
+	usb_remove_phy(phy);
 	free_irq(motg->irq, motg);
 
 	/*
@@ -1746,7 +1746,7 @@ static const struct dev_pm_ops msm_otg_dev_pm_ops = {
 #endif
 
 static struct platform_driver msm_otg_driver = {
-	.remove = __devexit_p(msm_otg_remove),
+	.remove = msm_otg_remove,
 	.driver = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,

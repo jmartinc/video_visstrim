@@ -1134,7 +1134,7 @@ static void vxge_set_multicast(struct net_device *dev)
 		"%s:%d", __func__, __LINE__);
 
 	vdev = netdev_priv(dev);
-	hldev = (struct __vxge_hw_device  *)vdev->devh;
+	hldev = vdev->devh;
 
 	if (unlikely(!is_vxge_card_up(vdev)))
 		return;
@@ -3131,12 +3131,12 @@ vxge_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *net_stats)
 		u64 packets, bytes, multicast;
 
 		do {
-			start = u64_stats_fetch_begin(&rxstats->syncp);
+			start = u64_stats_fetch_begin_bh(&rxstats->syncp);
 
 			packets   = rxstats->rx_frms;
 			multicast = rxstats->rx_mcast;
 			bytes     = rxstats->rx_bytes;
-		} while (u64_stats_fetch_retry(&rxstats->syncp, start));
+		} while (u64_stats_fetch_retry_bh(&rxstats->syncp, start));
 
 		net_stats->rx_packets += packets;
 		net_stats->rx_bytes += bytes;
@@ -3146,11 +3146,11 @@ vxge_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *net_stats)
 		net_stats->rx_dropped += rxstats->rx_dropped;
 
 		do {
-			start = u64_stats_fetch_begin(&txstats->syncp);
+			start = u64_stats_fetch_begin_bh(&txstats->syncp);
 
 			packets = txstats->tx_frms;
 			bytes   = txstats->tx_bytes;
-		} while (u64_stats_fetch_retry(&txstats->syncp, start));
+		} while (u64_stats_fetch_retry_bh(&txstats->syncp, start));
 
 		net_stats->tx_packets += packets;
 		net_stats->tx_bytes += bytes;
@@ -3371,10 +3371,9 @@ static const struct net_device_ops vxge_netdev_ops = {
 #endif
 };
 
-static int __devinit vxge_device_register(struct __vxge_hw_device *hldev,
-					  struct vxge_config *config,
-					  int high_dma, int no_of_vpath,
-					  struct vxgedev **vdev_out)
+static int vxge_device_register(struct __vxge_hw_device *hldev,
+				struct vxge_config *config, int high_dma,
+				int no_of_vpath, struct vxgedev **vdev_out)
 {
 	struct net_device *ndev;
 	enum vxge_hw_status status = VXGE_HW_OK;
@@ -3521,7 +3520,7 @@ static void vxge_device_unregister(struct __vxge_hw_device *hldev)
 
 	strncpy(buf, dev->name, IFNAMSIZ);
 
-	flush_work_sync(&vdev->reset_task);
+	flush_work(&vdev->reset_task);
 
 	/* in 2.6 will call stop() if device is up */
 	unregister_netdev(dev);
@@ -3672,9 +3671,8 @@ static void verify_bandwidth(void)
 /*
  * Vpath configuration
  */
-static int __devinit vxge_config_vpaths(
-			struct vxge_hw_device_config *device_config,
-			u64 vpath_mask, struct vxge_config *config_param)
+static int vxge_config_vpaths(struct vxge_hw_device_config *device_config,
+			      u64 vpath_mask, struct vxge_config *config_param)
 {
 	int i, no_of_vpaths = 0, default_no_vpath = 0, temp;
 	u32 txdl_size, txdl_per_memblock;
@@ -3687,7 +3685,8 @@ static int __devinit vxge_config_vpaths(
 			return 0;
 
 		if (!driver_config->g_no_cpus)
-			driver_config->g_no_cpus = num_online_cpus();
+			driver_config->g_no_cpus =
+				netif_get_num_default_rss_queues();
 
 		driver_config->vpath_per_dev = driver_config->g_no_cpus >> 1;
 		if (!driver_config->vpath_per_dev)
@@ -3858,9 +3857,8 @@ static int __devinit vxge_config_vpaths(
 }
 
 /* initialize device configuratrions */
-static void __devinit vxge_device_config_init(
-				struct vxge_hw_device_config *device_config,
-				int *intr_type)
+static void vxge_device_config_init(struct vxge_hw_device_config *device_config,
+				    int *intr_type)
 {
 	/* Used for CQRQ/SRQ. */
 	device_config->dma_blockpool_initial =
@@ -3911,7 +3909,7 @@ static void __devinit vxge_device_config_init(
 			device_config->rth_it_type);
 }
 
-static void __devinit vxge_print_parm(struct vxgedev *vdev, u64 vpath_mask)
+static void vxge_print_parm(struct vxgedev *vdev, u64 vpath_mask)
 {
 	int i;
 
@@ -3989,16 +3987,16 @@ static void __devinit vxge_print_parm(struct vxgedev *vdev, u64 vpath_mask)
 			continue;
 		vxge_debug_ll_config(VXGE_TRACE,
 			"%s: MTU size - %d", vdev->ndev->name,
-			((struct __vxge_hw_device  *)(vdev->devh))->
+			((vdev->devh))->
 				config.vp_config[i].mtu);
 		vxge_debug_init(VXGE_TRACE,
 			"%s: VLAN tag stripping %s", vdev->ndev->name,
-			((struct __vxge_hw_device  *)(vdev->devh))->
+			((vdev->devh))->
 				config.vp_config[i].rpa_strip_vlan_tag
 			? "Enabled" : "Disabled");
 		vxge_debug_ll_config(VXGE_TRACE,
 			"%s: Max frags : %d", vdev->ndev->name,
-			((struct __vxge_hw_device  *)(vdev->devh))->
+			((vdev->devh))->
 				config.vp_config[i].fifo.max_frags);
 		break;
 	}
@@ -4260,9 +4258,7 @@ static int vxge_probe_fw_update(struct vxgedev *vdev)
 	if (VXGE_FW_VER(VXGE_CERT_FW_VER_MAJOR, VXGE_CERT_FW_VER_MINOR, 0) >
 	    VXGE_FW_VER(maj, min, 0)) {
 		vxge_debug_init(VXGE_ERR, "%s: Firmware %d.%d.%d is too old to"
-				" be used with this driver.\n"
-				"Please get the latest version from "
-				"ftp://ftp.s2io.com/pub/X3100-Drivers/FIRMWARE",
+				" be used with this driver.",
 				VXGE_DRIVER_NAME, maj, min, bld);
 		return -EINVAL;
 	}
@@ -4270,7 +4266,7 @@ static int vxge_probe_fw_update(struct vxgedev *vdev)
 	return ret;
 }
 
-static int __devinit is_sriov_initialized(struct pci_dev *pdev)
+static int is_sriov_initialized(struct pci_dev *pdev)
 {
 	int pos;
 	u16 ctrl;
@@ -4301,7 +4297,7 @@ static const struct vxge_hw_uld_cbs vxge_callbacks = {
  * returns 0 on success and negative on failure.
  *
  */
-static int __devinit
+static int
 vxge_probe(struct pci_dev *pdev, const struct pci_device_id *pre)
 {
 	struct __vxge_hw_device *hldev;
@@ -4765,7 +4761,7 @@ _exit0:
  * Description: This function is called by the Pci subsystem to release a
  * PCI device and free up all resource held up by the device.
  */
-static void __devexit vxge_remove(struct pci_dev *pdev)
+static void vxge_remove(struct pci_dev *pdev)
 {
 	struct __vxge_hw_device *hldev;
 	struct vxgedev *vdev;
@@ -4800,7 +4796,7 @@ static void __devexit vxge_remove(struct pci_dev *pdev)
 			     __LINE__);
 }
 
-static struct pci_error_handlers vxge_err_handler = {
+static const struct pci_error_handlers vxge_err_handler = {
 	.error_detected = vxge_io_error_detected,
 	.slot_reset = vxge_io_slot_reset,
 	.resume = vxge_io_resume,
@@ -4810,7 +4806,7 @@ static struct pci_driver vxge_driver = {
 	.name = VXGE_DRIVER_NAME,
 	.id_table = vxge_id_table,
 	.probe = vxge_probe,
-	.remove = __devexit_p(vxge_remove),
+	.remove = vxge_remove,
 #ifdef CONFIG_PM
 	.suspend = vxge_pm_suspend,
 	.resume = vxge_pm_resume,

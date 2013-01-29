@@ -26,18 +26,17 @@
 #include <linux/spi/spi.h>
 #include <linux/can/platform/mcp251x.h>
 
-#include <mach/eukrea-baseboards.h>
-#include <mach/common.h>
-#include <mach/hardware.h>
-#include <mach/iomux-mx51.h>
-
 #include <asm/setup.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
 
+#include "common.h"
 #include "devices-imx51.h"
 #include "cpu_op-mx51.h"
+#include "eukrea-baseboards.h"
+#include "hardware.h"
+#include "iomux-mx51.h"
 
 #define USBH1_RST		IMX_GPIO_NR(2, 28)
 #define ETH_RST			IMX_GPIO_NR(2, 31)
@@ -142,7 +141,6 @@ static struct i2c_board_info eukrea_cpuimx51sd_i2c_devices[] = {
 		I2C_BOARD_INFO("pcf8563", 0x51),
 	}, {
 		I2C_BOARD_INFO("tsc2007", 0x49),
-		.type		= "tsc2007",
 		.platform_data	= &tsc2007_info,
 	},
 };
@@ -218,18 +216,18 @@ static const struct mxc_usbh_platform_data usbh1_config __initconst = {
 	.portsc	= MXC_EHCI_MODE_ULPI,
 };
 
-static int otg_mode_host;
+static bool otg_mode_host __initdata;
 
 static int __init eukrea_cpuimx51sd_otg_mode(char *options)
 {
 	if (!strcmp(options, "host"))
-		otg_mode_host = 1;
+		otg_mode_host = true;
 	else if (!strcmp(options, "device"))
-		otg_mode_host = 0;
+		otg_mode_host = false;
 	else
 		pr_info("otg_mode neither \"host\" nor \"device\". "
 			"Defaulting to device\n");
-	return 0;
+	return 1;
 }
 __setup("otg_mode=", eukrea_cpuimx51sd_otg_mode);
 
@@ -259,7 +257,7 @@ static struct spi_board_info cpuimx51sd_spi_device[] = {
 		.mode		= SPI_MODE_0,
 		.chip_select     = 0,
 		.platform_data   = &mcp251x_info,
-		.irq             = IMX_GPIO_TO_IRQ(CAN_IRQGPIO)
+		/* irq number is run-time assigned */
 	},
 };
 
@@ -293,7 +291,7 @@ static void __init eukrea_cpuimx51sd_init(void)
 
 	imx51_add_imx_uart(0, &uart_pdata);
 	imx51_add_mxc_nand(&eukrea_cpuimx51sd_nand_board_info);
-	imx51_add_imx2_wdt(0, NULL);
+	imx51_add_imx2_wdt(0);
 
 	gpio_request(ETH_RST, "eth_rst");
 	gpio_set_value(ETH_RST, 1);
@@ -310,6 +308,7 @@ static void __init eukrea_cpuimx51sd_init(void)
 	msleep(20);
 	gpio_set_value(CAN_RST, 1);
 	imx51_add_ecspi(0, &cpuimx51sd_ecspi1_pdata);
+	cpuimx51sd_spi_device[0].irq = gpio_to_irq(CAN_IRQGPIO);
 	spi_register_board_info(cpuimx51sd_spi_device,
 				ARRAY_SIZE(cpuimx51sd_spi_device));
 

@@ -237,6 +237,16 @@ static int __acpi_bus_get_power(struct acpi_device *device, int *state)
 	} else if (result == ACPI_STATE_D3_HOT) {
 		result = ACPI_STATE_D3;
 	}
+
+	/*
+	 * If we were unsure about the device parent's power state up to this
+	 * point, the fact that the device is in D0 implies that the parent has
+	 * to be in D0 too.
+	 */
+	if (device->parent && device->parent->power.state == ACPI_STATE_UNKNOWN
+	    && result == ACPI_STATE_D0)
+		device->parent->power.state = ACPI_STATE_D0;
+
 	*state = result;
 
  out:
@@ -247,7 +257,15 @@ static int __acpi_bus_get_power(struct acpi_device *device, int *state)
 }
 
 
-static int __acpi_bus_set_power(struct acpi_device *device, int state)
+/**
+ * acpi_device_set_power - Set power state of an ACPI device.
+ * @device: Device to set the power state of.
+ * @state: New power state to set.
+ *
+ * Callers must ensure that the device is power manageable before using this
+ * function.
+ */
+int acpi_device_set_power(struct acpi_device *device, int state)
 {
 	int result = 0;
 	acpi_status status = AE_OK;
@@ -288,6 +306,12 @@ static int __acpi_bus_set_power(struct acpi_device *device, int state)
 	 * a lower-powered state.
 	 */
 	if (state < device->power.state) {
+		if (device->power.state >= ACPI_STATE_D3_HOT &&
+		    state != ACPI_STATE_D0) {
+			printk(KERN_WARNING PREFIX
+			      "Cannot transition to non-D0 state from D3\n");
+			return -ENODEV;
+		}
 		if (device->power.flags.power_resources) {
 			result = acpi_power_transition(device, state);
 			if (result)
@@ -331,6 +355,7 @@ static int __acpi_bus_set_power(struct acpi_device *device, int state)
 
 	return result;
 }
+EXPORT_SYMBOL(acpi_device_set_power);
 
 
 int acpi_bus_set_power(acpi_handle handle, int state)
@@ -349,7 +374,7 @@ int acpi_bus_set_power(acpi_handle handle, int state)
 		return -ENODEV;
 	}
 
-	return __acpi_bus_set_power(device, state);
+	return acpi_device_set_power(device, state);
 }
 EXPORT_SYMBOL(acpi_bus_set_power);
 
@@ -392,7 +417,7 @@ int acpi_bus_update_power(acpi_handle handle, int *state_p)
 	if (result)
 		return result;
 
-	result = __acpi_bus_set_power(device, state);
+	result = acpi_device_set_power(device, state);
 	if (!result && state_p)
 		*state_p = state;
 
@@ -572,6 +597,10 @@ static void acpi_bus_osc_support(void)
 
 #if defined(CONFIG_ACPI_PROCESSOR) || defined(CONFIG_ACPI_PROCESSOR_MODULE)
 	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_PPC_OST_SUPPORT;
+#endif
+
+#ifdef ACPI_HOTPLUG_OST
+	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_HOTPLUG_OST_SUPPORT;
 #endif
 
 	if (!ghes_disable)
@@ -980,13 +1009,17 @@ static int __init acpi_bus_init(void)
 	status = acpi_ec_ecdt_probe();
 	/* Ignore result. Not having an ECDT is not fatal. */
 
-	acpi_bus_osc_support();
-
 	status = acpi_initialize_objects(ACPI_FULL_INITIALIZATION);
 	if (ACPI_FAILURE(status)) {
 		printk(KERN_ERR PREFIX "Unable to initialize ACPI objects\n");
 		goto error1;
 	}
+
+	/*
+	 * _OSC method may exist in module level code,
+	 * so it must be run after ACPI_FULL_INITIALIZATION
+	 */
+	acpi_bus_osc_support();
 
 	/*
 	 * _PDC control method may load dynamic SSDT tables,

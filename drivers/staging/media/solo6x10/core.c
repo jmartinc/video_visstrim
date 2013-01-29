@@ -129,7 +129,7 @@ static void free_solo_dev(struct solo_dev *solo_dev)
 	kfree(solo_dev);
 }
 
-static int __devinit solo_pci_probe(struct pci_dev *pdev,
+static int solo_pci_probe(struct pci_dev *pdev,
 				    const struct pci_device_id *id)
 {
 	struct solo_dev *solo_dev;
@@ -284,7 +284,7 @@ fail_probe:
 	return ret;
 }
 
-static void __devexit solo_pci_remove(struct pci_dev *pdev)
+static void solo_pci_remove(struct pci_dev *pdev)
 {
 	struct solo_dev *solo_dev = pci_get_drvdata(pdev);
 
@@ -318,15 +318,4 @@ static struct pci_driver solo_pci_driver = {
 	.remove = solo_pci_remove,
 };
 
-static int __init solo_module_init(void)
-{
-	return pci_register_driver(&solo_pci_driver);
-}
-
-static void __exit solo_module_exit(void)
-{
-	pci_unregister_driver(&solo_pci_driver);
-}
-
-module_init(solo_module_init);
-module_exit(solo_module_exit);
+module_pci_driver(solo_pci_driver);

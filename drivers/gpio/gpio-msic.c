@@ -99,7 +99,7 @@ static int msic_gpio_to_oreg(unsigned offset)
 	if (offset < 20)
 		return INTEL_MSIC_GPIO0HV0CTLO - offset + 16;
 
-	return INTEL_MSIC_GPIO1HV0CTLO + offset + 20;
+	return INTEL_MSIC_GPIO1HV0CTLO - offset + 20;
 }
 
 static int msic_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
@@ -256,7 +256,7 @@ static void msic_gpio_irq_handler(unsigned irq, struct irq_desc *desc)
 	chip->irq_eoi(data);
 }
 
-static int __devinit platform_msic_gpio_probe(struct platform_device *pdev)
+static int platform_msic_gpio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct intel_msic_gpio_pdata *pdata = dev->platform_data;

@@ -1,8 +1,7 @@
 /*
- *  arch/s390/kernel/entry64.S
  *    S390 low-level entry points.
  *
- *    Copyright (C) IBM Corp. 1999,2012
+ *    Copyright IBM Corp. 1999, 2012
  *    Author(s): Martin Schwidefsky (schwidefsky@de.ibm.com),
  *		 Hartmut Penner (hp@de.ibm.com),
  *		 Denis Joseph Barrow (djbarrow@de.ibm.com,barrow_dj@yahoo.com),
@@ -11,6 +10,7 @@
 
 #include <linux/init.h>
 #include <linux/linkage.h>
+#include <asm/processor.h>
 #include <asm/cache.h>
 #include <asm/errno.h>
 #include <asm/ptrace.h>
@@ -18,6 +18,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/unistd.h>
 #include <asm/page.h>
+#include <asm/sigp.h>
 
 __PT_R0      =	__PT_GPRS
 __PT_R1      =	__PT_GPRS + 8
@@ -79,14 +80,21 @@ _TIF_EXIT_SIE = (_TIF_SIGPENDING | _TIF_NEED_RESCHED | _TIF_MCCK_PENDING)
 #endif
 	.endm
 
-	.macro	HANDLE_SIE_INTERCEPT scratch
+	.macro	HANDLE_SIE_INTERCEPT scratch,pgmcheck
 #if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
 	tmhh	%r8,0x0001		# interrupting from user ?
 	jnz	.+42
 	lgr	\scratch,%r9
 	slg	\scratch,BASED(.Lsie_loop)
 	clg	\scratch,BASED(.Lsie_length)
+	.if	\pgmcheck
+	# Some program interrupts are suppressing (e.g. protection).
+	# We must also check the instruction after SIE in that case.
+	# do_protection_exception will rewind to rewind_pad
+	jh	.+22
+	.else
 	jhe	.+22
+	.endif
 	lg	%r9,BASED(.Lsie_loop)
 	SPP	BASED(.Lhost_id)	# set host id
 #endif
@@ -261,12 +269,12 @@ sysc_work:
 	jo	sysc_mcck_pending
 	tm	__TI_flags+7(%r12),_TIF_NEED_RESCHED
 	jo	sysc_reschedule
+	tm	__TI_flags+7(%r12),_TIF_PER_TRAP
+	jo	sysc_singlestep
 	tm	__TI_flags+7(%r12),_TIF_SIGPENDING
 	jo	sysc_sigpending
 	tm	__TI_flags+7(%r12),_TIF_NOTIFY_RESUME
 	jo	sysc_notify_resume
-	tm	__TI_flags+7(%r12),_TIF_PER_TRAP
-	jo	sysc_singlestep
 	j	sysc_return		# beware of critical section cleanup
 
 #
@@ -287,14 +295,13 @@ sysc_mcck_pending:
 # _TIF_SIGPENDING is set, call do_signal
 #
 sysc_sigpending:
-	ni	__TI_flags+7(%r12),255-_TIF_PER_TRAP # clear TIF_PER_TRAP
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	brasl	%r14,do_signal
 	tm	__TI_flags+7(%r12),_TIF_SYSCALL
 	jno	sysc_return
 	lmg	%r2,%r7,__PT_R2(%r11)	# load svc arguments
 	lghi	%r8,0			# svc 0 returns -ENOSYS
-	lh	%r1,__PT_INT_CODE+2(%r11)	# load new svc number
+	llgh	%r1,__PT_INT_CODE+2(%r11)	# load new svc number
 	cghi	%r1,NR_syscalls
 	jnl	sysc_nr_ok		# invalid svc number -> do svc 0
 	slag	%r8,%r1,2
@@ -312,7 +319,7 @@ sysc_notify_resume:
 # _TIF_PER_TRAP is set, call do_per_trap
 #
 sysc_singlestep:
-	ni	__TI_flags+7(%r12),255-(_TIF_SYSCALL | _TIF_PER_TRAP)
+	ni	__TI_flags+7(%r12),255-_TIF_PER_TRAP
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	larl	%r14,sysc_return
 	jg	do_per_trap
@@ -351,43 +358,17 @@ sysc_tracenogo:
 ENTRY(ret_from_fork)
 	la	%r11,STACK_FRAME_OVERHEAD(%r15)
 	lg	%r12,__LC_THREAD_INFO
-	tm	__PT_PSW+1(%r11),0x01	# forking a kernel thread ?
-	jo	0f
-	stg	%r15,__PT_R15(%r11)	# store stack pointer for new kthread
-0:	brasl	%r14,schedule_tail
+	brasl	%r14,schedule_tail
 	TRACE_IRQS_ON
 	ssm	__LC_SVC_NEW_PSW	# reenable interrupts
+	tm	__PT_PSW+1(%r11),0x01	# forking a kernel thread ?
+	jne	sysc_tracenogo
+	# it's a kernel thread
+	lmg	%r9,%r10,__PT_R9(%r11)	# load gprs
+ENTRY(kernel_thread_starter)
+	la	%r2,0(%r10)
+	basr	%r14,%r9
 	j	sysc_tracenogo
-
-#
-# kernel_execve function needs to deal with pt_regs that is not
-# at the usual place
-#
-ENTRY(kernel_execve)
-	stmg	%r12,%r15,96(%r15)
-	lgr	%r14,%r15
-	aghi	%r15,-(STACK_FRAME_OVERHEAD + __PT_SIZE)
-	stg	%r14,__SF_BACKCHAIN(%r15)
-	la	%r12,STACK_FRAME_OVERHEAD(%r15)
-	xc	0(__PT_SIZE,%r12),0(%r12)
-	lgr	%r5,%r12
-	brasl	%r14,do_execve
-	ltgfr	%r2,%r2
-	je	0f
-	aghi	%r15,(STACK_FRAME_OVERHEAD + __PT_SIZE)
-	lmg	%r12,%r15,96(%r15)
-	br	%r14
-	# execve succeeded.
-0:	ssm	__LC_PGM_NEW_PSW	# disable I/O and ext. interrupts
-	lg	%r15,__LC_KERNEL_STACK	# load ksp
-	aghi	%r15,-(STACK_FRAME_OVERHEAD + __PT_SIZE)
-	la	%r11,STACK_FRAME_OVERHEAD(%r15)
-	mvc	0(__PT_SIZE,%r11),0(%r12)	# copy pt_regs
-	lg	%r12,__LC_THREAD_INFO
-	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
-	ssm	__LC_SVC_NEW_PSW	# reenable interrupts
-	brasl	%r14,execve_tail
-	j	sysc_return
 
 /*
  * Program check handler routine
@@ -400,7 +381,7 @@ ENTRY(pgm_check_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,system_call
 	lmg	%r8,%r9,__LC_PGM_OLD_PSW
-	HANDLE_SIE_INTERCEPT %r14
+	HANDLE_SIE_INTERCEPT %r14,1
 	tmhh	%r8,0x0001		# test problem state bit
 	jnz	1f			# -> fault in user space
 	tmhh	%r8,0x4000		# PER bit set in old PSW ?
@@ -412,6 +393,11 @@ ENTRY(pgm_check_handler)
 1:	UPDATE_VTIME %r14,__LC_SYNC_ENTER_TIMER
 	LAST_BREAK %r14
 	lg	%r15,__LC_KERNEL_STACK
+	lg	%r14,__TI_task(%r12)
+	lghi	%r13,__LC_PGM_TDB
+	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
+	jz	2f
+	mvc	__THREAD_trap_tdb(256,%r14),0(%r13)
 2:	aghi	%r15,-(STACK_FRAME_OVERHEAD + __PT_SIZE)
 	la	%r11,STACK_FRAME_OVERHEAD(%r15)
 	stmg	%r0,%r7,__PT_R0(%r11)
@@ -422,21 +408,20 @@ ENTRY(pgm_check_handler)
 	stg	%r10,__PT_ARGS(%r11)
 	tm	__LC_PGM_ILC+3,0x80	# check for per exception
 	jz	0f
-	lg	%r1,__TI_task(%r12)
 	tmhh	%r8,0x0001		# kernel per event ?
 	jz	pgm_kprobe
 	oi	__TI_flags+7(%r12),_TIF_PER_TRAP
-	mvc	__THREAD_per_address(8,%r1),__LC_PER_ADDRESS
-	mvc	__THREAD_per_cause(2,%r1),__LC_PER_CAUSE
-	mvc	__THREAD_per_paid(1,%r1),__LC_PER_PAID
+	mvc	__THREAD_per_address(8,%r14),__LC_PER_ADDRESS
+	mvc	__THREAD_per_cause(2,%r14),__LC_PER_CAUSE
+	mvc	__THREAD_per_paid(1,%r14),__LC_PER_PAID
 0:	REENABLE_IRQS
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	larl	%r1,pgm_check_table
 	llgh	%r10,__PT_INT_CODE+2(%r11)
 	nill	%r10,0x007f
-	sll	%r10,3
+	sll	%r10,2
 	je	sysc_return
-	lg	%r1,0(%r10,%r1)		# load address of handler routine
+	lgf	%r1,0(%r10,%r1)		# load address of handler routine
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	basr	%r14,%r1		# branch to interrupt-handler
 	j	sysc_return
@@ -472,7 +457,7 @@ ENTRY(io_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,system_call
 	lmg	%r8,%r9,__LC_IO_OLD_PSW
-	HANDLE_SIE_INTERCEPT %r14
+	HANDLE_SIE_INTERCEPT %r14,0
 	SWITCH_ASYNC __LC_SAVE_AREA_ASYNC,__LC_ASYNC_STACK,STACK_SHIFT
 	tmhh	%r8,0x0001		# interrupting from user?
 	jz	io_skip
@@ -618,7 +603,7 @@ ENTRY(ext_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,system_call
 	lmg	%r8,%r9,__LC_EXT_OLD_PSW
-	HANDLE_SIE_INTERCEPT %r14
+	HANDLE_SIE_INTERCEPT %r14,0
 	SWITCH_ASYNC __LC_SAVE_AREA_ASYNC,__LC_ASYNC_STACK,STACK_SHIFT
 	tmhh	%r8,0x0001		# interrupting from user ?
 	jz	ext_skip
@@ -642,15 +627,11 @@ ext_skip:
  * Load idle PSW. The second "half" of this function is in cleanup_idle.
  */
 ENTRY(psw_idle)
-	stg	%r4,__SF_EMPTY(%r15)
+	stg	%r3,__SF_EMPTY(%r15)
 	larl	%r1,psw_idle_lpsw+4
 	stg	%r1,__SF_EMPTY+8(%r15)
-	larl	%r1,.Lvtimer_max
-	STCK	__IDLE_ENTER(%r2)
-	ltr	%r5,%r5
-	stpt	__VQ_IDLE_ENTER(%r3)
-	jz	psw_idle_lpsw
-	spt	0(%r1)
+	STCK	__CLOCK_IDLE_ENTER(%r2)
+	stpt	__TIMER_IDLE_ENTER(%r2)
 psw_idle_lpsw:
 	lpswe	__SF_EMPTY(%r15)
 	br	%r14
@@ -670,7 +651,7 @@ ENTRY(mcck_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,system_call
 	lmg	%r8,%r9,__LC_MCK_OLD_PSW
-	HANDLE_SIE_INTERCEPT %r14
+	HANDLE_SIE_INTERCEPT %r14,0
 	tm	__LC_MCCK_CODE,0x80	# system damage?
 	jo	mcck_panic		# yes -> rest of mcck code invalid
 	lghi	%r14,__LC_CPU_TIMER_SAVE_AREA
@@ -750,15 +731,17 @@ ENTRY(restart_int_handler)
 	mvc	__PT_PSW(16,%r15),__LC_RST_OLD_PSW # store restart old psw
 	aghi	%r15,-STACK_FRAME_OVERHEAD	# create stack frame on stack
 	xc	0(STACK_FRAME_OVERHEAD,%r15),0(%r15)
-	lmg	%r1,%r3,__LC_RESTART_FN		# load fn, parm & source cpu
+	lg	%r1,__LC_RESTART_FN		# load fn, parm & source cpu
+	lg	%r2,__LC_RESTART_DATA
+	lg	%r3,__LC_RESTART_SOURCE
 	ltgr	%r3,%r3				# test source cpu address
 	jm	1f				# negative -> skip source stop
-0:	sigp	%r4,%r3,1			# sigp sense to source cpu
+0:	sigp	%r4,%r3,SIGP_SENSE		# sigp sense to source cpu
 	brc	10,0b				# wait for status stored
 1:	basr	%r14,%r1			# call function
 	stap	__SF_EMPTY(%r15)		# store cpu address
 	llgh	%r3,__SF_EMPTY(%r15)
-2:	sigp	%r4,%r3,5			# sigp stop to current cpu
+2:	sigp	%r4,%r3,SIGP_STOP		# sigp stop to current cpu
 	brc	2,2b
 3:	j	3b
 
@@ -916,33 +899,28 @@ cleanup_io_restore_insn:
 
 cleanup_idle:
 	# copy interrupt clock & cpu timer
-	mvc	__IDLE_EXIT(8,%r2),__LC_INT_CLOCK
-	mvc	__VQ_IDLE_EXIT(8,%r3),__LC_ASYNC_ENTER_TIMER
+	mvc	__CLOCK_IDLE_EXIT(8,%r2),__LC_INT_CLOCK
+	mvc	__TIMER_IDLE_EXIT(8,%r2),__LC_ASYNC_ENTER_TIMER
 	cghi	%r11,__LC_SAVE_AREA_ASYNC
 	je	0f
-	mvc	__IDLE_EXIT(8,%r2),__LC_MCCK_CLOCK
-	mvc	__VQ_IDLE_EXIT(8,%r3),__LC_MCCK_ENTER_TIMER
+	mvc	__CLOCK_IDLE_EXIT(8,%r2),__LC_MCCK_CLOCK
+	mvc	__TIMER_IDLE_EXIT(8,%r2),__LC_MCCK_ENTER_TIMER
 0:	# check if stck & stpt have been executed
 	clg	%r9,BASED(cleanup_idle_insn)
 	jhe	1f
-	mvc	__IDLE_ENTER(8,%r2),__IDLE_EXIT(%r2)
-	mvc	__VQ_IDLE_ENTER(8,%r3),__VQ_IDLE_EXIT(%r3)
-	j	2f
-1:	# check if the cpu timer has been reprogrammed
-	ltr	%r5,%r5
-	jz	2f
-	spt	__VQ_IDLE_ENTER(%r3)
-2:	# account system time going idle
+	mvc	__CLOCK_IDLE_ENTER(8,%r2),__CLOCK_IDLE_EXIT(%r2)
+	mvc	__TIMER_IDLE_ENTER(8,%r2),__TIMER_IDLE_EXIT(%r2)
+1:	# account system time going idle
 	lg	%r9,__LC_STEAL_TIMER
-	alg	%r9,__IDLE_ENTER(%r2)
+	alg	%r9,__CLOCK_IDLE_ENTER(%r2)
 	slg	%r9,__LC_LAST_UPDATE_CLOCK
 	stg	%r9,__LC_STEAL_TIMER
-	mvc	__LC_LAST_UPDATE_CLOCK(8),__IDLE_EXIT(%r2)
+	mvc	__LC_LAST_UPDATE_CLOCK(8),__CLOCK_IDLE_EXIT(%r2)
 	lg	%r9,__LC_SYSTEM_TIMER
 	alg	%r9,__LC_LAST_UPDATE_TIMER
-	slg	%r9,__VQ_IDLE_ENTER(%r3)
+	slg	%r9,__TIMER_IDLE_ENTER(%r2)
 	stg	%r9,__LC_SYSTEM_TIMER
-	mvc	__LC_LAST_UPDATE_TIMER(8),__VQ_IDLE_EXIT(%r3)
+	mvc	__LC_LAST_UPDATE_TIMER(8),__TIMER_IDLE_EXIT(%r2)
 	# prepare return psw
 	nihh	%r8,0xfffd		# clear wait state bit
 	lg	%r9,48(%r11)		# return from psw_idle
@@ -958,8 +936,6 @@ cleanup_idle_insn:
 	.quad	__critical_start
 .Lcritical_length:
 	.quad	__critical_end - __critical_start
-.Lvtimer_max:
-	.quad	0x7fffffffffffffff
 
 
 #if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
@@ -974,7 +950,13 @@ ENTRY(sie64a)
 	stg	%r3,__SF_EMPTY+8(%r15)		# save guest register save area
 	xc	__SF_EMPTY+16(8,%r15),__SF_EMPTY+16(%r15) # host id == 0
 	lmg	%r0,%r13,0(%r3)			# load guest gprs 0-13
-	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
+# some program checks are suppressing. C code (e.g. do_protection_exception)
+# will rewind the PSW by the ILC, which is 4 bytes in case of SIE. Other
+# instructions in the sie_loop should not cause program interrupts. So
+# lets use a nop (47 00 00 00) as a landing pad.
+# See also HANDLE_SIE_INTERCEPT
+rewind_pad:
+	nop	0
 sie_loop:
 	lg	%r14,__LC_THREAD_INFO		# pointer thread_info struct
 	tm	__TI_flags+7(%r14),_TIF_EXIT_SIE
@@ -1014,9 +996,8 @@ sie_fault:
 .Lhost_id:
 	.quad	0
 
-	.section __ex_table,"a"
-	.quad	sie_loop,sie_fault
-	.previous
+	EX_TABLE(rewind_pad,sie_fault)
+	EX_TABLE(sie_loop,sie_fault)
 #endif
 
 		.section .rodata, "a"

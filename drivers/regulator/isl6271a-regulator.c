@@ -73,21 +73,8 @@ static struct regulator_ops isl_core_ops = {
 	.map_voltage	= regulator_map_voltage_linear,
 };
 
-static int isl6271a_get_fixed_voltage(struct regulator_dev *dev)
-{
-	int id = rdev_get_id(dev);
-	return (id == 1) ? 1100000 : 1300000;
-}
-
-static int isl6271a_list_fixed_voltage(struct regulator_dev *dev, unsigned selector)
-{
-	int id = rdev_get_id(dev);
-	return (id == 1) ? 1100000 : 1300000;
-}
-
 static struct regulator_ops isl_fixed_ops = {
-	.get_voltage	= isl6271a_get_fixed_voltage,
-	.list_voltage	= isl6271a_list_fixed_voltage,
+	.list_voltage	= regulator_list_voltage_linear,
 };
 
 static const struct regulator_desc isl_rd[] = {
@@ -107,6 +94,7 @@ static const struct regulator_desc isl_rd[] = {
 		.ops		= &isl_fixed_ops,
 		.type		= REGULATOR_VOLTAGE,
 		.owner		= THIS_MODULE,
+		.min_uV		= 1100000,
 	}, {
 		.name		= "LDO2",
 		.id		= 2,
@@ -114,10 +102,11 @@ static const struct regulator_desc isl_rd[] = {
 		.ops		= &isl_fixed_ops,
 		.type		= REGULATOR_VOLTAGE,
 		.owner		= THIS_MODULE,
+		.min_uV		= 1300000,
 	},
 };
 
-static int __devinit isl6271a_probe(struct i2c_client *i2c,
+static int isl6271a_probe(struct i2c_client *i2c,
 				     const struct i2c_device_id *id)
 {
 	struct regulator_config config = { };
@@ -162,7 +151,7 @@ error:
 	return err;
 }
 
-static int __devexit isl6271a_remove(struct i2c_client *i2c)
+static int isl6271a_remove(struct i2c_client *i2c)
 {
 	struct isl_pmic *pmic = i2c_get_clientdata(i2c);
 	int i;
@@ -185,7 +174,7 @@ static struct i2c_driver isl6271a_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = isl6271a_probe,
-	.remove = __devexit_p(isl6271a_remove),
+	.remove = isl6271a_remove,
 	.id_table = isl6271a_id,
 };
 

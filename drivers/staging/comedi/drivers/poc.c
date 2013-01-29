@@ -57,15 +57,18 @@ struct boarddef_struct {
 	const struct comedi_lrange *range;
 };
 
-#define this_board ((const struct boarddef_struct *)dev->board_ptr)
+struct poc_private {
+	unsigned int ao_readback[32];
+};
 
 static int readback_insn(struct comedi_device *dev, struct comedi_subdevice *s,
 			 struct comedi_insn *insn, unsigned int *data)
 {
+	struct poc_private *devpriv = dev->private;
 	int chan;
 
 	chan = CR_CHAN(insn->chanspec);
-	data[0] = ((unsigned int *)dev->private)[chan];
+	data[0] = devpriv->ao_readback[chan];
 
 	return 1;
 }
@@ -77,12 +80,13 @@ static int readback_insn(struct comedi_device *dev, struct comedi_subdevice *s,
 static int dac02_ao_winsn(struct comedi_device *dev, struct comedi_subdevice *s,
 			  struct comedi_insn *insn, unsigned int *data)
 {
+	struct poc_private *devpriv = dev->private;
 	int temp;
 	int chan;
 	int output;
 
 	chan = CR_CHAN(insn->chanspec);
-	((unsigned int *)dev->private)[chan] = data[0];
+	devpriv->ao_readback[chan] = data[0];
 	output = data[0];
 #ifdef wrong
 	/*  convert to complementary binary if range is bipolar */
@@ -101,23 +105,18 @@ static int pcl733_insn_bits(struct comedi_device *dev,
 			    struct comedi_subdevice *s,
 			    struct comedi_insn *insn, unsigned int *data)
 {
-	if (insn->n != 2)
-		return -EINVAL;
-
 	data[1] = inb(dev->iobase + 0);
 	data[1] |= (inb(dev->iobase + 1) << 8);
 	data[1] |= (inb(dev->iobase + 2) << 16);
 	data[1] |= (inb(dev->iobase + 3) << 24);
 
-	return 2;
+	return insn->n;
 }
 
 static int pcl734_insn_bits(struct comedi_device *dev,
 			    struct comedi_subdevice *s,
 			    struct comedi_insn *insn, unsigned int *data)
 {
-	if (insn->n != 2)
-		return -EINVAL;
 	if (data[0]) {
 		s->state &= ~data[0];
 		s->state |= (data[0] & data[1]);
@@ -132,27 +131,30 @@ static int pcl734_insn_bits(struct comedi_device *dev,
 	}
 	data[1] = s->state;
 
-	return 2;
+	return insn->n;
 }
 
 static int poc_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 {
+	const struct boarddef_struct *board = comedi_board(dev);
+	struct poc_private *devpriv;
 	struct comedi_subdevice *s;
 	unsigned long iobase;
 	unsigned int iosize;
+	int ret;
 
 	iobase = it->options[0];
 	printk(KERN_INFO "comedi%d: poc: using %s iobase 0x%lx\n", dev->minor,
-	       this_board->name, iobase);
+	       board->name, iobase);
 
-	dev->board_name = this_board->name;
+	dev->board_name = board->name;
 
 	if (iobase == 0) {
 		printk(KERN_ERR "io base address required\n");
 		return -EINVAL;
 	}
 
-	iosize = this_board->iosize;
+	iosize = board->iosize;
 	/* check if io addresses are available */
 	if (!request_region(iobase, iosize, "dac02")) {
 		printk(KERN_ERR "I/O port conflict: failed to allocate ports "
@@ -161,20 +163,24 @@ static int poc_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	}
 	dev->iobase = iobase;
 
-	if (alloc_subdevices(dev, 1) < 0)
+	ret = comedi_alloc_subdevices(dev, 1);
+	if (ret)
+		return ret;
+
+	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	if (!devpriv)
 		return -ENOMEM;
-	if (alloc_private(dev, sizeof(unsigned int) * this_board->n_chan) < 0)
-		return -ENOMEM;
+	dev->private = devpriv;
 
 	/* analog output subdevice */
-	s = dev->subdevices + 0;
-	s->type = this_board->type;
-	s->n_chan = this_board->n_chan;
-	s->maxdata = (1 << this_board->n_bits) - 1;
-	s->range_table = this_board->range;
-	s->insn_write = this_board->winsn;
-	s->insn_read = this_board->rinsn;
-	s->insn_bits = this_board->insnbits;
+	s = &dev->subdevices[0];
+	s->type = board->type;
+	s->n_chan = board->n_chan;
+	s->maxdata = (1 << board->n_bits) - 1;
+	s->range_table = board->range;
+	s->insn_write = board->winsn;
+	s->insn_read = board->rinsn;
+	s->insn_bits = board->insnbits;
 	if (s->type == COMEDI_SUBD_AO || s->type == COMEDI_SUBD_DO)
 		s->subdev_flags = SDF_WRITABLE;
 
@@ -183,8 +189,10 @@ static int poc_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 static void poc_detach(struct comedi_device *dev)
 {
+	const struct boarddef_struct *board = comedi_board(dev);
+
 	if (dev->iobase)
-		release_region(dev->iobase, this_board->iosize);
+		release_region(dev->iobase, board->iosize);
 }
 
 static const struct boarddef_struct boards[] = {

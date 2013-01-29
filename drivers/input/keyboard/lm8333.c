@@ -91,7 +91,7 @@ static void lm8333_key_handler(struct lm8333 *lm8333)
 		return;
 	}
 
-	for (i = 0; keys[i] && i < LM8333_FIFO_TRANSFER_SIZE; i++) {
+	for (i = 0; i < LM8333_FIFO_TRANSFER_SIZE && keys[i]; i++) {
 		pressed = keys[i] & 0x80;
 		code = keys[i] & 0x7f;
 
@@ -128,7 +128,7 @@ static irqreturn_t lm8333_irq_thread(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int __devinit lm8333_probe(struct i2c_client *client,
+static int lm8333_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
 {
 	const struct lm8333_platform_data *pdata = client->dev.platform_data;
@@ -202,7 +202,7 @@ static int __devinit lm8333_probe(struct i2c_client *client,
 	return err;
 }
 
-static int __devexit lm8333_remove(struct i2c_client *client)
+static int lm8333_remove(struct i2c_client *client)
 {
 	struct lm8333 *lm8333 = i2c_get_clientdata(client);
 
@@ -225,7 +225,7 @@ static struct i2c_driver lm8333_driver = {
 		.owner		= THIS_MODULE,
 	},
 	.probe		= lm8333_probe,
-	.remove		= __devexit_p(lm8333_remove),
+	.remove		= lm8333_remove,
 	.id_table	= lm8333_id,
 };
 module_i2c_driver(lm8333_driver);

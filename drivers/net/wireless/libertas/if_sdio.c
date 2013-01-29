@@ -588,17 +588,38 @@ static int if_sdio_prog_real(struct if_sdio_card *card,
 	size = fw->size;
 
 	while (size) {
-		ret = if_sdio_wait_status(card, FW_DL_READY_STATUS);
-		if (ret)
-			goto release;
+		timeout = jiffies + HZ;
+		while (1) {
+			ret = if_sdio_wait_status(card, FW_DL_READY_STATUS);
+			if (ret)
+				goto release;
 
-		req_size = sdio_readb(card->func, IF_SDIO_RD_BASE, &ret);
-		if (ret)
-			goto release;
+			req_size = sdio_readb(card->func, IF_SDIO_RD_BASE,
+					&ret);
+			if (ret)
+				goto release;
 
-		req_size |= sdio_readb(card->func, IF_SDIO_RD_BASE + 1, &ret) << 8;
-		if (ret)
-			goto release;
+			req_size |= sdio_readb(card->func, IF_SDIO_RD_BASE + 1,
+					&ret) << 8;
+			if (ret)
+				goto release;
+
+			/*
+			 * For SD8688 wait until the length is not 0, 1 or 2
+			 * before downloading the first FW block,
+			 * since BOOT code writes the register to indicate the
+			 * helper/FW download winner,
+			 * the value could be 1 or 2 (Func1 or Func2).
+			 */
+			if ((size != fw->size) || (req_size > 2))
+				break;
+			if (time_after(jiffies, timeout)) {
+				ret = -ETIMEDOUT;
+				goto release;
+			}
+			mdelay(1);
+		}
+
 /*
 		lbs_deb_sdio("firmware wants %d bytes\n", (int)req_size);
 */
@@ -1314,6 +1335,7 @@ static void if_sdio_remove(struct sdio_func *func)
 		kfree(packet);
 	}
 
+	kfree(card);
 	lbs_deb_leave(LBS_DEB_SDIO);
 }
 
@@ -1324,6 +1346,11 @@ static int if_sdio_suspend(struct device *dev)
 	struct if_sdio_card *card = sdio_get_drvdata(func);
 
 	mmc_pm_flag_t flags = sdio_get_host_pm_caps(func);
+
+	/* If we're powered off anyway, just let the mmc layer remove the
+	 * card. */
+	if (!lbs_iface_active(card->priv))
+		return -ENOSYS;
 
 	dev_info(dev, "%s: suspend: PM flags = 0x%x\n",
 		 sdio_func_id(func), flags);

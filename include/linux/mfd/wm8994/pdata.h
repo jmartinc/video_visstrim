@@ -141,6 +141,7 @@ struct wm8994_pdata {
 	struct wm8994_ldo_pdata ldo[WM8994_NUM_LDO];
 
 	int irq_base;  /** Base IRQ number for WM8994, required for IRQs */
+	unsigned long irq_flags; /** user irq flags */
 
         int num_drc_cfgs;
         struct wm8994_drc_cfg *drc_cfgs;
@@ -163,6 +164,10 @@ struct wm8994_pdata {
 	int num_micd_rates;
 	struct wm8958_micd_rate *micd_rates;
 
+	/* Power up delays to add after microphone bias power up (ms) */
+	int micb1_delay;
+	int micb2_delay;
+
         /* LINEOUT can be differential or single ended */
         unsigned int lineout1_diff:1;
         unsigned int lineout2_diff:1;
@@ -170,6 +175,11 @@ struct wm8994_pdata {
         /* Common mode feedback */
         unsigned int lineout1fb:1;
         unsigned int lineout2fb:1;
+
+	/* Delay between detecting a jack and starting microphone
+	 * detect (specified in ms)
+	 */
+	int micdet_delay;
 
 	/* IRQ for microphone detection if brought out directly as a
 	 * signal.

@@ -1249,20 +1249,35 @@ static const struct firmware *e100_request_firmware(struct nic *nic)
 	const struct firmware *fw = nic->fw;
 	u8 timer, bundle, min_size;
 	int err = 0;
+	bool required = false;
 
 	/* do not load u-code for ICH devices */
 	if (nic->flags & ich)
 		return NULL;
 
-	/* Search for ucode match against h/w revision */
-	if (nic->mac == mac_82559_D101M)
+	/* Search for ucode match against h/w revision
+	 *
+	 * Based on comments in the source code for the FreeBSD fxp
+	 * driver, the FIRMWARE_D102E ucode includes both CPUSaver and
+	 *
+	 *    "fixes for bugs in the B-step hardware (specifically, bugs
+	 *     with Inline Receive)."
+	 *
+	 * So we must fail if it cannot be loaded.
+	 *
+	 * The other microcode files are only required for the optional
+	 * CPUSaver feature.  Nice to have, but no reason to fail.
+	 */
+	if (nic->mac == mac_82559_D101M) {
 		fw_name = FIRMWARE_D101M;
-	else if (nic->mac == mac_82559_D101S)
+	} else if (nic->mac == mac_82559_D101S) {
 		fw_name = FIRMWARE_D101S;
-	else if (nic->mac == mac_82551_F || nic->mac == mac_82551_10)
+	} else if (nic->mac == mac_82551_F || nic->mac == mac_82551_10) {
 		fw_name = FIRMWARE_D102E;
-	else /* No ucode on other devices */
+		required = true;
+	} else { /* No ucode on other devices */
 		return NULL;
+	}
 
 	/* If the firmware has not previously been loaded, request a pointer
 	 * to it. If it was previously loaded, we are reinitializing the
@@ -1273,10 +1288,17 @@ static const struct firmware *e100_request_firmware(struct nic *nic)
 		err = request_firmware(&fw, fw_name, &nic->pdev->dev);
 
 	if (err) {
-		netif_err(nic, probe, nic->netdev,
-			  "Failed to load firmware \"%s\": %d\n",
-			  fw_name, err);
-		return ERR_PTR(err);
+		if (required) {
+			netif_err(nic, probe, nic->netdev,
+				  "Failed to load firmware \"%s\": %d\n",
+				  fw_name, err);
+			return ERR_PTR(err);
+		} else {
+			netif_info(nic, probe, nic->netdev,
+				   "CPUSaver disabled. Needs \"%s\": %d\n",
+				   fw_name, err);
+			return NULL;
+		}
 	}
 
 	/* Firmware should be precisely UCODE_SIZE (words) plus three bytes
@@ -2807,8 +2829,7 @@ static const struct net_device_ops e100_netdev_ops = {
 	.ndo_set_features	= e100_set_features,
 };
 
-static int __devinit e100_probe(struct pci_dev *pdev,
-	const struct pci_device_id *ent)
+static int e100_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *netdev;
 	struct nic *nic;
@@ -2959,7 +2980,7 @@ err_out_free_dev:
 	return err;
 }
 
-static void __devexit e100_remove(struct pci_dev *pdev)
+static void e100_remove(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 
@@ -3135,7 +3156,7 @@ static void e100_io_resume(struct pci_dev *pdev)
 	}
 }
 
-static struct pci_error_handlers e100_err_handler = {
+static const struct pci_error_handlers e100_err_handler = {
 	.error_detected = e100_io_error_detected,
 	.slot_reset = e100_io_slot_reset,
 	.resume = e100_io_resume,
@@ -3145,7 +3166,7 @@ static struct pci_driver e100_driver = {
 	.name =         DRV_NAME,
 	.id_table =     e100_id_table,
 	.probe =        e100_probe,
-	.remove =       __devexit_p(e100_remove),
+	.remove =       e100_remove,
 #ifdef CONFIG_PM
 	/* Power Management hooks */
 	.suspend =      e100_suspend,

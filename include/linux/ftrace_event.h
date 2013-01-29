@@ -65,7 +65,7 @@ struct trace_iterator {
 	void			*private;
 	int			cpu_file;
 	struct mutex		mutex;
-	struct ring_buffer_iter	*buffer_iter[NR_CPUS];
+	struct ring_buffer_iter	**buffer_iter;
 	unsigned long		iter_flags;
 
 	/* trace_seq for __print_flags() and __print_symbolic() etc. */
@@ -84,6 +84,12 @@ struct trace_iterator {
 	long			idx;
 
 	cpumask_var_t		started;
+};
+
+enum trace_iter_flags {
+	TRACE_FILE_LAT_FMT	= 1,
+	TRACE_FILE_ANNOTATE	= 2,
+	TRACE_FILE_TIME_IN_NS	= 4,
 };
 
 
@@ -127,13 +133,13 @@ trace_current_buffer_lock_reserve(struct ring_buffer **current_buffer,
 void trace_current_buffer_unlock_commit(struct ring_buffer *buffer,
 					struct ring_buffer_event *event,
 					unsigned long flags, int pc);
-void trace_nowake_buffer_unlock_commit(struct ring_buffer *buffer,
-				       struct ring_buffer_event *event,
-					unsigned long flags, int pc);
-void trace_nowake_buffer_unlock_commit_regs(struct ring_buffer *buffer,
-					    struct ring_buffer_event *event,
-					    unsigned long flags, int pc,
-					    struct pt_regs *regs);
+void trace_buffer_unlock_commit(struct ring_buffer *buffer,
+				struct ring_buffer_event *event,
+				unsigned long flags, int pc);
+void trace_buffer_unlock_commit_regs(struct ring_buffer *buffer,
+				     struct ring_buffer_event *event,
+				     unsigned long flags, int pc,
+				     struct pt_regs *regs);
 void trace_current_buffer_discard_commit(struct ring_buffer *buffer,
 					 struct ring_buffer_event *event);
 
@@ -207,6 +213,9 @@ struct ftrace_event_call {
 	 *   bit 1:		enabled
 	 *   bit 2:		filter_active
 	 *   bit 3:		enabled cmd record
+	 *   bit 4:		allow trace by non root (cap any)
+	 *   bit 5:		failed to apply filter
+	 *   bit 6:		ftrace internal event (do not enable)
 	 *
 	 * Changes to flags must hold the event_mutex.
 	 *
@@ -303,9 +312,10 @@ extern void *perf_trace_buf_prepare(int size, unsigned short type,
 
 static inline void
 perf_trace_buf_submit(void *raw_data, int size, int rctx, u64 addr,
-		       u64 count, struct pt_regs *regs, void *head)
+		       u64 count, struct pt_regs *regs, void *head,
+		       struct task_struct *task)
 {
-	perf_tp_event(addr, count, raw_data, size, regs, head, rctx);
+	perf_tp_event(addr, count, raw_data, size, regs, head, rctx, task);
 }
 #endif
 

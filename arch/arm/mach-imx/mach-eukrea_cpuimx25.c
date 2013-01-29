@@ -27,18 +27,18 @@
 #include <linux/usb/otg.h>
 #include <linux/usb/ulpi.h>
 
-#include <mach/eukrea-baseboards.h>
-#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
 #include <asm/memory.h>
 #include <asm/mach/map.h>
-#include <mach/common.h>
-#include <mach/mx25.h>
-#include <mach/iomux-mx25.h>
 
+#include "common.h"
 #include "devices-imx25.h"
+#include "eukrea-baseboards.h"
+#include "hardware.h"
+#include "iomux-mx25.h"
+#include "mx25.h"
 
 static const struct imxuart_platform_data uart_pdata __initconst = {
 	.flags = IMXUART_HAVE_RTSCTS,
@@ -109,18 +109,18 @@ static const struct fsl_usb2_platform_data otg_device_pdata __initconst = {
 	.workaround     = FLS_USB2_WORKAROUND_ENGCM09152,
 };
 
-static int otg_mode_host;
+static bool otg_mode_host __initdata;
 
 static int __init eukrea_cpuimx25_otg_mode(char *options)
 {
 	if (!strcmp(options, "host"))
-		otg_mode_host = 1;
+		otg_mode_host = true;
 	else if (!strcmp(options, "device"))
-		otg_mode_host = 0;
+		otg_mode_host = false;
 	else
 		pr_info("otg_mode neither \"host\" nor \"device\". "
 			"Defaulting to device\n");
-	return 0;
+	return 1;
 }
 __setup("otg_mode=", eukrea_cpuimx25_otg_mode);
 
@@ -134,9 +134,9 @@ static void __init eukrea_cpuimx25_init(void)
 
 	imx25_add_imx_uart0(&uart_pdata);
 	imx25_add_mxc_nand(&eukrea_cpuimx25_nand_board_info);
-	imx25_add_imxdi_rtc(NULL);
+	imx25_add_imxdi_rtc();
 	imx25_add_fec(&mx25_fec_pdata);
-	imx25_add_imx2_wdt(NULL);
+	imx25_add_imx2_wdt();
 
 	i2c_register_board_info(0, eukrea_cpuimx25_i2c_devices,
 				ARRAY_SIZE(eukrea_cpuimx25_i2c_devices));

@@ -13,6 +13,7 @@
  */
 #include <linux/bug.h>
 #include <linux/compiler.h>
+#include <linux/kexec.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -131,6 +132,9 @@ static void show_backtrace(struct task_struct *task, const struct pt_regs *regs)
 	unsigned long sp = regs->regs[29];
 	unsigned long ra = regs->regs[31];
 	unsigned long pc = regs->cp0_epc;
+
+	if (!task)
+		task = current;
 
 	if (raw_show_trace || !__kernel_text_address(pc)) {
 		show_raw_backtrace(sp);
@@ -405,6 +409,9 @@ void __noreturn die(const char *str, struct pt_regs *regs)
 		ssleep(5);
 		panic("Fatal exception");
 	}
+
+	if (regs && kexec_should_crash(current))
+		crash_kexec(regs);
 
 	do_exit(sig);
 }
@@ -1018,6 +1025,24 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 
 		return;
 
+	case 3:
+		/*
+		 * Old (MIPS I and MIPS II) processors will set this code
+		 * for COP1X opcode instructions that replaced the original
+		 * COP3 space.  We don't limit COP1 space instructions in
+		 * the emulator according to the CPU ISA, so we want to
+		 * treat COP1X instructions consistently regardless of which
+		 * code the CPU chose.  Therefore we redirect this trap to
+		 * the FP emulator too.
+		 *
+		 * Then some newer FPU-less processors use this code
+		 * erroneously too, so they are covered by this choice
+		 * as well.
+		 */
+		if (raw_cpu_has_fpu)
+			break;
+		/* Fall through.  */
+
 	case 1:
 		if (used_math())	/* Using the FPU again.  */
 			own_fpu(1);
@@ -1041,9 +1066,6 @@ asmlinkage void do_cpu(struct pt_regs *regs)
 	case 2:
 		raw_notifier_call_chain(&cu2_chain, CU2_EXCEPTION, regs);
 		return;
-
-	case 3:
-		break;
 	}
 
 	force_sig(SIGILL, current);
@@ -1249,6 +1271,8 @@ static inline void parity_protection_init(void)
 		break;
 
 	case CPU_5KC:
+	case CPU_5KE:
+	case CPU_LOONGSON1:
 		write_c0_ecc(0x80000000);
 		back_to_back_c0_hazard();
 		/* Set the PE bit (bit 31) in the c0_errctl register. */
@@ -1498,6 +1522,7 @@ extern void flush_tlb_handlers(void);
  * Timer interrupt
  */
 int cp0_compare_irq;
+EXPORT_SYMBOL_GPL(cp0_compare_irq);
 int cp0_compare_irq_shift;
 
 /*
@@ -1597,7 +1622,7 @@ void __cpuinit per_cpu_trap_init(bool is_boot_cpu)
 			cp0_perfcount_irq = -1;
 	} else {
 		cp0_compare_irq = CP0_LEGACY_COMPARE_IRQ;
-		cp0_compare_irq_shift = cp0_compare_irq;
+		cp0_compare_irq_shift = CP0_LEGACY_PERFCNT_IRQ;
 		cp0_perfcount_irq = -1;
 	}
 

@@ -83,9 +83,6 @@ static const char rx_list_name[][8] = {
 	[RX_EFF] = "rx_eff",
 };
 
-/* receive filters subscribed for 'all' CAN devices */
-extern struct dev_rcv_lists can_rx_alldev_list;
-
 /*
  * af_can statistics stuff
  */
@@ -400,7 +397,7 @@ static inline void can_rcvlist_sff_proc_show_one(struct seq_file *m,
 	int i;
 	int all_empty = 1;
 
-	/* check wether at least one list is non-empty */
+	/* check whether at least one list is non-empty */
 	for (i = 0; i < 0x800; i++)
 		if (!hlist_empty(&d->rx_sff[i])) {
 			all_empty = 0;

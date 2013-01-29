@@ -132,7 +132,7 @@ static struct clk fixed_pciexclkp = {
 	.rate = 100000000,	/* 100 MHz reference clock */
 };
 
-static void __devinit sh7786_pci_fixup(struct pci_dev *dev)
+static void sh7786_pci_fixup(struct pci_dev *dev)
 {
 	/*
 	 * Prevent enumeration of root complex resources.
@@ -239,7 +239,7 @@ static int __init pcie_clk_init(struct sh7786_pcie_port *port)
 	clk->enable_reg = (void __iomem *)(chan->reg_base + SH4A_PCIEPHYCTLR);
 	clk->enable_bit = BITS_CKE;
 
-	ret = sh_clk_mstp32_register(clk, 1);
+	ret = sh_clk_mstp_register(clk, 1);
 	if (unlikely(ret < 0))
 		goto err_phy;
 

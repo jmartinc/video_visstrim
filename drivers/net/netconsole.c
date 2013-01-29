@@ -56,6 +56,10 @@ static char config[MAX_PARAM_LENGTH];
 module_param_string(netconsole, config, MAX_PARAM_LENGTH, 0);
 MODULE_PARM_DESC(netconsole, " netconsole=[src-port]@[src-ip]/[dev],[tgt-port]@<tgt-ip>/[tgt-macaddr]");
 
+static bool oops_only = false;
+module_param(oops_only, bool, 0600);
+MODULE_PARM_DESC(oops_only, "Only log oops messages");
+
 #ifndef	MODULE
 static int __init option_setup(char *opt)
 {
@@ -640,15 +644,9 @@ static int netconsole_netdev_event(struct notifier_block *this,
 				 * rtnl_lock already held
 				 */
 				if (nt->np.dev) {
-					spin_unlock_irqrestore(
-							      &target_list_lock,
-							      flags);
 					__netpoll_cleanup(&nt->np);
-					spin_lock_irqsave(&target_list_lock,
-							  flags);
 					dev_put(nt->np.dev);
 					nt->np.dev = NULL;
-					netconsole_target_put(nt);
 				}
 				nt->enabled = 0;
 				stopped = true;
@@ -689,6 +687,8 @@ static void write_msg(struct console *con, const char *msg, unsigned int len)
 	struct netconsole_target *nt;
 	const char *tmp;
 
+	if (oops_only && !oops_in_progress)
+		return;
 	/* Avoid taking lock and disabling interrupts unnecessarily */
 	if (list_empty(&target_list))
 		return;

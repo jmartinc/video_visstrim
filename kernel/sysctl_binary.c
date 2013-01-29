@@ -147,7 +147,7 @@ static const struct bin_table bin_vm_table[] = {
 	{ CTL_INT,	VM_DIRTY_RATIO,			"dirty_ratio" },
 	/* VM_DIRTY_WB_CS "dirty_writeback_centisecs" no longer used */
 	/* VM_DIRTY_EXPIRE_CS "dirty_expire_centisecs" no longer used */
-	{ CTL_INT,	VM_NR_PDFLUSH_THREADS,		"nr_pdflush_threads" },
+	/* VM_NR_PDFLUSH_THREADS "nr_pdflush_threads" no longer used */
 	{ CTL_INT,	VM_OVERCOMMIT_RATIO,		"overcommit_ratio" },
 	/* VM_PAGEBUF unused */
 	/* VM_HUGETLB_PAGES "nr_hugepages" no longer used */
@@ -1344,7 +1344,7 @@ static ssize_t binary_sysctl(const int *name, int nlen,
 		goto out_putname;
 	}
 
-	mnt = current->nsproxy->pid_ns->proc_mnt;
+	mnt = task_active_pid_ns(current)->proc_mnt;
 	file = file_open_root(mnt->mnt_root, mnt, pathname, flags);
 	result = PTR_ERR(file);
 	if (IS_ERR(file))

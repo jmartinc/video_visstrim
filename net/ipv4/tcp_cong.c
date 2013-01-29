@@ -1,7 +1,7 @@
 /*
  * Plugable TCP congestion control support and newReno
  * congestion control.
- * Based on ideas from I/O scheduler suport and Web100.
+ * Based on ideas from I/O scheduler support and Web100.
  *
  * Copyright (C) 2005 Stephen Hemminger <shemminger@osdl.org>
  */
@@ -259,7 +259,8 @@ int tcp_set_congestion_control(struct sock *sk, const char *name)
 	if (!ca)
 		err = -ENOENT;
 
-	else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) || capable(CAP_NET_ADMIN)))
+	else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) ||
+		   ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN)))
 		err = -EPERM;
 
 	else if (!try_module_get(ca->owner))
@@ -291,7 +292,8 @@ bool tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight)
 	left = tp->snd_cwnd - in_flight;
 	if (sk_can_gso(sk) &&
 	    left * sysctl_tcp_tso_win_divisor < tp->snd_cwnd &&
-	    left * tp->mss_cache < sk->sk_gso_max_size)
+	    left * tp->mss_cache < sk->sk_gso_max_size &&
+	    left < sk->sk_gso_max_segs)
 		return true;
 	return left <= tcp_max_tso_deferred_mss(tp);
 }
@@ -307,6 +309,7 @@ EXPORT_SYMBOL_GPL(tcp_is_cwnd_limited);
 void tcp_slow_start(struct tcp_sock *tp)
 {
 	int cnt; /* increase in packets */
+	unsigned int delta = 0;
 
 	/* RFC3465: ABC Slow start
 	 * Increase only after a full MSS of bytes is acked
@@ -333,9 +336,9 @@ void tcp_slow_start(struct tcp_sock *tp)
 	tp->snd_cwnd_cnt += cnt;
 	while (tp->snd_cwnd_cnt >= tp->snd_cwnd) {
 		tp->snd_cwnd_cnt -= tp->snd_cwnd;
-		if (tp->snd_cwnd < tp->snd_cwnd_clamp)
-			tp->snd_cwnd++;
+		delta++;
 	}
+	tp->snd_cwnd = min(tp->snd_cwnd + delta, tp->snd_cwnd_clamp);
 }
 EXPORT_SYMBOL_GPL(tcp_slow_start);
 

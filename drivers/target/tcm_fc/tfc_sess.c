@@ -19,7 +19,6 @@
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <generated/utsrelease.h>
 #include <linux/utsname.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -58,7 +57,8 @@ static struct ft_tport *ft_tport_create(struct fc_lport *lport)
 	struct ft_tport *tport;
 	int i;
 
-	tport = rcu_dereference(lport->prov[FC_TYPE_FCP]);
+	tport = rcu_dereference_protected(lport->prov[FC_TYPE_FCP],
+					  lockdep_is_held(&ft_lport_lock));
 	if (tport && tport->tpg)
 		return tport;
 
@@ -430,7 +430,6 @@ static void ft_sess_rcu_free(struct rcu_head *rcu)
 {
 	struct ft_sess *sess = container_of(rcu, struct ft_sess, rcu);
 
-	transport_deregister_session(sess->se_sess);
 	kfree(sess);
 }
 
@@ -438,6 +437,7 @@ static void ft_sess_free(struct kref *kref)
 {
 	struct ft_sess *sess = container_of(kref, struct ft_sess, kref);
 
+	transport_deregister_session(sess->se_sess);
 	call_rcu(&sess->rcu, ft_sess_rcu_free);
 }
 
@@ -455,7 +455,9 @@ static void ft_prlo(struct fc_rport_priv *rdata)
 	struct ft_tport *tport;
 
 	mutex_lock(&ft_lport_lock);
-	tport = rcu_dereference(rdata->local_port->prov[FC_TYPE_FCP]);
+	tport = rcu_dereference_protected(rdata->local_port->prov[FC_TYPE_FCP],
+					  lockdep_is_held(&ft_lport_lock));
+
 	if (!tport) {
 		mutex_unlock(&ft_lport_lock);
 		return;

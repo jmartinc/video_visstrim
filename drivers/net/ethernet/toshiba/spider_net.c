@@ -114,7 +114,8 @@ spider_net_write_reg(struct spider_net_card *card, u32 reg, u32 value)
 	out_be32(card->regs + reg, value);
 }
 
-/** spider_net_write_phy - write to phy register
+/**
+ * spider_net_write_phy - write to phy register
  * @netdev: adapter to be written to
  * @mii_id: id of MII
  * @reg: PHY register
@@ -137,7 +138,8 @@ spider_net_write_phy(struct net_device *netdev, int mii_id,
 	spider_net_write_reg(card, SPIDER_NET_GPCWOPCMD, writevalue);
 }
 
-/** spider_net_read_phy - read from phy register
+/**
+ * spider_net_read_phy - read from phy register
  * @netdev: network device to be read from
  * @mii_id: id of MII
  * @reg: PHY register
@@ -2490,7 +2492,7 @@ out_disable_dev:
  * spider_net_probe initializes pdev and registers a net_device
  * structure for it. After that, the device can be ifconfig'ed up
  **/
-static int __devinit
+static int
 spider_net_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int err = -EIO;
@@ -2529,7 +2531,7 @@ out:
  * spider_net_remove is called to remove the device and unregisters the
  * net_device
  **/
-static void __devexit
+static void
 spider_net_remove(struct pci_dev *pdev)
 {
 	struct net_device *netdev;
@@ -2557,7 +2559,7 @@ static struct pci_driver spider_net_driver = {
 	.name		= spider_net_driver_name,
 	.id_table	= spider_net_pci_tbl,
 	.probe		= spider_net_probe,
-	.remove		= __devexit_p(spider_net_remove)
+	.remove		= spider_net_remove
 };
 
 /**

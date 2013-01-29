@@ -71,7 +71,7 @@ static const struct imx_pin_reg *imx_find_pin_reg(
 			break;
 	}
 
-	if (!pin_reg) {
+	if (i == info->npin_regs) {
 		dev_err(info->dev, "Pin(%s): unable to find pin reg map\n",
 			info->pins[pin].name);
 		return NULL;
@@ -146,7 +146,7 @@ static int imx_dt_node_to_map(struct pinctrl_dev *pctldev,
 	struct pinctrl_map *new_map;
 	struct device_node *parent;
 	int map_num = 1;
-	int i;
+	int i, j;
 
 	/*
 	 * first find the group of this node and check if we need create
@@ -184,13 +184,14 @@ static int imx_dt_node_to_map(struct pinctrl_dev *pctldev,
 
 	/* create config map */
 	new_map++;
-	for (i = 0; i < grp->npins; i++) {
+	for (i = j = 0; i < grp->npins; i++) {
 		if (!(grp->configs[i] & IMX_NO_PAD_CTL)) {
-			new_map[i].type = PIN_MAP_TYPE_CONFIGS_PIN;
-			new_map[i].data.configs.group_or_pin =
+			new_map[j].type = PIN_MAP_TYPE_CONFIGS_PIN;
+			new_map[j].data.configs.group_or_pin =
 					pin_get_name(pctldev, grp->pins[i]);
-			new_map[i].data.configs.configs = &grp->configs[i];
-			new_map[i].data.configs.num_configs = 1;
+			new_map[j].data.configs.configs = &grp->configs[i];
+			new_map[j].data.configs.num_configs = 1;
+			j++;
 		}
 	}
 
@@ -396,7 +397,7 @@ static void imx_pinconf_group_dbg_show(struct pinctrl_dev *pctldev,
 	}
 }
 
-struct pinconf_ops imx_pinconf_ops = {
+static struct pinconf_ops imx_pinconf_ops = {
 	.pin_config_get = imx_pinconf_get,
 	.pin_config_set = imx_pinconf_set,
 	.pin_config_dbg_show = imx_pinconf_dbg_show,
@@ -424,14 +425,14 @@ static int imx_pinctrl_get_pin_id_and_mux(const struct imx_pinctrl_soc_info *inf
 	return 0;
 }
 
-static int __devinit imx_pinctrl_parse_groups(struct device_node *np,
-				struct imx_pin_group *grp,
-				struct imx_pinctrl_soc_info *info,
-				u32 index)
+static int imx_pinctrl_parse_groups(struct device_node *np,
+				    struct imx_pin_group *grp,
+				    struct imx_pinctrl_soc_info *info,
+				    u32 index)
 {
 	unsigned int pin_func_id;
 	int ret, size;
-	const const __be32 *list;
+	const __be32 *list;
 	int i, j;
 	u32 config;
 
@@ -474,13 +475,16 @@ static int __devinit imx_pinctrl_parse_groups(struct device_node *np,
 		grp->configs[j] = config & ~IMX_PAD_SION;
 	}
 
+#ifdef DEBUG
 	IMX_PMX_DUMP(info, grp->pins, grp->mux_mode, grp->configs, grp->npins);
+#endif
 
 	return 0;
 }
 
-static int __devinit imx_pinctrl_parse_functions(struct device_node *np,
-			struct imx_pinctrl_soc_info *info, u32 index)
+static int imx_pinctrl_parse_functions(struct device_node *np,
+				       struct imx_pinctrl_soc_info *info,
+				       u32 index)
 {
 	struct device_node *child;
 	struct imx_pmx_func *func;
@@ -514,7 +518,7 @@ static int __devinit imx_pinctrl_parse_functions(struct device_node *np,
 	return 0;
 }
 
-static int __devinit imx_pinctrl_probe_dt(struct platform_device *pdev,
+static int imx_pinctrl_probe_dt(struct platform_device *pdev,
 				struct imx_pinctrl_soc_info *info)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -557,8 +561,8 @@ static int __devinit imx_pinctrl_probe_dt(struct platform_device *pdev,
 	return 0;
 }
 
-int __devinit imx_pinctrl_probe(struct platform_device *pdev,
-				struct imx_pinctrl_soc_info *info)
+int imx_pinctrl_probe(struct platform_device *pdev,
+		      struct imx_pinctrl_soc_info *info)
 {
 	struct imx_pinctrl *ipctl;
 	struct resource *res;
@@ -608,7 +612,7 @@ int __devinit imx_pinctrl_probe(struct platform_device *pdev,
 	return 0;
 }
 
-int __devexit imx_pinctrl_remove(struct platform_device *pdev)
+int imx_pinctrl_remove(struct platform_device *pdev)
 {
 	struct imx_pinctrl *ipctl = platform_get_drvdata(pdev);
 

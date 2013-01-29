@@ -21,9 +21,9 @@
 #include <linux/usb/gadget.h>
 #include <linux/usb/atmel_usba_udc.h>
 #include <linux/delay.h>
+#include <linux/platform_data/atmel.h>
 
 #include <asm/gpio.h>
-#include <mach/board.h>
 
 #include "atmel_usba_udc.h"
 
@@ -598,12 +598,6 @@ usba_ep_enable(struct usb_ep *_ep, const struct usb_endpoint_descriptor *desc)
 	}
 
 	spin_lock_irqsave(&ep->udc->lock, flags);
-
-	if (ep->ep.desc) {
-		spin_unlock_irqrestore(&ep->udc->lock, flags);
-		DBG(DBG_ERR, "ep%d already enabled\n", ep->index);
-		return -EBUSY;
-	}
 
 	ep->ep.desc = desc;
 	ep->ep.maxpacket = maxpacket;

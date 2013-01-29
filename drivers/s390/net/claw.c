@@ -1,5 +1,4 @@
 /*
- *  drivers/s390/net/claw.c
  *    ESCON CLAW network driver
  *
  *  Linux for zSeries version
@@ -3019,10 +3018,8 @@ claw_remove_device(struct ccwgroup_device *cgdev)
 {
 	struct claw_privbk *priv;
 
-	BUG_ON(!cgdev);
 	CLAW_DBF_TEXT_(2, setup, "%s", dev_name(&cgdev->dev));
 	priv = dev_get_drvdata(&cgdev->dev);
-	BUG_ON(!priv);
 	dev_info(&cgdev->dev, " will be removed.\n");
 	if (cgdev->state == CCWGROUP_ONLINE)
 		claw_shutdown_device(cgdev);
@@ -3380,5 +3377,5 @@ module_exit(claw_cleanup);
 
 MODULE_AUTHOR("Andy Richter <richtera@us.ibm.com>");
 MODULE_DESCRIPTION("Linux for System z CLAW Driver\n" \
-			"Copyright 2000,2008 IBM Corporation\n");
+			"Copyright IBM Corp. 2000, 2008\n");
 MODULE_LICENSE("GPL");

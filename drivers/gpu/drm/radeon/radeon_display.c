@@ -23,15 +23,15 @@
  * Authors: Dave Airlie
  *          Alex Deucher
  */
-#include "drmP.h"
-#include "radeon_drm.h"
+#include <drm/drmP.h>
+#include <drm/radeon_drm.h>
 #include "radeon.h"
 
 #include "atom.h"
 #include <asm/div64.h>
 
-#include "drm_crtc_helper.h"
-#include "drm_edid.h"
+#include <drm/drm_crtc_helper.h>
+#include <drm/drm_edid.h>
 
 static void avivo_crtc_load_lut(struct drm_crtc *crtc)
 {
@@ -378,8 +378,12 @@ static int radeon_crtc_page_flip(struct drm_crtc *crtc,
 	work->old_rbo = rbo;
 	obj = new_radeon_fb->obj;
 	rbo = gem_to_radeon_bo(obj);
+
+	spin_lock(&rbo->tbo.bdev->fence_lock);
 	if (rbo->tbo.sync_obj)
 		work->fence = radeon_fence_ref(rbo->tbo.sync_obj);
+	spin_unlock(&rbo->tbo.bdev->fence_lock);
+
 	INIT_WORK(&work->work, radeon_unpin_work_func);
 
 	/* We borrow the event spin lock for protecting unpin_work */
@@ -695,10 +699,15 @@ int radeon_ddc_get_modes(struct radeon_connector *radeon_connector)
 	if (radeon_connector->router.ddc_valid)
 		radeon_router_select_ddc_port(radeon_connector);
 
-	if ((radeon_connector->base.connector_type == DRM_MODE_CONNECTOR_DisplayPort) ||
-	    (radeon_connector->base.connector_type == DRM_MODE_CONNECTOR_eDP) ||
-	    (radeon_connector_encoder_get_dp_bridge_encoder_id(&radeon_connector->base) !=
-	     ENCODER_OBJECT_ID_NONE)) {
+	if (radeon_connector_encoder_get_dp_bridge_encoder_id(&radeon_connector->base) !=
+	    ENCODER_OBJECT_ID_NONE) {
+		struct radeon_connector_atom_dig *dig = radeon_connector->con_priv;
+
+		if (dig->dp_i2c_bus)
+			radeon_connector->edid = drm_get_edid(&radeon_connector->base,
+							      &dig->dp_i2c_bus->adapter);
+	} else if ((radeon_connector->base.connector_type == DRM_MODE_CONNECTOR_DisplayPort) ||
+		   (radeon_connector->base.connector_type == DRM_MODE_CONNECTOR_eDP)) {
 		struct radeon_connector_atom_dig *dig = radeon_connector->con_priv;
 
 		if ((dig->dp_sink_type == CONNECTOR_OBJECT_ID_DISPLAYPORT ||
@@ -1401,7 +1410,7 @@ void radeon_modeset_fini(struct radeon_device *rdev)
 	radeon_i2c_fini(rdev);
 }
 
-static bool is_hdtv_mode(struct drm_display_mode *mode)
+static bool is_hdtv_mode(const struct drm_display_mode *mode)
 {
 	/* try and guess if this is a tv or a monitor */
 	if ((mode->vdisplay == 480 && mode->hdisplay == 720) || /* 480p */
@@ -1414,7 +1423,7 @@ static bool is_hdtv_mode(struct drm_display_mode *mode)
 }
 
 bool radeon_crtc_scaling_mode_fixup(struct drm_crtc *crtc,
-				struct drm_display_mode *mode,
+				const struct drm_display_mode *mode,
 				struct drm_display_mode *adjusted_mode)
 {
 	struct drm_device *dev = crtc->dev;

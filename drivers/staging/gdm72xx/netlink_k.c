@@ -11,7 +11,8 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/version.h>
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/etherdevice.h>
 #include <linux/netlink.h>
@@ -55,8 +56,8 @@ static void netlink_rcv_cb(struct sk_buff *skb)
 
 		if (skb->len < nlh->nlmsg_len ||
 		nlh->nlmsg_len > ND_MAX_MSG_LEN) {
-			printk(KERN_ERR "Invalid length (%d,%d)\n", skb->len,
-				nlh->nlmsg_len);
+			netdev_err(skb->dev, "Invalid length (%d,%d)\n",
+				   skb->len, nlh->nlmsg_len);
 			return;
 		}
 
@@ -70,10 +71,11 @@ static void netlink_rcv_cb(struct sk_buff *skb)
 				rcv_cb(dev, nlh->nlmsg_type, msg, mlen);
 				dev_put(dev);
 			} else
-				printk(KERN_ERR "dev_get_by_index(%d) "
-					"is not found.\n", ifindex);
+				netdev_err(skb->dev,
+					   "dev_get_by_index(%d) is not found.\n",
+					   ifindex);
 		} else
-			printk(KERN_ERR "Unregistered Callback\n");
+			netdev_err(skb->dev, "Unregistered Callback\n");
 	}
 }
 
@@ -88,13 +90,15 @@ struct sock *netlink_init(int unit, void (*cb)(struct net_device *dev, u16 type,
 						void *msg, int len))
 {
 	struct sock *sock;
+	struct netlink_kernel_cfg cfg = {
+		.input  = netlink_rcv,
+	};
 
 #if !defined(DEFINE_MUTEX)
 	init_MUTEX(&netlink_mutex);
 #endif
 
-	sock = netlink_kernel_create(&init_net, unit, 0, netlink_rcv, NULL,
-					THIS_MODULE);
+	sock = netlink_kernel_create(&init_net, unit, &cfg);
 
 	if (sock)
 		rcv_cb = cb;
@@ -104,7 +108,7 @@ struct sock *netlink_init(int unit, void (*cb)(struct net_device *dev, u16 type,
 
 void netlink_exit(struct sock *sock)
 {
-	sock_release(sock->sk_socket);
+	netlink_kernel_release(sock);
 }
 
 int netlink_send(struct sock *sock, int group, u16 type, void *msg, int len)
@@ -115,22 +119,26 @@ int netlink_send(struct sock *sock, int group, u16 type, void *msg, int len)
 	int ret = 0;
 
 	if (group > ND_MAX_GROUP) {
-		printk(KERN_ERR "Group %d is invalied.\n", group);
-		printk(KERN_ERR "Valid group is 0 ~ %d.\n", ND_MAX_GROUP);
+		pr_err("Group %d is invalied.\n", group);
+		pr_err("Valid group is 0 ~ %d.\n", ND_MAX_GROUP);
 		return -EINVAL;
 	}
 
 	skb = alloc_skb(NLMSG_SPACE(len), GFP_ATOMIC);
 	if (!skb) {
-		printk(KERN_ERR "netlink_broadcast ret=%d\n", ret);
+		pr_err("netlink_broadcast ret=%d\n", ret);
 		return -ENOMEM;
 	}
 
 	seq++;
-	nlh = NLMSG_PUT(skb, 0, seq, type, len);
-	memcpy(NLMSG_DATA(nlh), msg, len);
+	nlh = nlmsg_put(skb, 0, seq, type, len, 0);
+	if (!nlh) {
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+	memcpy(nlmsg_data(nlh), msg, len);
 
-	NETLINK_CB(skb).pid = 0;
+	NETLINK_CB(skb).portid = 0;
 	NETLINK_CB(skb).dst_group = 0;
 
 	ret = netlink_broadcast(sock, skb, 0, group+1, GFP_ATOMIC);
@@ -139,12 +147,10 @@ int netlink_send(struct sock *sock, int group, u16 type, void *msg, int len)
 		return len;
 	else {
 		if (ret != -ESRCH) {
-			printk(KERN_ERR "netlink_broadcast g=%d, t=%d, l=%d, r=%d\n",
-				group, type, len, ret);
+			pr_err("netlink_broadcast g=%d, t=%d, l=%d, r=%d\n",
+			       group, type, len, ret);
 		}
 		ret = 0;
 	}
-
-nlmsg_failure:
 	return ret;
 }

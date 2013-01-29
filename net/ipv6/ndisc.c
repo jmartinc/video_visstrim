@@ -143,40 +143,6 @@ struct neigh_table nd_tbl = {
 	.gc_thresh3 =	1024,
 };
 
-/* ND options */
-struct ndisc_options {
-	struct nd_opt_hdr *nd_opt_array[__ND_OPT_ARRAY_MAX];
-#ifdef CONFIG_IPV6_ROUTE_INFO
-	struct nd_opt_hdr *nd_opts_ri;
-	struct nd_opt_hdr *nd_opts_ri_end;
-#endif
-	struct nd_opt_hdr *nd_useropts;
-	struct nd_opt_hdr *nd_useropts_end;
-};
-
-#define nd_opts_src_lladdr	nd_opt_array[ND_OPT_SOURCE_LL_ADDR]
-#define nd_opts_tgt_lladdr	nd_opt_array[ND_OPT_TARGET_LL_ADDR]
-#define nd_opts_pi		nd_opt_array[ND_OPT_PREFIX_INFO]
-#define nd_opts_pi_end		nd_opt_array[__ND_OPT_PREFIX_INFO_END]
-#define nd_opts_rh		nd_opt_array[ND_OPT_REDIRECT_HDR]
-#define nd_opts_mtu		nd_opt_array[ND_OPT_MTU]
-
-#define NDISC_OPT_SPACE(len) (((len)+2+7)&~7)
-
-/*
- * Return the padding between the option length and the start of the
- * link addr.  Currently only IP-over-InfiniBand needs this, although
- * if RFC 3831 IPv6-over-Fibre Channel is ever implemented it may
- * also need a pad of 2.
- */
-static int ndisc_addr_option_pad(unsigned short type)
-{
-	switch (type) {
-	case ARPHRD_INFINIBAND: return 2;
-	default:                return 0;
-	}
-}
-
 static inline int ndisc_opt_addr_space(struct net_device *dev)
 {
 	return NDISC_OPT_SPACE(dev->addr_len + ndisc_addr_option_pad(dev->type));
@@ -185,8 +151,8 @@ static inline int ndisc_opt_addr_space(struct net_device *dev)
 static u8 *ndisc_fill_addr_option(u8 *opt, int type, void *data, int data_len,
 				  unsigned short addr_type)
 {
-	int space = NDISC_OPT_SPACE(data_len);
 	int pad   = ndisc_addr_option_pad(addr_type);
+	int space = NDISC_OPT_SPACE(data_len + pad);
 
 	opt[0] = type;
 	opt[1] = space>>3;
@@ -233,8 +199,8 @@ static struct nd_opt_hdr *ndisc_next_useropt(struct nd_opt_hdr *cur,
 	return cur <= end && ndisc_is_useropt(cur) ? cur : NULL;
 }
 
-static struct ndisc_options *ndisc_parse_options(u8 *opt, int opt_len,
-						 struct ndisc_options *ndopts)
+struct ndisc_options *ndisc_parse_options(u8 *opt, int opt_len,
+					  struct ndisc_options *ndopts)
 {
 	struct nd_opt_hdr *nd_opt = (struct nd_opt_hdr *)opt;
 
@@ -295,17 +261,6 @@ static struct ndisc_options *ndisc_parse_options(u8 *opt, int opt_len,
 		nd_opt = ((void *)nd_opt) + l;
 	}
 	return ndopts;
-}
-
-static inline u8 *ndisc_opt_addr_data(struct nd_opt_hdr *p,
-				      struct net_device *dev)
-{
-	u8 *lladdr = (u8 *)(p + 1);
-	int lladdrlen = p->nd_opt_len << 3;
-	int prepad = ndisc_addr_option_pad(dev->type);
-	if (lladdrlen != NDISC_OPT_SPACE(dev->addr_len + prepad))
-		return NULL;
-	return lladdr + prepad;
 }
 
 int ndisc_mc_map(const struct in6_addr *addr, char *buf, struct net_device *dev, int dir)
@@ -415,12 +370,12 @@ static void pndisc_destructor(struct pneigh_entry *n)
 	ipv6_dev_mc_dec(dev, &maddr);
 }
 
-struct sk_buff *ndisc_build_skb(struct net_device *dev,
-				const struct in6_addr *daddr,
-				const struct in6_addr *saddr,
-				struct icmp6hdr *icmp6h,
-				const struct in6_addr *target,
-				int llinfo)
+static struct sk_buff *ndisc_build_skb(struct net_device *dev,
+				       const struct in6_addr *daddr,
+				       const struct in6_addr *saddr,
+				       struct icmp6hdr *icmp6h,
+				       const struct in6_addr *target,
+				       int llinfo)
 {
 	struct net *net = dev_net(dev);
 	struct sock *sk = net->ipv6.ndisc_sk;
@@ -476,14 +431,11 @@ struct sk_buff *ndisc_build_skb(struct net_device *dev,
 	return skb;
 }
 
-EXPORT_SYMBOL(ndisc_build_skb);
-
-void ndisc_send_skb(struct sk_buff *skb,
-		    struct net_device *dev,
-		    struct neighbour *neigh,
-		    const struct in6_addr *daddr,
-		    const struct in6_addr *saddr,
-		    struct icmp6hdr *icmp6h)
+static void ndisc_send_skb(struct sk_buff *skb, struct net_device *dev,
+			   struct neighbour *neigh,
+			   const struct in6_addr *daddr,
+			   const struct in6_addr *saddr,
+			   struct icmp6hdr *icmp6h)
 {
 	struct flowi6 fl6;
 	struct dst_entry *dst;
@@ -517,8 +469,6 @@ void ndisc_send_skb(struct sk_buff *skb,
 
 	rcu_read_unlock();
 }
-
-EXPORT_SYMBOL(ndisc_send_skb);
 
 /*
  *	Send a Neighbour Discover packet
@@ -580,7 +530,6 @@ static void ndisc_send_unsol_na(struct net_device *dev)
 {
 	struct inet6_dev *idev;
 	struct inet6_ifaddr *ifa;
-	struct in6_addr mcaddr;
 
 	idev = in6_dev_get(dev);
 	if (!idev)
@@ -588,8 +537,7 @@ static void ndisc_send_unsol_na(struct net_device *dev)
 
 	read_lock_bh(&idev->lock);
 	list_for_each_entry(ifa, &idev->addr_list, if_list) {
-		addrconf_addr_solict_mult(&ifa->addr, &mcaddr);
-		ndisc_send_na(dev, NULL, &mcaddr, &ifa->addr,
+		ndisc_send_na(dev, NULL, &in6addr_linklocal_allnodes, &ifa->addr,
 			      /*router=*/ !!idev->cnf.forwarding,
 			      /*solicited=*/ false, /*override=*/ true,
 			      /*inc_opt=*/ true);
@@ -951,7 +899,7 @@ static void ndisc_recv_na(struct sk_buff *skb)
 		if (lladdr && !memcmp(lladdr, dev->dev_addr, dev->addr_len) &&
 		    net->ipv6.devconf_all->forwarding && net->ipv6.devconf_all->proxy_ndp &&
 		    pneigh_lookup(&nd_tbl, net, &msg->target, dev, 0)) {
-			/* XXX: idev->cnf.prixy_ndp */
+			/* XXX: idev->cnf.proxy_ndp */
 			goto out;
 		}
 
@@ -1079,18 +1027,6 @@ errout:
 	rtnl_set_sk_err(net, RTNLGRP_ND_USEROPT, err);
 }
 
-static inline int accept_ra(struct inet6_dev *in6_dev)
-{
-	/*
-	 * If forwarding is enabled, RA are not accepted unless the special
-	 * hybrid mode (accept_ra=2) is enabled.
-	 */
-	if (in6_dev->cnf.forwarding && in6_dev->cnf.accept_ra < 2)
-		return 0;
-
-	return in6_dev->cnf.accept_ra;
-}
-
 static void ndisc_router_discovery(struct sk_buff *skb)
 {
 	struct ra_msg *ra_msg = (struct ra_msg *)skb_transport_header(skb);
@@ -1138,7 +1074,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 		return;
 	}
 
-	if (!accept_ra(in6_dev))
+	if (!ipv6_accept_ra(in6_dev))
 		goto skip_linkparms;
 
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
@@ -1190,7 +1126,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 			ND_PRINTK(0, err,
 				  "RA: %s got default router without neighbour\n",
 				  __func__);
-			dst_release(&rt->dst);
+			ip6_rt_put(rt);
 			return;
 		}
 	}
@@ -1215,7 +1151,7 @@ static void ndisc_router_discovery(struct sk_buff *skb)
 			ND_PRINTK(0, err,
 				  "RA: %s got default router without neighbour\n",
 				  __func__);
-			dst_release(&rt->dst);
+			ip6_rt_put(rt);
 			return;
 		}
 		neigh->flags |= NTF_ROUTER;
@@ -1294,7 +1230,7 @@ skip_linkparms:
 			     NEIGH_UPDATE_F_ISROUTER);
 	}
 
-	if (!accept_ra(in6_dev))
+	if (!ipv6_accept_ra(in6_dev))
 		goto out;
 
 #ifdef CONFIG_IPV6_ROUTE_INFO
@@ -1371,23 +1307,18 @@ skip_routeinfo:
 		ND_PRINTK(2, warn, "RA: invalid RA options\n");
 	}
 out:
-	if (rt)
-		dst_release(&rt->dst);
+	ip6_rt_put(rt);
 	if (neigh)
 		neigh_release(neigh);
 }
 
 static void ndisc_redirect_rcv(struct sk_buff *skb)
 {
-	struct inet6_dev *in6_dev;
-	struct icmp6hdr *icmph;
-	const struct in6_addr *dest;
-	const struct in6_addr *target;	/* new first hop to destination */
-	struct neighbour *neigh;
-	int on_link = 0;
+	u8 *hdr;
 	struct ndisc_options ndopts;
-	int optlen;
-	u8 *lladdr = NULL;
+	struct rd_msg *msg = (struct rd_msg *)skb_transport_header(skb);
+	u32 ndoptlen = skb->tail - (skb->transport_header +
+				    offsetof(struct rd_msg, opt));
 
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
 	switch (skb->ndisc_nodetype) {
@@ -1405,65 +1336,18 @@ static void ndisc_redirect_rcv(struct sk_buff *skb)
 		return;
 	}
 
-	optlen = skb->tail - skb->transport_header;
-	optlen -= sizeof(struct icmp6hdr) + 2 * sizeof(struct in6_addr);
-
-	if (optlen < 0) {
-		ND_PRINTK(2, warn, "Redirect: packet too short\n");
-		return;
-	}
-
-	icmph = icmp6_hdr(skb);
-	target = (const struct in6_addr *) (icmph + 1);
-	dest = target + 1;
-
-	if (ipv6_addr_is_multicast(dest)) {
-		ND_PRINTK(2, warn,
-			  "Redirect: destination address is multicast\n");
-		return;
-	}
-
-	if (ipv6_addr_equal(dest, target)) {
-		on_link = 1;
-	} else if (ipv6_addr_type(target) !=
-		   (IPV6_ADDR_UNICAST|IPV6_ADDR_LINKLOCAL)) {
-		ND_PRINTK(2, warn,
-			  "Redirect: target address is not link-local unicast\n");
-		return;
-	}
-
-	in6_dev = __in6_dev_get(skb->dev);
-	if (!in6_dev)
-		return;
-	if (in6_dev->cnf.forwarding || !in6_dev->cnf.accept_redirects)
+	if (!ndisc_parse_options(msg->opt, ndoptlen, &ndopts))
 		return;
 
-	/* RFC2461 8.1:
-	 *	The IP source address of the Redirect MUST be the same as the current
-	 *	first-hop router for the specified ICMP Destination Address.
-	 */
-
-	if (!ndisc_parse_options((u8*)(dest + 1), optlen, &ndopts)) {
-		ND_PRINTK(2, warn, "Redirect: invalid ND options\n");
+	if (!ndopts.nd_opts_rh)
 		return;
-	}
-	if (ndopts.nd_opts_tgt_lladdr) {
-		lladdr = ndisc_opt_addr_data(ndopts.nd_opts_tgt_lladdr,
-					     skb->dev);
-		if (!lladdr) {
-			ND_PRINTK(2, warn,
-				  "Redirect: invalid link-layer address length\n");
-			return;
-		}
-	}
 
-	neigh = __neigh_lookup(&nd_tbl, target, skb->dev, 1);
-	if (neigh) {
-		rt6_redirect(dest, &ipv6_hdr(skb)->daddr,
-			     &ipv6_hdr(skb)->saddr, neigh, lladdr,
-			     on_link);
-		neigh_release(neigh);
-	}
+	hdr = (u8 *)ndopts.nd_opts_rh;
+	hdr += 8;
+	if (!pskb_pull(skb, hdr - skb_transport_header(skb)))
+		return;
+
+	icmpv6_notify(skb, NDISC_REDIRECT, 0, 0);
 }
 
 void ndisc_send_redirect(struct sk_buff *skb, const struct in6_addr *target)
@@ -1472,6 +1356,7 @@ void ndisc_send_redirect(struct sk_buff *skb, const struct in6_addr *target)
 	struct net *net = dev_net(dev);
 	struct sock *sk = net->ipv6.ndisc_sk;
 	int len = sizeof(struct icmp6hdr) + 2 * sizeof(struct in6_addr);
+	struct inet_peer *peer;
 	struct sk_buff *buff;
 	struct icmp6hdr *icmph;
 	struct in6_addr saddr_buf;
@@ -1485,6 +1370,7 @@ void ndisc_send_redirect(struct sk_buff *skb, const struct in6_addr *target)
 	int rd_len;
 	int err;
 	u8 ha_buf[MAX_ADDR_LEN], *ha = NULL;
+	bool ret;
 
 	if (ipv6_get_lladdr(dev, &saddr_buf, IFA_F_TENTATIVE)) {
 		ND_PRINTK(2, warn, "Redirect: no link-local address on %s\n",
@@ -1518,9 +1404,11 @@ void ndisc_send_redirect(struct sk_buff *skb, const struct in6_addr *target)
 			  "Redirect: destination is not a neighbour\n");
 		goto release;
 	}
-	if (!rt->rt6i_peer)
-		rt6_bind_peer(rt, 1);
-	if (!inet_peer_xrlim_allow(rt->rt6i_peer, 1*HZ))
+	peer = inet_getpeer_v6(net->ipv6.peers, &rt->rt6i_dst.addr, 1);
+	ret = inet_peer_xrlim_allow(peer, 1*HZ);
+	if (peer)
+		inet_putpeer(peer);
+	if (!ret)
 		goto release;
 
 	if (dev->addr_len) {
@@ -1684,11 +1572,18 @@ static int ndisc_netdev_event(struct notifier_block *this, unsigned long event, 
 {
 	struct net_device *dev = ptr;
 	struct net *net = dev_net(dev);
+	struct inet6_dev *idev;
 
 	switch (event) {
 	case NETDEV_CHANGEADDR:
 		neigh_changeaddr(&nd_tbl, dev);
 		fib6_run_gc(~0UL, net);
+		idev = in6_dev_get(dev);
+		if (!idev)
+			break;
+		if (idev->cnf.ndisc_notify)
+			ndisc_send_unsol_na(dev);
+		in6_dev_put(idev);
 		break;
 	case NETDEV_DOWN:
 		neigh_ifdown(&nd_tbl, dev);

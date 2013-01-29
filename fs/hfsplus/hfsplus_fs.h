@@ -149,12 +149,15 @@ struct hfsplus_sb_info {
 	u32 type;
 
 	umode_t umask;
-	uid_t uid;
-	gid_t gid;
+	kuid_t uid;
+	kgid_t gid;
 
 	int part, session;
-
 	unsigned long flags;
+
+	int work_queued;               /* non-zero delayed work is queued */
+	struct delayed_work sync_work; /* FS sync delayed work */
+	spinlock_t work_lock;          /* protects sync_work and work_queued */
 };
 
 #define HFSPLUS_SB_WRITEBACKUP	0
@@ -332,7 +335,7 @@ int hfsplus_block_free(struct super_block *, u32, u32);
 /* btree.c */
 struct hfs_btree *hfs_btree_open(struct super_block *, u32);
 void hfs_btree_close(struct hfs_btree *);
-void hfs_btree_write(struct hfs_btree *);
+int hfs_btree_write(struct hfs_btree *);
 struct hfs_bnode *hfs_bmap_alloc(struct hfs_btree *);
 void hfs_bmap_free(struct hfs_bnode *);
 
@@ -428,7 +431,7 @@ int hfsplus_show_options(struct seq_file *, struct dentry *);
 
 /* super.c */
 struct inode *hfsplus_iget(struct super_block *, unsigned long);
-int hfsplus_sync_fs(struct super_block *sb, int wait);
+void hfsplus_mark_mdb_dirty(struct super_block *sb);
 
 /* tables.c */
 extern u16 hfsplus_case_fold_table[];

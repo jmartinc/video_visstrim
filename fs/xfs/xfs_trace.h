@@ -32,11 +32,12 @@ struct xfs_da_node_entry;
 struct xfs_dquot;
 struct xfs_log_item;
 struct xlog_ticket;
-struct log;
+struct xlog;
 struct xlog_recover;
 struct xlog_recover_item;
 struct xfs_buf_log_format;
 struct xfs_inode_log_format;
+struct xfs_bmbt_irec;
 
 DECLARE_EVENT_CLASS(xfs_attr_list_class,
 	TP_PROTO(struct xfs_attr_list_context *ctx),
@@ -95,6 +96,8 @@ DEFINE_ATTR_LIST_EVENT(xfs_attr_list_full);
 DEFINE_ATTR_LIST_EVENT(xfs_attr_list_add);
 DEFINE_ATTR_LIST_EVENT(xfs_attr_list_wrong_blk);
 DEFINE_ATTR_LIST_EVENT(xfs_attr_list_notfound);
+DEFINE_ATTR_LIST_EVENT(xfs_attr_leaf_list);
+DEFINE_ATTR_LIST_EVENT(xfs_attr_node_list);
 
 DECLARE_EVENT_CLASS(xfs_perag_class,
 	TP_PROTO(struct xfs_mount *mp, xfs_agnumber_t agno, int refcount,
@@ -129,6 +132,8 @@ DEFINE_PERAG_REF_EVENT(xfs_perag_get_tag);
 DEFINE_PERAG_REF_EVENT(xfs_perag_put);
 DEFINE_PERAG_REF_EVENT(xfs_perag_set_reclaim);
 DEFINE_PERAG_REF_EVENT(xfs_perag_clear_reclaim);
+DEFINE_PERAG_REF_EVENT(xfs_perag_set_eofblocks);
+DEFINE_PERAG_REF_EVENT(xfs_perag_clear_eofblocks);
 
 TRACE_EVENT(xfs_attr_list_node_descend,
 	TP_PROTO(struct xfs_attr_list_context *ctx,
@@ -578,11 +583,15 @@ DEFINE_INODE_EVENT(xfs_ioctl_setattr);
 DEFINE_INODE_EVENT(xfs_dir_fsync);
 DEFINE_INODE_EVENT(xfs_file_fsync);
 DEFINE_INODE_EVENT(xfs_destroy_inode);
-DEFINE_INODE_EVENT(xfs_dirty_inode);
 DEFINE_INODE_EVENT(xfs_evict_inode);
+DEFINE_INODE_EVENT(xfs_update_time);
 
 DEFINE_INODE_EVENT(xfs_dquot_dqalloc);
 DEFINE_INODE_EVENT(xfs_dquot_dqdetach);
+
+DEFINE_INODE_EVENT(xfs_inode_set_eofblocks_tag);
+DEFINE_INODE_EVENT(xfs_inode_clear_eofblocks_tag);
+DEFINE_INODE_EVENT(xfs_inode_free_eofblocks_invalid);
 
 DECLARE_EVENT_CLASS(xfs_iref_class,
 	TP_PROTO(struct xfs_inode *ip, unsigned long caller_ip),
@@ -762,7 +771,7 @@ DEFINE_DQUOT_EVENT(xfs_dqflush_force);
 DEFINE_DQUOT_EVENT(xfs_dqflush_done);
 
 DECLARE_EVENT_CLASS(xfs_loggrant_class,
-	TP_PROTO(struct log *log, struct xlog_ticket *tic),
+	TP_PROTO(struct xlog *log, struct xlog_ticket *tic),
 	TP_ARGS(log, tic),
 	TP_STRUCT__entry(
 		__field(dev_t, dev)
@@ -830,7 +839,7 @@ DECLARE_EVENT_CLASS(xfs_loggrant_class,
 
 #define DEFINE_LOGGRANT_EVENT(name) \
 DEFINE_EVENT(xfs_loggrant_class, name, \
-	TP_PROTO(struct log *log, struct xlog_ticket *tic), \
+	TP_PROTO(struct xlog *log, struct xlog_ticket *tic), \
 	TP_ARGS(log, tic))
 DEFINE_LOGGRANT_EVENT(xfs_log_done_nonperm);
 DEFINE_LOGGRANT_EVENT(xfs_log_done_perm);
@@ -1495,8 +1504,42 @@ DEFINE_DIR2_EVENT(xfs_dir2_node_replace);
 DEFINE_DIR2_EVENT(xfs_dir2_node_removename);
 DEFINE_DIR2_EVENT(xfs_dir2_node_to_leaf);
 
+DECLARE_EVENT_CLASS(xfs_attr_class,
+	TP_PROTO(struct xfs_da_args *args),
+	TP_ARGS(args),
+	TP_STRUCT__entry(
+		__field(dev_t, dev)
+		__field(xfs_ino_t, ino)
+		__dynamic_array(char, name, args->namelen)
+		__field(int, namelen)
+		__field(int, valuelen)
+		__field(xfs_dahash_t, hashval)
+		__field(int, op_flags)
+	),
+	TP_fast_assign(
+		__entry->dev = VFS_I(args->dp)->i_sb->s_dev;
+		__entry->ino = args->dp->i_ino;
+		if (args->namelen)
+			memcpy(__get_str(name), args->name, args->namelen);
+		__entry->namelen = args->namelen;
+		__entry->valuelen = args->valuelen;
+		__entry->hashval = args->hashval;
+		__entry->op_flags = args->op_flags;
+	),
+	TP_printk("dev %d:%d ino 0x%llx name %.*s namelen %d valuelen %d "
+		  "hashval 0x%x op_flags %s",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->ino,
+		  __entry->namelen,
+		  __entry->namelen ? __get_str(name) : NULL,
+		  __entry->namelen,
+		  __entry->valuelen,
+		  __entry->hashval,
+		  __print_flags(__entry->op_flags, "|", XFS_DA_OP_FLAGS))
+)
+
 #define DEFINE_ATTR_EVENT(name) \
-DEFINE_EVENT(xfs_da_class, name, \
+DEFINE_EVENT(xfs_attr_class, name, \
 	TP_PROTO(struct xfs_da_args *args), \
 	TP_ARGS(args))
 DEFINE_ATTR_EVENT(xfs_attr_sf_add);
@@ -1510,10 +1553,14 @@ DEFINE_ATTR_EVENT(xfs_attr_sf_to_leaf);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_add);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_add_old);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_add_new);
+DEFINE_ATTR_EVENT(xfs_attr_leaf_add_work);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_addname);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_create);
+DEFINE_ATTR_EVENT(xfs_attr_leaf_compact);
+DEFINE_ATTR_EVENT(xfs_attr_leaf_get);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_lookup);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_replace);
+DEFINE_ATTR_EVENT(xfs_attr_leaf_remove);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_removename);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_split);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_split_before);
@@ -1525,11 +1572,20 @@ DEFINE_ATTR_EVENT(xfs_attr_leaf_to_sf);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_to_node);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_rebalance);
 DEFINE_ATTR_EVENT(xfs_attr_leaf_unbalance);
+DEFINE_ATTR_EVENT(xfs_attr_leaf_toosmall);
 
 DEFINE_ATTR_EVENT(xfs_attr_node_addname);
+DEFINE_ATTR_EVENT(xfs_attr_node_get);
 DEFINE_ATTR_EVENT(xfs_attr_node_lookup);
 DEFINE_ATTR_EVENT(xfs_attr_node_replace);
 DEFINE_ATTR_EVENT(xfs_attr_node_removename);
+
+DEFINE_ATTR_EVENT(xfs_attr_fillstate);
+DEFINE_ATTR_EVENT(xfs_attr_refillstate);
+
+DEFINE_ATTR_EVENT(xfs_attr_rmtval_get);
+DEFINE_ATTR_EVENT(xfs_attr_rmtval_set);
+DEFINE_ATTR_EVENT(xfs_attr_rmtval_remove);
 
 #define DEFINE_DA_EVENT(name) \
 DEFINE_EVENT(xfs_da_class, name, \
@@ -1549,9 +1605,12 @@ DEFINE_DA_EVENT(xfs_da_node_split);
 DEFINE_DA_EVENT(xfs_da_node_remove);
 DEFINE_DA_EVENT(xfs_da_node_rebalance);
 DEFINE_DA_EVENT(xfs_da_node_unbalance);
+DEFINE_DA_EVENT(xfs_da_node_toosmall);
 DEFINE_DA_EVENT(xfs_da_swap_lastblock);
 DEFINE_DA_EVENT(xfs_da_grow_inode);
 DEFINE_DA_EVENT(xfs_da_shrink_inode);
+DEFINE_DA_EVENT(xfs_da_fixhashpath);
+DEFINE_DA_EVENT(xfs_da_path_shift);
 
 DECLARE_EVENT_CLASS(xfs_dir2_space_class,
 	TP_PROTO(struct xfs_da_args *args, int idx),
@@ -1664,7 +1723,7 @@ DEFINE_SWAPEXT_EVENT(xfs_swap_extent_before);
 DEFINE_SWAPEXT_EVENT(xfs_swap_extent_after);
 
 DECLARE_EVENT_CLASS(xfs_log_recover_item_class,
-	TP_PROTO(struct log *log, struct xlog_recover *trans,
+	TP_PROTO(struct xlog *log, struct xlog_recover *trans,
 		struct xlog_recover_item *item, int pass),
 	TP_ARGS(log, trans, item, pass),
 	TP_STRUCT__entry(
@@ -1698,7 +1757,7 @@ DECLARE_EVENT_CLASS(xfs_log_recover_item_class,
 
 #define DEFINE_LOG_RECOVER_ITEM(name) \
 DEFINE_EVENT(xfs_log_recover_item_class, name, \
-	TP_PROTO(struct log *log, struct xlog_recover *trans, \
+	TP_PROTO(struct xlog *log, struct xlog_recover *trans, \
 		struct xlog_recover_item *item, int pass), \
 	TP_ARGS(log, trans, item, pass))
 
@@ -1709,7 +1768,7 @@ DEFINE_LOG_RECOVER_ITEM(xfs_log_recover_item_reorder_tail);
 DEFINE_LOG_RECOVER_ITEM(xfs_log_recover_item_recover);
 
 DECLARE_EVENT_CLASS(xfs_log_recover_buf_item_class,
-	TP_PROTO(struct log *log, struct xfs_buf_log_format *buf_f),
+	TP_PROTO(struct xlog *log, struct xfs_buf_log_format *buf_f),
 	TP_ARGS(log, buf_f),
 	TP_STRUCT__entry(
 		__field(dev_t, dev)
@@ -1739,7 +1798,7 @@ DECLARE_EVENT_CLASS(xfs_log_recover_buf_item_class,
 
 #define DEFINE_LOG_RECOVER_BUF_ITEM(name) \
 DEFINE_EVENT(xfs_log_recover_buf_item_class, name, \
-	TP_PROTO(struct log *log, struct xfs_buf_log_format *buf_f), \
+	TP_PROTO(struct xlog *log, struct xfs_buf_log_format *buf_f), \
 	TP_ARGS(log, buf_f))
 
 DEFINE_LOG_RECOVER_BUF_ITEM(xfs_log_recover_buf_not_cancel);
@@ -1752,7 +1811,7 @@ DEFINE_LOG_RECOVER_BUF_ITEM(xfs_log_recover_buf_reg_buf);
 DEFINE_LOG_RECOVER_BUF_ITEM(xfs_log_recover_buf_dquot_buf);
 
 DECLARE_EVENT_CLASS(xfs_log_recover_ino_item_class,
-	TP_PROTO(struct log *log, struct xfs_inode_log_format *in_f),
+	TP_PROTO(struct xlog *log, struct xfs_inode_log_format *in_f),
 	TP_ARGS(log, in_f),
 	TP_STRUCT__entry(
 		__field(dev_t, dev)
@@ -1790,7 +1849,7 @@ DECLARE_EVENT_CLASS(xfs_log_recover_ino_item_class,
 )
 #define DEFINE_LOG_RECOVER_INO_ITEM(name) \
 DEFINE_EVENT(xfs_log_recover_ino_item_class, name, \
-	TP_PROTO(struct log *log, struct xfs_inode_log_format *in_f), \
+	TP_PROTO(struct xlog *log, struct xfs_inode_log_format *in_f), \
 	TP_ARGS(log, in_f))
 
 DEFINE_LOG_RECOVER_INO_ITEM(xfs_log_recover_inode_recover);

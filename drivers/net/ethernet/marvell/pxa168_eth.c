@@ -1032,7 +1032,7 @@ static int rxq_init(struct net_device *dev)
 	}
 	memset((void *)pep->p_rx_desc_area, 0, size);
 	/* initialize the next_desc_ptr links in the Rx descriptors ring */
-	p_rx_desc = (struct rx_desc *)pep->p_rx_desc_area;
+	p_rx_desc = pep->p_rx_desc_area;
 	for (i = 0; i < rx_desc_num; i++) {
 		p_rx_desc[i].next_desc_ptr = pep->rx_desc_dma +
 		    ((i + 1) % rx_desc_num) * sizeof(struct rx_desc);
@@ -1095,7 +1095,7 @@ static int txq_init(struct net_device *dev)
 	}
 	memset((void *)pep->p_tx_desc_area, 0, pep->tx_desc_area_size);
 	/* Initialize the next_desc_ptr links in the Tx descriptors ring */
-	p_tx_desc = (struct tx_desc *)pep->p_tx_desc_area;
+	p_tx_desc = pep->p_tx_desc_area;
 	for (i = 0; i < tx_desc_num; i++) {
 		p_tx_desc[i].next_desc_ptr = pep->tx_desc_dma +
 		    ((i + 1) % tx_desc_num) * sizeof(struct tx_desc);
@@ -1131,7 +1131,7 @@ static int pxa168_eth_open(struct net_device *dev)
 	err = request_irq(dev->irq, pxa168_eth_int_handler,
 			  IRQF_DISABLED, dev->name, dev);
 	if (err) {
-		dev_printk(KERN_ERR, &dev->dev, "can't assign irq\n");
+		dev_err(&dev->dev, "can't assign irq\n");
 		return -EAGAIN;
 	}
 	pep->rx_resource_err = 0;
@@ -1201,9 +1201,8 @@ static int pxa168_eth_change_mtu(struct net_device *dev, int mtu)
 	 */
 	pxa168_eth_stop(dev);
 	if (pxa168_eth_open(dev)) {
-		dev_printk(KERN_ERR, &dev->dev,
-			   "fatal error on re-opening device after "
-			   "MTU change\n");
+		dev_err(&dev->dev,
+			"fatal error on re-opening device after MTU change\n");
 	}
 
 	return 0;

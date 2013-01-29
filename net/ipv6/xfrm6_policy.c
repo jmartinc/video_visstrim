@@ -20,7 +20,7 @@
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
-#if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)
+#if IS_ENABLED(CONFIG_IPV6_MIP6)
 #include <net/mip6.h>
 #endif
 
@@ -73,6 +73,13 @@ static int xfrm6_get_tos(const struct flowi *fl)
 	return 0;
 }
 
+static void xfrm6_init_dst(struct net *net, struct xfrm_dst *xdst)
+{
+	struct rt6_info *rt = (struct rt6_info *)xdst;
+
+	rt6_init_peer(rt, net->ipv6.peers);
+}
+
 static int xfrm6_init_path(struct xfrm_dst *path, struct dst_entry *dst,
 			   int nfheader_len)
 {
@@ -99,12 +106,11 @@ static int xfrm6_fill_dst(struct xfrm_dst *xdst, struct net_device *dev,
 	if (!xdst->u.rt6.rt6i_idev)
 		return -ENODEV;
 
-	xdst->u.rt6.rt6i_peer = rt->rt6i_peer;
-	if (rt->rt6i_peer)
-		atomic_inc(&rt->rt6i_peer->refcnt);
+	rt6_transfer_peer(&xdst->u.rt6, rt);
 
 	/* Sheit... I remember I did this right. Apparently,
 	 * it was magically lost, so this code needs audit */
+	xdst->u.rt6.n = neigh_clone(rt->n);
 	xdst->u.rt6.rt6i_flags = rt->rt6i_flags & (RTF_ANYCAST |
 						   RTF_LOCAL);
 	xdst->u.rt6.rt6i_metric = rt->rt6i_metric;
@@ -176,7 +182,7 @@ _decode_session6(struct sk_buff *skb, struct flowi *fl, int reverse)
 			fl6->flowi6_proto = nexthdr;
 			return;
 
-#if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)
+#if IS_ENABLED(CONFIG_IPV6_MIP6)
 		case IPPROTO_MH:
 			if (!onlyproto && pskb_may_pull(skb, nh + offset + 3 - skb->data)) {
 				struct ip6_mh *mh;
@@ -208,12 +214,22 @@ static inline int xfrm6_garbage_collect(struct dst_ops *ops)
 	return dst_entries_get_fast(ops) > ops->gc_thresh * 2;
 }
 
-static void xfrm6_update_pmtu(struct dst_entry *dst, u32 mtu)
+static void xfrm6_update_pmtu(struct dst_entry *dst, struct sock *sk,
+			      struct sk_buff *skb, u32 mtu)
 {
 	struct xfrm_dst *xdst = (struct xfrm_dst *)dst;
 	struct dst_entry *path = xdst->route;
 
-	path->ops->update_pmtu(path, mtu);
+	path->ops->update_pmtu(path, sk, skb, mtu);
+}
+
+static void xfrm6_redirect(struct dst_entry *dst, struct sock *sk,
+			   struct sk_buff *skb)
+{
+	struct xfrm_dst *xdst = (struct xfrm_dst *)dst;
+	struct dst_entry *path = xdst->route;
+
+	path->ops->redirect(path, sk, skb);
 }
 
 static void xfrm6_dst_destroy(struct dst_entry *dst)
@@ -223,8 +239,10 @@ static void xfrm6_dst_destroy(struct dst_entry *dst)
 	if (likely(xdst->u.rt6.rt6i_idev))
 		in6_dev_put(xdst->u.rt6.rt6i_idev);
 	dst_destroy_metrics_generic(dst);
-	if (likely(xdst->u.rt6.rt6i_peer))
-		inet_putpeer(xdst->u.rt6.rt6i_peer);
+	if (rt6_has_peer(&xdst->u.rt6)) {
+		struct inet_peer *peer = rt6_peer_ptr(&xdst->u.rt6);
+		inet_putpeer(peer);
+	}
 	xfrm_dst_destroy(xdst);
 }
 
@@ -260,6 +278,7 @@ static struct dst_ops xfrm6_dst_ops = {
 	.protocol =		cpu_to_be16(ETH_P_IPV6),
 	.gc =			xfrm6_garbage_collect,
 	.update_pmtu =		xfrm6_update_pmtu,
+	.redirect =		xfrm6_redirect,
 	.cow_metrics =		dst_cow_metrics_generic,
 	.destroy =		xfrm6_dst_destroy,
 	.ifdown =		xfrm6_dst_ifdown,
@@ -274,6 +293,7 @@ static struct xfrm_policy_afinfo xfrm6_policy_afinfo = {
 	.get_saddr = 		xfrm6_get_saddr,
 	.decode_session =	_decode_session6,
 	.get_tos =		xfrm6_get_tos,
+	.init_dst =		xfrm6_init_dst,
 	.init_path =		xfrm6_init_path,
 	.fill_dst =		xfrm6_fill_dst,
 	.blackhole_route =	ip6_blackhole_route,
@@ -307,21 +327,7 @@ static struct ctl_table_header *sysctl_hdr;
 int __init xfrm6_init(void)
 {
 	int ret;
-	unsigned int gc_thresh;
 
-	/*
-	 * We need a good default value for the xfrm6 gc threshold.
-	 * In ipv4 we set it to the route hash table size * 8, which
-	 * is half the size of the maximaum route cache for ipv4.  It
-	 * would be good to do the same thing for v6, except the table is
-	 * constructed differently here.  Here each table for a net namespace
-	 * can have FIB_TABLE_HASHSZ entries, so lets go with the same
-	 * computation that we used for ipv4 here.  Also, lets keep the initial
-	 * gc_thresh to a minimum of 1024, since, the ipv6 route cache defaults
-	 * to that as a minimum as well
-	 */
-	gc_thresh = FIB6_TABLE_HASHSZ * 8;
-	xfrm6_dst_ops.gc_thresh = (gc_thresh < 1024) ? 1024 : gc_thresh;
 	dst_entries_init(&xfrm6_dst_ops);
 
 	ret = xfrm6_policy_init();
@@ -350,7 +356,6 @@ void xfrm6_fini(void)
 	if (sysctl_hdr)
 		unregister_net_sysctl_table(sysctl_hdr);
 #endif
-	//xfrm6_input_fini();
 	xfrm6_policy_fini();
 	xfrm6_state_fini();
 	dst_entries_destroy(&xfrm6_dst_ops);

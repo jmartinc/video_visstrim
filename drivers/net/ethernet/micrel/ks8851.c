@@ -422,7 +422,7 @@ static void ks8851_read_mac_addr(struct net_device *dev)
  *
  * Get or create the initial mac address for the device and then set that
  * into the station address register. If there is an EEPROM present, then
- * we try that. If no valid mac address is found we use random_ether_addr()
+ * we try that. If no valid mac address is found we use eth_random_addr()
  * to create a new one.
  */
 static void ks8851_init_mac(struct ks8851_net *ks)
@@ -1415,7 +1415,7 @@ static int ks8851_resume(struct spi_device *spi)
 #define ks8851_resume NULL
 #endif
 
-static int __devinit ks8851_probe(struct spi_device *spi)
+static int ks8851_probe(struct spi_device *spi)
 {
 	struct net_device *ndev;
 	struct ks8851_net *ks;
@@ -1534,7 +1534,7 @@ err_irq:
 	return ret;
 }
 
-static int __devexit ks8851_remove(struct spi_device *spi)
+static int ks8851_remove(struct spi_device *spi)
 {
 	struct ks8851_net *priv = dev_get_drvdata(&spi->dev);
 
@@ -1554,7 +1554,7 @@ static struct spi_driver ks8851_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = ks8851_probe,
-	.remove = __devexit_p(ks8851_remove),
+	.remove = ks8851_remove,
 	.suspend = ks8851_suspend,
 	.resume = ks8851_resume,
 };

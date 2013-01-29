@@ -107,6 +107,7 @@ u16 e1000_igp_cable_length_table[IGP01E1000_AGC_LENGTH_TABLE_SIZE] = {
 };
 
 static DEFINE_SPINLOCK(e1000_eeprom_lock);
+static DEFINE_SPINLOCK(e1000_phy_lock);
 
 /**
  * e1000_set_phy_type - Set the phy type member in the hw struct.
@@ -399,7 +400,7 @@ void e1000_set_media_type(struct e1000_hw *hw)
 }
 
 /**
- * e1000_reset_hw: reset the hardware completely
+ * e1000_reset_hw - reset the hardware completely
  * @hw: Struct containing variables accessed by shared code
  *
  * Reset the transmit and receive units; mask and clear all interrupts.
@@ -546,7 +547,7 @@ s32 e1000_reset_hw(struct e1000_hw *hw)
 }
 
 /**
- * e1000_init_hw: Performs basic configuration of the adapter.
+ * e1000_init_hw - Performs basic configuration of the adapter.
  * @hw: Struct containing variables accessed by shared code
  *
  * Assumes that the controller has previously been reset and is in a
@@ -2591,7 +2592,7 @@ s32 e1000_check_for_link(struct e1000_hw *hw)
  * @hw: Struct containing variables accessed by shared code
  * @speed: Speed of the connection
  * @duplex: Duplex setting of the connection
-
+ *
  * Detects the current speed and duplex settings of the hardware.
  */
 s32 e1000_get_speed_and_duplex(struct e1000_hw *hw, u16 *speed, u16 *duplex)
@@ -2830,19 +2831,25 @@ static u16 e1000_shift_in_mdi_bits(struct e1000_hw *hw)
 s32 e1000_read_phy_reg(struct e1000_hw *hw, u32 reg_addr, u16 *phy_data)
 {
 	u32 ret_val;
+	unsigned long flags;
 
 	e_dbg("e1000_read_phy_reg");
+
+	spin_lock_irqsave(&e1000_phy_lock, flags);
 
 	if ((hw->phy_type == e1000_phy_igp) &&
 	    (reg_addr > MAX_PHY_MULTI_PAGE_REG)) {
 		ret_val = e1000_write_phy_reg_ex(hw, IGP01E1000_PHY_PAGE_SELECT,
 						 (u16) reg_addr);
-		if (ret_val)
+		if (ret_val) {
+			spin_unlock_irqrestore(&e1000_phy_lock, flags);
 			return ret_val;
+		}
 	}
 
 	ret_val = e1000_read_phy_reg_ex(hw, MAX_PHY_REG_ADDRESS & reg_addr,
 					phy_data);
+	spin_unlock_irqrestore(&e1000_phy_lock, flags);
 
 	return ret_val;
 }
@@ -2959,25 +2966,31 @@ static s32 e1000_read_phy_reg_ex(struct e1000_hw *hw, u32 reg_addr,
  * @hw: Struct containing variables accessed by shared code
  * @reg_addr: address of the PHY register to write
  * @data: data to write to the PHY
-
+ *
  * Writes a value to a PHY register
  */
 s32 e1000_write_phy_reg(struct e1000_hw *hw, u32 reg_addr, u16 phy_data)
 {
 	u32 ret_val;
+	unsigned long flags;
 
 	e_dbg("e1000_write_phy_reg");
+
+	spin_lock_irqsave(&e1000_phy_lock, flags);
 
 	if ((hw->phy_type == e1000_phy_igp) &&
 	    (reg_addr > MAX_PHY_MULTI_PAGE_REG)) {
 		ret_val = e1000_write_phy_reg_ex(hw, IGP01E1000_PHY_PAGE_SELECT,
 						 (u16) reg_addr);
-		if (ret_val)
+		if (ret_val) {
+			spin_unlock_irqrestore(&e1000_phy_lock, flags);
 			return ret_val;
+		}
 	}
 
 	ret_val = e1000_write_phy_reg_ex(hw, MAX_PHY_REG_ADDRESS & reg_addr,
 					 phy_data);
+	spin_unlock_irqrestore(&e1000_phy_lock, flags);
 
 	return ret_val;
 }

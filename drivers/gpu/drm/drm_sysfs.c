@@ -18,9 +18,9 @@
 #include <linux/err.h>
 #include <linux/export.h>
 
-#include "drm_sysfs.h"
-#include "drm_core.h"
-#include "drmP.h"
+#include <drm/drm_sysfs.h>
+#include <drm/drm_core.h>
+#include <drm/drmP.h>
 
 #define to_drm_minor(d) container_of(d, struct drm_minor, kdev)
 #define to_drm_connector(d) container_of(d, struct drm_connector, kdev)
@@ -134,6 +134,7 @@ void drm_sysfs_destroy(void)
 		return;
 	class_remove_file(drm_class, &class_attr_version.attr);
 	class_destroy(drm_class);
+	drm_class = NULL;
 }
 
 /**
@@ -181,7 +182,7 @@ static ssize_t dpms_show(struct device *device,
 	uint64_t dpms_status;
 	int ret;
 
-	ret = drm_connector_property_get_value(connector,
+	ret = drm_object_property_get_value(&connector->base,
 					    dev->mode_config.dpms_property,
 					    &dpms_status);
 	if (ret)
@@ -276,7 +277,7 @@ static ssize_t subconnector_show(struct device *device,
 		return 0;
 	}
 
-	ret = drm_connector_property_get_value(connector, prop, &subconnector);
+	ret = drm_object_property_get_value(&connector->base, prop, &subconnector);
 	if (ret)
 		return 0;
 
@@ -317,7 +318,7 @@ static ssize_t select_subconnector_show(struct device *device,
 		return 0;
 	}
 
-	ret = drm_connector_property_get_value(connector, prop, &subconnector);
+	ret = drm_object_property_get_value(&connector->base, prop, &subconnector);
 	if (ret)
 		return 0;
 
@@ -554,6 +555,9 @@ void drm_sysfs_device_remove(struct drm_minor *minor)
 
 int drm_class_device_register(struct device *dev)
 {
+	if (!drm_class || IS_ERR(drm_class))
+		return -ENOENT;
+
 	dev->class = drm_class;
 	return device_register(dev);
 }

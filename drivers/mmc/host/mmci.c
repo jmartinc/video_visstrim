@@ -33,6 +33,7 @@
 #include <linux/amba/mmci.h>
 #include <linux/pm_runtime.h>
 #include <linux/types.h>
+#include <linux/pinctrl/consumer.h>
 
 #include <asm/div64.h>
 #include <asm/io.h>
@@ -261,7 +262,7 @@ static void mmci_init_sg(struct mmci_host *host, struct mmc_data *data)
  * no custom DMA interfaces are supported.
  */
 #ifdef CONFIG_DMA_ENGINE
-static void __devinit mmci_dma_setup(struct mmci_host *host)
+static void mmci_dma_setup(struct mmci_host *host)
 {
 	struct mmci_platform_data *plat = host->plat;
 	const char *rxname, *txname;
@@ -337,7 +338,7 @@ static void __devinit mmci_dma_setup(struct mmci_host *host)
 }
 
 /*
- * This is used in __devinit or __devexit so inline it
+ * This is used in or so inline it
  * so it can be discarded.
  */
 static inline void mmci_dma_release(struct mmci_host *host)
@@ -654,8 +655,30 @@ static void mmci_start_data(struct mmci_host *host, struct mmc_data *data)
 
 	/* The ST Micro variants has a special bit to enable SDIO */
 	if (variant->sdio && host->mmc->card)
-		if (mmc_card_sdio(host->mmc->card))
+		if (mmc_card_sdio(host->mmc->card)) {
+			/*
+			 * The ST Micro variants has a special bit
+			 * to enable SDIO.
+			 */
+			u32 clk;
+
 			datactrl |= MCI_ST_DPSM_SDIOEN;
+
+			/*
+			 * The ST Micro variant for SDIO small write transfers
+			 * needs to have clock H/W flow control disabled,
+			 * otherwise the transfer will not start. The threshold
+			 * depends on the rate of MCLK.
+			 */
+			if (data->flags & MMC_DATA_WRITE &&
+			    (host->size < 8 ||
+			     (host->size <= 8 && host->mclk > 50000000)))
+				clk = host->clk_reg & ~variant->clkreg_enable;
+			else
+				clk = host->clk_reg | variant->clkreg_enable;
+
+			mmci_write_clkreg(host, clk);
+		}
 
 	/*
 	 * Attempt to use DMA operation mode, if this
@@ -840,14 +863,14 @@ static int mmci_pio_read(struct mmci_host *host, char *buffer, unsigned int rema
 		if (unlikely(count & 0x3)) {
 			if (count < 4) {
 				unsigned char buf[4];
-				readsl(base + MMCIFIFO, buf, 1);
+				ioread32_rep(base + MMCIFIFO, buf, 1);
 				memcpy(ptr, buf, count);
 			} else {
-				readsl(base + MMCIFIFO, ptr, count >> 2);
+				ioread32_rep(base + MMCIFIFO, ptr, count >> 2);
 				count &= ~0x3;
 			}
 		} else {
-			readsl(base + MMCIFIFO, ptr, count >> 2);
+			ioread32_rep(base + MMCIFIFO, ptr, count >> 2);
 		}
 
 		ptr += count;
@@ -877,22 +900,6 @@ static int mmci_pio_write(struct mmci_host *host, char *buffer, unsigned int rem
 		count = min(remain, maxcnt);
 
 		/*
-		 * The ST Micro variant for SDIO transfer sizes
-		 * less then 8 bytes should have clock H/W flow
-		 * control disabled.
-		 */
-		if (variant->sdio &&
-		    mmc_card_sdio(host->mmc->card)) {
-			u32 clk;
-			if (count < 8)
-				clk = host->clk_reg & ~variant->clkreg_enable;
-			else
-				clk = host->clk_reg | variant->clkreg_enable;
-
-			mmci_write_clkreg(host, clk);
-		}
-
-		/*
 		 * SDIO especially may want to send something that is
 		 * not divisible by 4 (as opposed to card sectors
 		 * etc), and the FIFO only accept full 32-bit writes.
@@ -900,7 +907,7 @@ static int mmci_pio_write(struct mmci_host *host, char *buffer, unsigned int rem
 		 * byte become a 32bit write, 7 bytes will be two
 		 * 32bit writes etc.
 		 */
-		writesl(base + MMCIFIFO, ptr, (count + 3) >> 2);
+		iowrite32_rep(base + MMCIFIFO, ptr, (count + 3) >> 2);
 
 		ptr += count;
 		remain -= count;
@@ -1216,12 +1223,7 @@ static void mmci_dt_populate_generic_pdata(struct device_node *np,
 	int bus_width = 0;
 
 	pdata->gpio_wp = of_get_named_gpio(np, "wp-gpios", 0);
-	if (!pdata->gpio_wp)
-		pdata->gpio_wp = -1;
-
 	pdata->gpio_cd = of_get_named_gpio(np, "cd-gpios", 0);
-	if (!pdata->gpio_cd)
-		pdata->gpio_cd = -1;
 
 	if (of_get_property(np, "cd-inverted", NULL))
 		pdata->cd_invert = true;
@@ -1260,7 +1262,7 @@ static void mmci_dt_populate_generic_pdata(struct device_node *np,
 }
 #endif
 
-static int __devinit mmci_probe(struct amba_device *dev,
+static int mmci_probe(struct amba_device *dev,
 	const struct amba_id *id)
 {
 	struct mmci_platform_data *plat = dev->dev.platform_data;
@@ -1274,6 +1276,12 @@ static int __devinit mmci_probe(struct amba_device *dev,
 	if (!plat && !np) {
 		dev_err(&dev->dev, "No plat data or DT found\n");
 		return -EINVAL;
+	}
+
+	if (!plat) {
+		plat = devm_kzalloc(&dev->dev, sizeof(*plat), GFP_KERNEL);
+		if (!plat)
+			return -ENOMEM;
 	}
 
 	if (np)
@@ -1308,13 +1316,9 @@ static int __devinit mmci_probe(struct amba_device *dev,
 		goto host_free;
 	}
 
-	ret = clk_prepare(host->clk);
+	ret = clk_prepare_enable(host->clk);
 	if (ret)
 		goto clk_free;
-
-	ret = clk_enable(host->clk);
-	if (ret)
-		goto clk_unprep;
 
 	host->plat = plat;
 	host->variant = variant;
@@ -1362,6 +1366,23 @@ static int __devinit mmci_probe(struct amba_device *dev,
 	else
 		mmc->f_max = min(host->mclk, fmax);
 	dev_dbg(mmc_dev(mmc), "clocking block at %u Hz\n", mmc->f_max);
+
+	host->pinctrl = devm_pinctrl_get(&dev->dev);
+	if (IS_ERR(host->pinctrl)) {
+		ret = PTR_ERR(host->pinctrl);
+		goto clk_disable;
+	}
+
+	host->pins_default = pinctrl_lookup_state(host->pinctrl,
+			PINCTRL_STATE_DEFAULT);
+
+	/* enable pins to be muxed in and configured */
+	if (!IS_ERR(host->pins_default)) {
+		ret = pinctrl_select_state(host->pinctrl, host->pins_default);
+		if (ret)
+			dev_warn(&dev->dev, "could not set default pins\n");
+	} else
+		dev_warn(&dev->dev, "could not get default pinstate\n");
 
 #ifdef CONFIG_REGULATOR
 	/* If we're using the regulator framework, try to fetch a regulator */
@@ -1424,6 +1445,10 @@ static int __devinit mmci_probe(struct amba_device *dev,
 	writel(0, host->base + MMCIMASK1);
 	writel(0xfff, host->base + MMCICLEAR);
 
+	if (plat->gpio_cd == -EPROBE_DEFER) {
+		ret = -EPROBE_DEFER;
+		goto err_gpio_cd;
+	}
 	if (gpio_is_valid(plat->gpio_cd)) {
 		ret = gpio_request(plat->gpio_cd, DRIVER_NAME " (cd)");
 		if (ret == 0)
@@ -1446,6 +1471,10 @@ static int __devinit mmci_probe(struct amba_device *dev,
 				DRIVER_NAME " (cd)", host);
 		if (ret >= 0)
 			host->gpio_cd_irq = gpio_to_irq(plat->gpio_cd);
+	}
+	if (plat->gpio_wp == -EPROBE_DEFER) {
+		ret = -EPROBE_DEFER;
+		goto err_gpio_wp;
 	}
 	if (gpio_is_valid(plat->gpio_wp)) {
 		ret = gpio_request(plat->gpio_wp, DRIVER_NAME " (wp)");
@@ -1506,9 +1535,7 @@ static int __devinit mmci_probe(struct amba_device *dev,
  err_gpio_cd:
 	iounmap(host->base);
  clk_disable:
-	clk_disable(host->clk);
- clk_unprep:
-	clk_unprepare(host->clk);
+	clk_disable_unprepare(host->clk);
  clk_free:
 	clk_put(host->clk);
  host_free:
@@ -1519,7 +1546,7 @@ static int __devinit mmci_probe(struct amba_device *dev,
 	return ret;
 }
 
-static int __devexit mmci_remove(struct amba_device *dev)
+static int mmci_remove(struct amba_device *dev)
 {
 	struct mmc_host *mmc = amba_get_drvdata(dev);
 
@@ -1555,8 +1582,7 @@ static int __devexit mmci_remove(struct amba_device *dev)
 			gpio_free(host->gpio_cd);
 
 		iounmap(host->base);
-		clk_disable(host->clk);
-		clk_unprepare(host->clk);
+		clk_disable_unprepare(host->clk);
 		clk_put(host->clk);
 
 		if (host->vcc)
@@ -1667,7 +1693,7 @@ static struct amba_driver mmci_driver = {
 		.pm	= &mmci_dev_pm_ops,
 	},
 	.probe		= mmci_probe,
-	.remove		= __devexit_p(mmci_remove),
+	.remove		= mmci_remove,
 	.id_table	= mmci_ids,
 };
 

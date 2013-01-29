@@ -233,8 +233,6 @@ struct dt2801_private {
 	unsigned int ao_readback[2];
 };
 
-#define devpriv ((struct dt2801_private *)dev->private)
-
 /* These are the low-level routines:
    writecommand: write a command to the board
    writedata: write data byte
@@ -508,6 +506,8 @@ static int dt2801_ao_insn_read(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
 			       struct comedi_insn *insn, unsigned int *data)
 {
+	struct dt2801_private *devpriv = dev->private;
+
 	data[0] = devpriv->ao_readback[CR_CHAN(insn->chanspec)];
 
 	return 1;
@@ -517,6 +517,8 @@ static int dt2801_ao_insn_write(struct comedi_device *dev,
 				struct comedi_subdevice *s,
 				struct comedi_insn *insn, unsigned int *data)
 {
+	struct dt2801_private *devpriv = dev->private;
+
 	dt2801_writecmd(dev, DT_C_WRITE_DAIM);
 	dt2801_writedata(dev, CR_CHAN(insn->chanspec));
 	dt2801_writedata2(dev, data[0]);
@@ -532,11 +534,9 @@ static int dt2801_dio_insn_bits(struct comedi_device *dev,
 {
 	int which = 0;
 
-	if (s == dev->subdevices + 4)
+	if (s == &dev->subdevices[3])
 		which = 1;
 
-	if (insn->n != 2)
-		return -EINVAL;
 	if (data[0]) {
 		s->state &= ~data[0];
 		s->state |= (data[0] & data[1]);
@@ -548,7 +548,7 @@ static int dt2801_dio_insn_bits(struct comedi_device *dev,
 	dt2801_writedata(dev, which);
 	dt2801_readdata(dev, data + 1);
 
-	return 2;
+	return insn->n;
 }
 
 static int dt2801_dio_insn_config(struct comedi_device *dev,
@@ -557,7 +557,7 @@ static int dt2801_dio_insn_config(struct comedi_device *dev,
 {
 	int which = 0;
 
-	if (s == dev->subdevices + 4)
+	if (s == &dev->subdevices[3])
 		which = 1;
 
 	/* configure */
@@ -592,6 +592,7 @@ static int dt2801_dio_insn_config(struct comedi_device *dev,
 */
 static int dt2801_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 {
+	struct dt2801_private *devpriv;
 	struct comedi_subdevice *s;
 	unsigned long iobase;
 	int board_code, type;
@@ -626,19 +627,20 @@ havetype:
 	printk("dt2801: %s at port 0x%lx", boardtype.name, iobase);
 
 	n_ai_chans = probe_number_of_ai_chans(dev);
-	printk(" (ai channels = %d)", n_ai_chans);
+	printk(" (ai channels = %d)\n", n_ai_chans);
 
-	ret = alloc_subdevices(dev, 4);
-	if (ret < 0)
+	ret = comedi_alloc_subdevices(dev, 4);
+	if (ret)
 		goto out;
 
-	ret = alloc_private(dev, sizeof(struct dt2801_private));
-	if (ret < 0)
-		goto out;
+	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	if (!devpriv)
+		return -ENOMEM;
+	dev->private = devpriv;
 
 	dev->board_name = boardtype.name;
 
-	s = dev->subdevices + 0;
+	s = &dev->subdevices[0];
 	/* ai subdevice */
 	s->type = COMEDI_SUBD_AI;
 	s->subdev_flags = SDF_READABLE | SDF_GROUND;
@@ -654,7 +656,7 @@ havetype:
 	s->range_table = ai_range_lkup(boardtype.adrangetype, it->options[3]);
 	s->insn_read = dt2801_ai_insn_read;
 
-	s++;
+	s = &dev->subdevices[1];
 	/* ao subdevice */
 	s->type = COMEDI_SUBD_AO;
 	s->subdev_flags = SDF_WRITABLE;
@@ -666,7 +668,7 @@ havetype:
 	s->insn_read = dt2801_ao_insn_read;
 	s->insn_write = dt2801_ao_insn_write;
 
-	s++;
+	s = &dev->subdevices[2];
 	/* 1st digital subdevice */
 	s->type = COMEDI_SUBD_DIO;
 	s->subdev_flags = SDF_READABLE | SDF_WRITABLE;
@@ -676,7 +678,7 @@ havetype:
 	s->insn_bits = dt2801_dio_insn_bits;
 	s->insn_config = dt2801_dio_insn_config;
 
-	s++;
+	s = &dev->subdevices[3];
 	/* 2nd digital subdevice */
 	s->type = COMEDI_SUBD_DIO;
 	s->subdev_flags = SDF_READABLE | SDF_WRITABLE;
@@ -688,8 +690,6 @@ havetype:
 
 	ret = 0;
 out:
-	printk("\n");
-
 	return ret;
 }
 

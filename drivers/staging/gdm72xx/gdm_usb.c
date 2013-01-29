@@ -12,10 +12,10 @@
  */
 
 #include <linux/module.h>
-#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/usb.h>
 #include <asm/byteorder.h>
+#include <linux/kthread.h>
 
 #include "gdm_usb.h"
 #include "gdm_wimax.h"
@@ -26,11 +26,11 @@
 
 MODULE_DEVICE_TABLE(usb, id_table);
 
-#define TX_BUF_SIZE	2048
+#define TX_BUF_SIZE		2048
 #if defined(CONFIG_WIMAX_GDM72XX_WIMAX2)
-#define RX_BUF_SIZE	(128*1024)	/* For packet aggregation */
+#define RX_BUF_SIZE		(128*1024)	/* For packet aggregation */
 #else
-#define RX_BUF_SIZE	2048
+#define RX_BUF_SIZE		2048
 #endif
 
 #define GDM7205_PADDING		256
@@ -39,7 +39,7 @@ MODULE_DEVICE_TABLE(usb, id_table);
 #define B2H(x)		__be16_to_cpu(x)
 #define DB2H(x)		__be32_to_cpu(x)
 
-#define DOWNLOAD_CONF_VALUE		0x21
+#define DOWNLOAD_CONF_VALUE	0x21
 
 #ifdef CONFIG_WIMAX_GDM72XX_K_MODE
 
@@ -48,7 +48,7 @@ static LIST_HEAD(k_list);
 static DEFINE_SPINLOCK(k_lock);
 static int k_mode_stop;
 
-#define K_WAIT_TIME	(2 * HZ / 100)
+#define K_WAIT_TIME		(2 * HZ / 100)
 
 #endif /* CONFIG_WIMAX_GDM72XX_K_MODE */
 
@@ -73,29 +73,23 @@ static void hexdump(char *title, u8 *data, int len)
 
 static struct usb_tx *alloc_tx_struct(struct tx_cxt *tx)
 {
-	struct usb_tx *t = NULL;
+	struct usb_tx *t = kzalloc(sizeof(*t), GFP_ATOMIC);
 
-	t = kmalloc(sizeof(*t), GFP_ATOMIC);
-	if (t == NULL)
-		goto out;
-
-	memset(t, 0, sizeof(*t));
+	if (!t)
+		return NULL;
 
 	t->urb = usb_alloc_urb(0, GFP_ATOMIC);
 	t->buf = kmalloc(TX_BUF_SIZE, GFP_ATOMIC);
-	if (t->urb == NULL || t->buf == NULL)
-		goto out;
+	if (!t->urb || !t->buf) {
+		usb_free_urb(t->urb);
+		kfree(t->buf);
+		kfree(t);
+		return NULL;
+	}
 
 	t->tx_cxt = tx;
 
 	return t;
-out:
-	if (t) {
-		usb_free_urb(t->urb);
-		kfree(t->buf);
-		kfree(t);
-	}
-	return NULL;
 }
 
 static void free_tx_struct(struct usb_tx *t)
@@ -109,28 +103,22 @@ static void free_tx_struct(struct usb_tx *t)
 
 static struct usb_rx *alloc_rx_struct(struct rx_cxt *rx)
 {
-	struct usb_rx *r = NULL;
+	struct usb_rx *r = kzalloc(sizeof(*r), GFP_ATOMIC);
 
-	r = kmalloc(sizeof(*r), GFP_ATOMIC);
-	if (r == NULL)
-		goto out;
-
-	memset(r, 0, sizeof(*r));
+	if (!r)
+		return NULL;
 
 	r->urb = usb_alloc_urb(0, GFP_ATOMIC);
 	r->buf = kmalloc(RX_BUF_SIZE, GFP_ATOMIC);
-	if (r->urb == NULL || r->buf == NULL)
-		goto out;
-
-	r->rx_cxt = rx;
-	return r;
-out:
-	if (r) {
+	if (!r->urb || !r->buf) {
 		usb_free_urb(r->urb);
 		kfree(r->buf);
 		kfree(r);
+		return NULL;
 	}
-	return NULL;
+
+	r->rx_cxt = rx;
+	return r;
 }
 
 static void free_rx_struct(struct usb_rx *r)
@@ -180,8 +168,7 @@ static struct usb_rx *get_rx_struct(struct rx_cxt *rx)
 	}
 
 	r = list_entry(rx->free_list.next, struct usb_rx, list);
-	list_del(&r->list);
-	list_add_tail(&r->list, &rx->used_list);
+	list_move_tail(&r->list, &rx->used_list);
 
 	return r;
 }
@@ -189,8 +176,7 @@ static struct usb_rx *get_rx_struct(struct rx_cxt *rx)
 /* Before this function is called, spin lock should be locked. */
 static void put_rx_struct(struct rx_cxt *rx, struct usb_rx *r)
 {
-	list_del(&r->list);
-	list_add(&r->list, &rx->free_list);
+	list_move(&r->list, &rx->free_list);
 }
 
 static int init_usb(struct usbwm_dev *udev)
@@ -200,6 +186,7 @@ static int init_usb(struct usbwm_dev *udev)
 	struct rx_cxt	*rx = &udev->rx;
 	struct usb_tx	*t;
 	struct usb_rx	*r;
+	unsigned long flags;
 
 	INIT_LIST_HEAD(&tx->free_list);
 	INIT_LIST_HEAD(&tx->sdu_list);
@@ -214,14 +201,17 @@ static int init_usb(struct usbwm_dev *udev)
 	spin_lock_init(&tx->lock);
 	spin_lock_init(&rx->lock);
 
+	spin_lock_irqsave(&tx->lock, flags);
 	for (i = 0; i < MAX_NR_SDU_BUF; i++) {
 		t = alloc_tx_struct(tx);
 		if (t == NULL) {
+			spin_unlock_irqrestore(&tx->lock, flags);
 			ret = -ENOMEM;
 			goto fail;
 		}
 		list_add(&t->list, &tx->free_list);
 	}
+	spin_unlock_irqrestore(&tx->lock, flags);
 
 	r = alloc_rx_struct(rx);
 	if (r == NULL) {
@@ -229,7 +219,9 @@ static int init_usb(struct usbwm_dev *udev)
 		goto fail;
 	}
 
+	spin_lock_irqsave(&rx->lock, flags);
 	list_add(&r->list, &rx->free_list);
+	spin_unlock_irqrestore(&rx->lock, flags);
 	return ret;
 
 fail:
@@ -243,6 +235,9 @@ static void release_usb(struct usbwm_dev *udev)
 	struct rx_cxt	*rx = &udev->rx;
 	struct usb_tx	*t, *t_next;
 	struct usb_rx	*r, *r_next;
+	unsigned long flags;
+
+	spin_lock_irqsave(&tx->lock, flags);
 
 	list_for_each_entry_safe(t, t_next, &tx->sdu_list, list) {
 		list_del(&t->list);
@@ -259,6 +254,10 @@ static void release_usb(struct usbwm_dev *udev)
 		free_tx_struct(t);
 	}
 
+	spin_unlock_irqrestore(&tx->lock, flags);
+
+	spin_lock_irqsave(&rx->lock, flags);
+
 	list_for_each_entry_safe(r, r_next, &rx->free_list, list) {
 		list_del(&r->list);
 		free_rx_struct(r);
@@ -268,21 +267,20 @@ static void release_usb(struct usbwm_dev *udev)
 		list_del(&r->list);
 		free_rx_struct(r);
 	}
+
+	spin_unlock_irqrestore(&rx->lock, flags);
 }
 
-static void gdm_usb_send_complete(struct urb *urb)
+static void __gdm_usb_send_complete(struct urb *urb)
 {
 	struct usb_tx *t = urb->context;
 	struct tx_cxt *tx = t->tx_cxt;
 	u8 *pkt = t->buf;
 	u16 cmd_evt;
-	unsigned long flags;
 
 	/* Completion by usb_unlink_urb */
 	if (urb->status == -ECONNRESET)
 		return;
-
-	spin_lock_irqsave(&tx->lock, flags);
 
 	if (t->callback)
 		t->callback(t->cb_data);
@@ -295,7 +293,16 @@ static void gdm_usb_send_complete(struct urb *urb)
 		put_tx_struct(tx, t);
 	else
 		free_tx_struct(t);
+}
 
+static void gdm_usb_send_complete(struct urb *urb)
+{
+	struct usb_tx *t = urb->context;
+	struct tx_cxt *tx = t->tx_cxt;
+	unsigned long flags;
+
+	spin_lock_irqsave(&tx->lock, flags);
+	__gdm_usb_send_complete(urb);
 	spin_unlock_irqrestore(&tx->lock, flags);
 }
 
@@ -311,9 +318,12 @@ static int gdm_usb_send(void *priv_dev, void *data, int len,
 	u8 *pkt = data;
 	u16 cmd_evt;
 	unsigned long flags;
+#ifdef CONFIG_WIMAX_GDM72XX_K_MODE
+	unsigned long flags2;
+#endif /* CONFIG_WIMAX_GDM72XX_K_MODE */
 
 	if (!udev->usbdev) {
-		printk(KERN_ERR "%s: No such device\n", __func__);
+		dev_err(&usbdev->dev, "%s: No such device\n", __func__);
 		return -ENODEV;
 	}
 
@@ -379,13 +389,16 @@ static int gdm_usb_send(void *priv_dev, void *data, int len,
 
 		rx = &udev->rx;
 
+		spin_lock_irqsave(&rx->lock, flags2);
 		list_for_each_entry(r, &rx->used_list, list)
 			usb_unlink_urb(r->urb);
+		spin_unlock_irqrestore(&rx->lock, flags2);
+
 		udev->bw_switch = 1;
 
-		spin_lock(&k_lock);
+		spin_lock_irqsave(&k_lock, flags2);
 		list_add_tail(&udev->list, &k_list);
-		spin_unlock(&k_lock);
+		spin_unlock_irqrestore(&k_lock, flags2);
 
 		wake_up(&k_wait);
 	}
@@ -411,7 +424,7 @@ out:
 
 send_fail:
 	t->callback = NULL;
-	gdm_usb_send_complete(t->urb);
+	__gdm_usb_send_complete(t->urb);
 	spin_unlock_irqrestore(&tx->lock, flags);
 	return ret;
 }
@@ -424,7 +437,7 @@ static void gdm_usb_rcv_complete(struct urb *urb)
 	struct tx_cxt *tx = &udev->tx;
 	struct usb_tx *t;
 	u16 cmd_evt;
-	unsigned long flags;
+	unsigned long flags, flags2;
 
 #ifdef CONFIG_WIMAX_GDM72XX_USB_PM
 	struct usb_device *dev = urb->dev;
@@ -470,9 +483,9 @@ static void gdm_usb_rcv_complete(struct urb *urb)
 	if (!urb->status && r->callback)
 		r->callback(r->cb_data, r->buf, urb->actual_length);
 
-	spin_lock(&rx->lock);
+	spin_lock_irqsave(&rx->lock, flags2);
 	put_rx_struct(rx, r);
-	spin_unlock(&rx->lock);
+	spin_unlock_irqrestore(&rx->lock, flags2);
 
 	spin_unlock_irqrestore(&tx->lock, flags);
 
@@ -492,7 +505,7 @@ static int gdm_usb_receive(void *priv_dev,
 	unsigned long flags;
 
 	if (!udev->usbdev) {
-		printk(KERN_ERR "%s: No such device\n", __func__);
+		dev_err(&usbdev->dev, "%s: No such device\n", __func__);
 		return -ENODEV;
 	}
 
@@ -540,7 +553,7 @@ static void do_pm_control(struct work_struct *work)
 
 			if (ret) {
 				t->callback = NULL;
-				gdm_usb_send_complete(t->urb);
+				__gdm_usb_send_complete(t->urb);
 			}
 		}
 	}
@@ -567,9 +580,9 @@ static int gdm_usb_probe(struct usb_interface *intf,
 	idProduct = L2H(usbdev->descriptor.idProduct);
 	bcdDevice = L2H(usbdev->descriptor.bcdDevice);
 
-	printk(KERN_INFO "Found GDM USB VID = 0x%04x PID = 0x%04x...\n",
-		idVendor, idProduct);
-	printk(KERN_INFO "GCT WiMax driver version %s\n", DRIVER_VERSION);
+	dev_info(&intf->dev, "Found GDM USB VID = 0x%04x PID = 0x%04x...\n",
+		 idVendor, idProduct);
+	dev_info(&intf->dev, "GCT WiMax driver version %s\n", DRIVER_VERSION);
 
 
 	if (idProduct == EMERGENCY_PID) {
@@ -584,19 +597,16 @@ static int gdm_usb_probe(struct usb_interface *intf,
 		goto out;
 	}
 
-	phy_dev = kmalloc(sizeof(*phy_dev), GFP_KERNEL);
+	phy_dev = kzalloc(sizeof(*phy_dev), GFP_KERNEL);
 	if (phy_dev == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
-	udev = kmalloc(sizeof(*udev), GFP_KERNEL);
+	udev = kzalloc(sizeof(*udev), GFP_KERNEL);
 	if (udev == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	memset(phy_dev, 0, sizeof(*phy_dev));
-	memset(udev, 0, sizeof(*udev));
 
 	if (idProduct == 0x7205 || idProduct == 0x7206)
 		udev->padding = GDM7205_PADDING;
@@ -630,8 +640,9 @@ out:
 	if (ret) {
 		kfree(phy_dev);
 		kfree(udev);
+	} else {
+		usb_set_intfdata(intf, phy_dev);
 	}
-	usb_set_intfdata(intf, phy_dev);
 	return ret;
 }
 
@@ -671,13 +682,21 @@ static int gdm_suspend(struct usb_interface *intf, pm_message_t pm_msg)
 	struct usbwm_dev *udev;
 	struct rx_cxt *rx;
 	struct usb_rx *r;
+	unsigned long flags;
 
 	phy_dev = usb_get_intfdata(intf);
+	if (!phy_dev)
+		return 0;
+
 	udev = phy_dev->priv_dev;
 	rx = &udev->rx;
 
+	spin_lock_irqsave(&rx->lock, flags);
+
 	list_for_each_entry(r, &rx->used_list, list)
 		usb_unlink_urb(r->urb);
+
+	spin_unlock_irqrestore(&rx->lock, flags);
 
 	return 0;
 }
@@ -688,13 +707,21 @@ static int gdm_resume(struct usb_interface *intf)
 	struct usbwm_dev *udev;
 	struct rx_cxt *rx;
 	struct usb_rx *r;
+	unsigned long flags;
 
 	phy_dev = usb_get_intfdata(intf);
+	if (!phy_dev)
+		return 0;
+
 	udev = phy_dev->priv_dev;
 	rx = &udev->rx;
 
+	spin_lock_irqsave(&rx->lock, flags);
+
 	list_for_each_entry(r, &rx->used_list, list)
 		usb_submit_urb(r->urb, GFP_ATOMIC);
+
+	spin_unlock_irqrestore(&rx->lock, flags);
 
 	return 0;
 }
@@ -712,8 +739,6 @@ static int k_mode_thread(void *arg)
 	unsigned long flags, flags2, expire;
 	int ret;
 
-	daemonize("k_mode_wimax");
-
 	while (!k_mode_stop) {
 
 		spin_lock_irqsave(&k_lock, flags2);
@@ -730,8 +755,12 @@ static int k_mode_thread(void *arg)
 			while (jiffies < expire)
 				schedule_timeout(K_WAIT_TIME);
 
+			spin_lock_irqsave(&rx->lock, flags);
+
 			list_for_each_entry(r, &rx->used_list, list)
 				usb_submit_urb(r->urb, GFP_ATOMIC);
+
+			spin_unlock_irqrestore(&rx->lock, flags);
 
 			spin_lock_irqsave(&tx->lock, flags);
 
@@ -742,7 +771,7 @@ static int k_mode_thread(void *arg)
 
 				if (ret) {
 					t->callback = NULL;
-					gdm_usb_send_complete(t->urb);
+					__gdm_usb_send_complete(t->urb);
 				}
 			}
 
@@ -775,7 +804,7 @@ static struct usb_driver gdm_usb_driver = {
 static int __init usb_gdm_wimax_init(void)
 {
 #ifdef CONFIG_WIMAX_GDM72XX_K_MODE
-	kernel_thread(k_mode_thread, NULL, CLONE_KERNEL);
+	kthread_run(k_mode_thread, NULL, "k_mode_wimax");
 #endif /* CONFIG_WIMAX_GDM72XX_K_MODE */
 	return usb_register(&gdm_usb_driver);
 }

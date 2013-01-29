@@ -443,15 +443,7 @@ int ubi_remove_volume(struct ubi_volume_desc *desc, int no_vtbl)
 	spin_lock(&ubi->volumes_lock);
 	ubi->rsvd_pebs -= reserved_pebs;
 	ubi->avail_pebs += reserved_pebs;
-	i = ubi->beb_rsvd_level - ubi->beb_rsvd_pebs;
-	if (i > 0) {
-		i = ubi->avail_pebs >= i ? i : ubi->avail_pebs;
-		ubi->avail_pebs -= i;
-		ubi->rsvd_pebs += i;
-		ubi->beb_rsvd_pebs += i;
-		if (i > 0)
-			ubi_msg("reserve more %d PEBs", i);
-	}
+	ubi_update_reserved(ubi);
 	ubi->vol_count -= 1;
 	spin_unlock(&ubi->volumes_lock);
 
@@ -543,7 +535,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 	}
 
 	/* Change volume table record */
-	memcpy(&vtbl_rec, &ubi->vtbl[vol_id], sizeof(struct ubi_vtbl_record));
+	vtbl_rec = ubi->vtbl[vol_id];
 	vtbl_rec.reserved_pebs = cpu_to_be32(reserved_pebs);
 	err = ubi_change_vtbl_record(ubi, vol_id, &vtbl_rec);
 	if (err)
@@ -558,15 +550,7 @@ int ubi_resize_volume(struct ubi_volume_desc *desc, int reserved_pebs)
 		spin_lock(&ubi->volumes_lock);
 		ubi->rsvd_pebs += pebs;
 		ubi->avail_pebs -= pebs;
-		pebs = ubi->beb_rsvd_level - ubi->beb_rsvd_pebs;
-		if (pebs > 0) {
-			pebs = ubi->avail_pebs >= pebs ? pebs : ubi->avail_pebs;
-			ubi->avail_pebs -= pebs;
-			ubi->rsvd_pebs += pebs;
-			ubi->beb_rsvd_pebs += pebs;
-			if (pebs > 0)
-				ubi_msg("reserve more %d PEBs", pebs);
-		}
+		ubi_update_reserved(ubi);
 		for (i = 0; i < reserved_pebs; i++)
 			new_mapping[i] = vol->eba_tbl[i];
 		kfree(vol->eba_tbl);
@@ -863,7 +847,7 @@ static int self_check_volumes(struct ubi_device *ubi)
 {
 	int i, err = 0;
 
-	if (!ubi->dbg->chk_gen)
+	if (!ubi_dbg_chk_gen(ubi))
 		return 0;
 
 	for (i = 0; i < ubi->vtbl_slots; i++) {

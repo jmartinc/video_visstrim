@@ -1676,16 +1676,11 @@ int gfs2_dir_add(struct inode *inode, const struct qstr *name,
 				be16_add_cpu(&leaf->lf_entries, 1);
 			}
 			brelse(bh);
-			error = gfs2_meta_inode_buffer(ip, &bh);
-			if (error)
-				break;
-			gfs2_trans_add_bh(ip->i_gl, bh, 1);
 			ip->i_entries++;
 			ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
 			if (S_ISDIR(nip->i_inode.i_mode))
 				inc_nlink(&ip->i_inode);
-			gfs2_dinode_out(ip, bh->b_data);
-			brelse(bh);
+			mark_inode_dirty(inode);
 			error = 0;
 			break;
 		}
@@ -1854,14 +1849,9 @@ static int leaf_dealloc(struct gfs2_inode *dip, u32 index, u32 len,
 	if (!ht)
 		return -ENOMEM;
 
-	if (!gfs2_qadata_get(dip)) {
-		error = -ENOMEM;
-		goto out;
-	}
-
 	error = gfs2_quota_hold(dip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
 	if (error)
-		goto out_put;
+		goto out;
 
 	/*  Count the number of leaves  */
 	bh = leaf_bh;
@@ -1942,8 +1932,6 @@ out_rg_gunlock:
 out_rlist:
 	gfs2_rlist_free(&rlist);
 	gfs2_quota_unhold(dip);
-out_put:
-	gfs2_qadata_put(dip);
 out:
 	kfree(ht);
 	return error;

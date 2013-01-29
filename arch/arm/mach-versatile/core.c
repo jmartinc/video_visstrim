@@ -32,12 +32,12 @@
 #include <linux/amba/mmci.h>
 #include <linux/amba/pl022.h>
 #include <linux/io.h>
+#include <linux/irqchip/versatile-fpga.h>
 #include <linux/gfp.h>
 #include <linux/clkdev.h>
 #include <linux/mtd/physmap.h>
 
 #include <asm/irq.h>
-#include <asm/leds.h>
 #include <asm/hardware/arm_timer.h>
 #include <asm/hardware/icst.h>
 #include <asm/hardware/vic.h>
@@ -52,7 +52,6 @@
 #include <asm/hardware/timer-sp.h>
 
 #include <plat/clcd.h>
-#include <plat/fpga-irq.h>
 #include <plat/sched_clock.h>
 
 #include "core.h"
@@ -170,24 +169,6 @@ static struct map_desc versatile_io_desc[] __initdata = {
 		.length		= VERSATILE_PCI_CFG_BASE_SIZE,
 		.type		= MT_DEVICE
 	},
-#if 0
- 	{
-		.virtual	=  VERSATILE_PCI_VIRT_MEM_BASE0,
-		.pfn		= __phys_to_pfn(VERSATILE_PCI_MEM_BASE0),
-		.length		= SZ_16M,
-		.type		= MT_DEVICE
-	}, {
-		.virtual	=  VERSATILE_PCI_VIRT_MEM_BASE1,
-		.pfn		= __phys_to_pfn(VERSATILE_PCI_MEM_BASE1),
-		.length		= SZ_16M,
-		.type		= MT_DEVICE
-	}, {
-		.virtual	=  VERSATILE_PCI_VIRT_MEM_BASE2,
-		.pfn		= __phys_to_pfn(VERSATILE_PCI_MEM_BASE2),
-		.length		= SZ_16M,
-		.type		= MT_DEVICE
-	},
-#endif
 #endif
 };
 
@@ -776,10 +757,6 @@ void __init versatile_init(void)
 		struct amba_device *d = amba_devs[i];
 		amba_device_register(d, &iomem_resource);
 	}
-
-#ifdef CONFIG_LEDS
-	leds_event = versatile_leds_event;
-#endif
 }
 
 /*

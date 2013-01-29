@@ -36,7 +36,6 @@
 #include <bcm63xx_dev_spi.h>
 
 #define PFX		KBUILD_MODNAME
-#define DRV_VER		"0.1.2"
 
 struct bcm63xx_spi {
 	struct completion	done;
@@ -47,6 +46,8 @@ struct bcm63xx_spi {
 	/* Platform data */
 	u32			speed_hz;
 	unsigned		fifo_size;
+	unsigned int		msg_type_shift;
+	unsigned int		msg_ctl_width;
 
 	/* Data buffers */
 	const unsigned char	*tx_ptr;
@@ -129,7 +130,7 @@ static void bcm63xx_spi_setup_transfer(struct spi_device *spi,
 
 	/* Find the closest clock configuration */
 	for (i = 0; i < SPI_CLK_MASK; i++) {
-		if (hz <= bcm63xx_spi_freq_table[i][0]) {
+		if (hz >= bcm63xx_spi_freq_table[i][0]) {
 			clk_cfg = bcm63xx_spi_freq_table[i][1];
 			break;
 		}
@@ -166,13 +167,6 @@ static int bcm63xx_spi_setup(struct spi_device *spi)
 		dev_err(&spi->dev, "%s, unsupported mode bits %x\n",
 			__func__, spi->mode & ~MODEBITS);
 		return -EINVAL;
-	}
-
-	ret = bcm63xx_spi_check_transfer(spi, NULL);
-	if (ret < 0) {
-		dev_err(&spi->dev, "setup: unsupported mode bits %x\n",
-			spi->mode & ~MODEBITS);
-		return ret;
 	}
 
 	dev_dbg(&spi->dev, "%s, mode %d, %u bits/w, %u nsec/bit\n",
@@ -221,13 +215,20 @@ static unsigned int bcm63xx_txrx_bufs(struct spi_device *spi,
 	msg_ctl = (t->len << SPI_BYTE_CNT_SHIFT);
 
 	if (t->rx_buf && t->tx_buf)
-		msg_ctl |= (SPI_FD_RW << SPI_MSG_TYPE_SHIFT);
+		msg_ctl |= (SPI_FD_RW << bs->msg_type_shift);
 	else if (t->rx_buf)
-		msg_ctl |= (SPI_HD_R << SPI_MSG_TYPE_SHIFT);
+		msg_ctl |= (SPI_HD_R << bs->msg_type_shift);
 	else if (t->tx_buf)
-		msg_ctl |= (SPI_HD_W << SPI_MSG_TYPE_SHIFT);
+		msg_ctl |= (SPI_HD_W << bs->msg_type_shift);
 
-	bcm_spi_writew(bs, msg_ctl, SPI_MSG_CTL);
+	switch (bs->msg_ctl_width) {
+	case 8:
+		bcm_spi_writeb(bs, msg_ctl, SPI_MSG_CTL);
+		break;
+	case 16:
+		bcm_spi_writew(bs, msg_ctl, SPI_MSG_CTL);
+		break;
+	}
 
 	/* Issue the transfer */
 	cmd = SPI_CMD_START_IMMEDIATE;
@@ -328,7 +329,7 @@ static irqreturn_t bcm63xx_spi_interrupt(int irq, void *dev_id)
 }
 
 
-static int __devinit bcm63xx_spi_probe(struct platform_device *pdev)
+static int bcm63xx_spi_probe(struct platform_device *pdev)
 {
 	struct resource *r;
 	struct device *dev = &pdev->dev;
@@ -406,8 +407,20 @@ static int __devinit bcm63xx_spi_probe(struct platform_device *pdev)
 	master->transfer_one_message = bcm63xx_spi_transfer_one;
 	master->mode_bits = MODEBITS;
 	bs->speed_hz = pdata->speed_hz;
+	bs->msg_type_shift = pdata->msg_type_shift;
+	bs->msg_ctl_width = pdata->msg_ctl_width;
 	bs->tx_io = (u8 *)(bs->regs + bcm63xx_spireg(SPI_MSG_DATA));
 	bs->rx_io = (const u8 *)(bs->regs + bcm63xx_spireg(SPI_RX_DATA));
+
+	switch (bs->msg_ctl_width) {
+	case 8:
+	case 16:
+		break;
+	default:
+		dev_err(dev, "unsupported MSG_CTL width: %d\n",
+			 bs->msg_ctl_width);
+		goto out_clk_disable;
+	}
 
 	/* Initialize hardware */
 	clk_enable(bs->clk);
@@ -420,8 +433,8 @@ static int __devinit bcm63xx_spi_probe(struct platform_device *pdev)
 		goto out_clk_disable;
 	}
 
-	dev_info(dev, "at 0x%08x (irq %d, FIFOs size %d) v%s\n",
-		 r->start, irq, bs->fifo_size, DRV_VER);
+	dev_info(dev, "at 0x%08x (irq %d, FIFOs size %d)\n",
+		 r->start, irq, bs->fifo_size);
 
 	return 0;
 
@@ -436,9 +449,9 @@ out:
 	return ret;
 }
 
-static int __devexit bcm63xx_spi_remove(struct platform_device *pdev)
+static int bcm63xx_spi_remove(struct platform_device *pdev)
 {
-	struct spi_master *master = platform_get_drvdata(pdev);
+	struct spi_master *master = spi_master_get(platform_get_drvdata(pdev));
 	struct bcm63xx_spi *bs = spi_master_get_devdata(master);
 
 	spi_unregister_master(master);
@@ -452,6 +465,8 @@ static int __devexit bcm63xx_spi_remove(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, 0);
 
+	spi_master_put(master);
+
 	return 0;
 }
 
@@ -461,6 +476,8 @@ static int bcm63xx_spi_suspend(struct device *dev)
 	struct spi_master *master =
 			platform_get_drvdata(to_platform_device(dev));
 	struct bcm63xx_spi *bs = spi_master_get_devdata(master);
+
+	spi_master_suspend(master);
 
 	clk_disable(bs->clk);
 
@@ -474,6 +491,8 @@ static int bcm63xx_spi_resume(struct device *dev)
 	struct bcm63xx_spi *bs = spi_master_get_devdata(master);
 
 	clk_enable(bs->clk);
+
+	spi_master_resume(master);
 
 	return 0;
 }
@@ -495,7 +514,7 @@ static struct platform_driver bcm63xx_spi_driver = {
 		.pm	= BCM63XX_SPI_PM_OPS,
 	},
 	.probe		= bcm63xx_spi_probe,
-	.remove		= __devexit_p(bcm63xx_spi_remove),
+	.remove		= bcm63xx_spi_remove,
 };
 
 module_platform_driver(bcm63xx_spi_driver);

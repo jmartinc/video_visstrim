@@ -321,7 +321,7 @@ static void arp_error_report(struct neighbour *neigh, struct sk_buff *skb)
 static void arp_solicit(struct neighbour *neigh, struct sk_buff *skb)
 {
 	__be32 saddr = 0;
-	u8  *dst_ha = NULL;
+	u8 dst_ha[MAX_ADDR_LEN], *dst_hw = NULL;
 	struct net_device *dev = neigh->dev;
 	__be32 target = *(__be32 *)neigh->primary_key;
 	int probes = atomic_read(&neigh->probes);
@@ -363,8 +363,8 @@ static void arp_solicit(struct neighbour *neigh, struct sk_buff *skb)
 	if (probes < 0) {
 		if (!(neigh->nud_state & NUD_VALID))
 			pr_debug("trying to ucast probe in NUD_INVALID\n");
-		dst_ha = neigh->ha;
-		read_lock_bh(&neigh->lock);
+		neigh_ha_snapshot(dst_ha, neigh, dev);
+		dst_hw = dst_ha;
 	} else {
 		probes -= neigh->parms->app_probes;
 		if (probes < 0) {
@@ -376,9 +376,7 @@ static void arp_solicit(struct neighbour *neigh, struct sk_buff *skb)
 	}
 
 	arp_send(ARPOP_REQUEST, ETH_P_ARP, target, dev, saddr,
-		 dst_ha, dev->dev_addr, NULL);
-	if (dst_ha)
-		read_unlock_bh(&neigh->lock);
+		 dst_hw, dev->dev_addr, NULL);
 }
 
 static int arp_ignore(struct in_device *in_dev, __be32 sip, __be32 tip)
@@ -475,8 +473,7 @@ int arp_find(unsigned char *haddr, struct sk_buff *skb)
 		return 1;
 	}
 
-	paddr = skb_rtable(skb)->rt_gateway;
-
+	paddr = rt_nexthop(skb_rtable(skb), ip_hdr(skb)->daddr);
 	if (arp_set_predefined(inet_addr_type(dev_net(dev), paddr), haddr,
 			       paddr, dev))
 		return 0;
@@ -790,7 +787,8 @@ static int arp_process(struct sk_buff *skb)
  *	Check for bad requests for 127.x.x.x and requests for multicast
  *	addresses.  If this is one such, delete it.
  */
-	if (ipv4_is_loopback(tip) || ipv4_is_multicast(tip))
+	if (ipv4_is_multicast(tip) ||
+	    (!IN_DEV_ROUTE_LOCALNET(in_dev) && ipv4_is_loopback(tip)))
 		goto out;
 
 /*
@@ -1161,7 +1159,7 @@ int arp_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	switch (cmd) {
 	case SIOCDARP:
 	case SIOCSARP:
-		if (!capable(CAP_NET_ADMIN))
+		if (!ns_capable(net->user_ns, CAP_NET_ADMIN))
 			return -EPERM;
 	case SIOCGARP:
 		err = copy_from_user(&r, arg, sizeof(struct arpreq));
@@ -1225,7 +1223,7 @@ static int arp_netdev_event(struct notifier_block *this, unsigned long event,
 	switch (event) {
 	case NETDEV_CHANGEADDR:
 		neigh_changeaddr(&arp_tbl, dev);
-		rt_cache_flush(dev_net(dev), 0);
+		rt_cache_flush(dev_net(dev));
 		break;
 	default:
 		break;

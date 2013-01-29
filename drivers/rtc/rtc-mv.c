@@ -215,7 +215,7 @@ static const struct rtc_class_ops mv_rtc_alarm_ops = {
 	.alarm_irq_enable = mv_rtc_alarm_irq_enable,
 };
 
-static int __devinit mv_rtc_probe(struct platform_device *pdev)
+static int mv_rtc_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	struct rtc_plat_data *pdata;
@@ -297,7 +297,7 @@ static int __exit mv_rtc_remove(struct platform_device *pdev)
 
 #ifdef CONFIG_OF
 static struct of_device_id rtc_mv_of_match_table[] = {
-	{ .compatible = "mrvl,orion-rtc", },
+	{ .compatible = "marvell,orion-rtc", },
 	{}
 };
 #endif

@@ -27,10 +27,11 @@
 #include <linux/interrupt.h>
 #include <linux/ioctl.h>
 #include <linux/completion.h>
+#include <linux/io.h>
 
 #include <asm/uaccess.h>
 
-#include <mach/at91_rtc.h>
+#include "rtc-at91rm9200.h"
 
 #define at91_rtc_read(field) \
 	__raw_readl(at91_rtc_regs + field)

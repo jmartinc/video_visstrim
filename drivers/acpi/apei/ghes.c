@@ -301,7 +301,7 @@ static struct ghes *ghes_new(struct acpi_hest_generic *generic)
 	if (!ghes)
 		return ERR_PTR(-ENOMEM);
 	ghes->generic = generic;
-	rc = acpi_os_map_generic_address(&generic->error_status_address);
+	rc = apei_map_generic_address(&generic->error_status_address);
 	if (rc)
 		goto err_free;
 	error_block_length = generic->error_block_length;
@@ -321,7 +321,7 @@ static struct ghes *ghes_new(struct acpi_hest_generic *generic)
 	return ghes;
 
 err_unmap:
-	acpi_os_unmap_generic_address(&generic->error_status_address);
+	apei_unmap_generic_address(&generic->error_status_address);
 err_free:
 	kfree(ghes);
 	return ERR_PTR(rc);
@@ -330,7 +330,7 @@ err_free:
 static void ghes_fini(struct ghes *ghes)
 {
 	kfree(ghes->estatus);
-	acpi_os_unmap_generic_address(&ghes->generic->error_status_address);
+	apei_unmap_generic_address(&ghes->generic->error_status_address);
 }
 
 enum {
@@ -901,7 +901,7 @@ static unsigned long ghes_esource_prealloc_size(
 	return prealloc_size;
 }
 
-static int __devinit ghes_probe(struct platform_device *ghes_dev)
+static int ghes_probe(struct platform_device *ghes_dev)
 {
 	struct acpi_hest_generic *generic;
 	struct ghes *ghes = NULL;
@@ -994,7 +994,7 @@ err:
 	return rc;
 }
 
-static int __devexit ghes_remove(struct platform_device *ghes_dev)
+static int ghes_remove(struct platform_device *ghes_dev)
 {
 	struct ghes *ghes;
 	struct acpi_hest_generic *generic;

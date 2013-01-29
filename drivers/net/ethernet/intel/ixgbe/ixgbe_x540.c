@@ -152,9 +152,12 @@ mac_reset_top:
 	hw->mac.ops.get_san_mac_addr(hw, hw->mac.san_addr);
 
 	/* Add the SAN MAC address to the RAR only if it's a valid address */
-	if (ixgbe_validate_mac_addr(hw->mac.san_addr) == 0) {
+	if (is_valid_ether_addr(hw->mac.san_addr)) {
 		hw->mac.ops.set_rar(hw, hw->mac.num_rar_entries - 1,
 		                    hw->mac.san_addr, 0, IXGBE_RAH_AV);
+
+		/* Save the SAN MAC RAR index */
+		hw->mac.san_mac_rar_index = hw->mac.num_rar_entries - 1;
 
 		/* Reserve the last RAR for the SAN MAC address */
 		hw->mac.num_rar_entries--;
@@ -832,6 +835,7 @@ static struct ixgbe_mac_operations mac_ops_X540 = {
 	.set_rar                = &ixgbe_set_rar_generic,
 	.clear_rar              = &ixgbe_clear_rar_generic,
 	.set_vmdq               = &ixgbe_set_vmdq_generic,
+	.set_vmdq_san_mac	= &ixgbe_set_vmdq_san_mac_generic,
 	.clear_vmdq             = &ixgbe_clear_vmdq_generic,
 	.init_rx_addrs          = &ixgbe_init_rx_addrs_generic,
 	.update_mc_addr_list    = &ixgbe_update_mc_addr_list_generic,

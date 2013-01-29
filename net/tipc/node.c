@@ -1,7 +1,7 @@
 /*
  * net/tipc/node.c: TIPC node management routines
  *
- * Copyright (c) 2000-2006, Ericsson AB
+ * Copyright (c) 2000-2006, 2012 Ericsson AB
  * Copyright (c) 2005-2006, 2010-2011, Wind River Systems
  * All rights reserved.
  *
@@ -105,7 +105,7 @@ struct tipc_node *tipc_node_create(u32 addr)
 	n_ptr = kzalloc(sizeof(*n_ptr), GFP_ATOMIC);
 	if (!n_ptr) {
 		spin_unlock_bh(&node_create_lock);
-		warn("Node creation failed, no memory\n");
+		pr_warn("Node creation failed, no memory\n");
 		return NULL;
 	}
 
@@ -151,8 +151,8 @@ void tipc_node_link_up(struct tipc_node *n_ptr, struct tipc_link *l_ptr)
 
 	n_ptr->working_links++;
 
-	info("Established link <%s> on network plane %c\n",
-	     l_ptr->name, l_ptr->b_ptr->net_plane);
+	pr_info("Established link <%s> on network plane %c\n",
+		l_ptr->name, l_ptr->b_ptr->net_plane);
 
 	if (!active[0]) {
 		active[0] = active[1] = l_ptr;
@@ -160,7 +160,7 @@ void tipc_node_link_up(struct tipc_node *n_ptr, struct tipc_link *l_ptr)
 		return;
 	}
 	if (l_ptr->priority < active[0]->priority) {
-		info("New link <%s> becomes standby\n", l_ptr->name);
+		pr_info("New link <%s> becomes standby\n", l_ptr->name);
 		return;
 	}
 	tipc_link_send_duplicate(active[0], l_ptr);
@@ -168,9 +168,9 @@ void tipc_node_link_up(struct tipc_node *n_ptr, struct tipc_link *l_ptr)
 		active[0] = l_ptr;
 		return;
 	}
-	info("Old link <%s> becomes standby\n", active[0]->name);
+	pr_info("Old link <%s> becomes standby\n", active[0]->name);
 	if (active[1] != active[0])
-		info("Old link <%s> becomes standby\n", active[1]->name);
+		pr_info("Old link <%s> becomes standby\n", active[1]->name);
 	active[0] = active[1] = l_ptr;
 }
 
@@ -211,11 +211,11 @@ void tipc_node_link_down(struct tipc_node *n_ptr, struct tipc_link *l_ptr)
 	n_ptr->working_links--;
 
 	if (!tipc_link_is_active(l_ptr)) {
-		info("Lost standby link <%s> on network plane %c\n",
-		     l_ptr->name, l_ptr->b_ptr->net_plane);
+		pr_info("Lost standby link <%s> on network plane %c\n",
+			l_ptr->name, l_ptr->b_ptr->net_plane);
 		return;
 	}
-	info("Lost link <%s> on network plane %c\n",
+	pr_info("Lost link <%s> on network plane %c\n",
 		l_ptr->name, l_ptr->b_ptr->net_plane);
 
 	active = &n_ptr->active_links[0];
@@ -263,12 +263,9 @@ void tipc_node_detach_link(struct tipc_node *n_ptr, struct tipc_link *l_ptr)
 static void node_established_contact(struct tipc_node *n_ptr)
 {
 	tipc_k_signal((Handler)tipc_named_node_up, n_ptr->addr);
-
-	if (n_ptr->bclink.supportable) {
-		n_ptr->bclink.acked = tipc_bclink_get_last_sent();
-		tipc_bclink_add_node(n_ptr->addr);
-		n_ptr->bclink.supported = 1;
-	}
+	n_ptr->bclink.oos_state = 0;
+	n_ptr->bclink.acked = tipc_bclink_get_last_sent();
+	tipc_bclink_add_node(n_ptr->addr);
 }
 
 static void node_name_purge_complete(unsigned long node_addr)
@@ -290,11 +287,11 @@ static void node_lost_contact(struct tipc_node *n_ptr)
 	char addr_string[16];
 	u32 i;
 
-	info("Lost contact with %s\n",
-	     tipc_addr_string_fill(addr_string, n_ptr->addr));
+	pr_info("Lost contact with %s\n",
+		tipc_addr_string_fill(addr_string, n_ptr->addr));
 
 	/* Flush broadcast link info associated with lost node */
-	if (n_ptr->bclink.supported) {
+	if (n_ptr->bclink.recv_permitted) {
 		while (n_ptr->bclink.deferred_head) {
 			struct sk_buff *buf = n_ptr->bclink.deferred_head;
 			n_ptr->bclink.deferred_head = buf->next;
@@ -310,7 +307,7 @@ static void node_lost_contact(struct tipc_node *n_ptr)
 		tipc_bclink_remove_node(n_ptr->addr);
 		tipc_bclink_acknowledge(n_ptr, INVALID_LINK_SEQ);
 
-		n_ptr->bclink.supported = 0;
+		n_ptr->bclink.recv_permitted = false;
 	}
 
 	/* Abort link changeover */

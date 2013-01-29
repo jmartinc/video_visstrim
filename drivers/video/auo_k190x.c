@@ -773,8 +773,8 @@ EXPORT_SYMBOL_GPL(auok190x_pm);
  * Common probe and remove code
  */
 
-int __devinit auok190x_common_probe(struct platform_device *pdev,
-				    struct auok190x_init_data *init)
+int auok190x_common_probe(struct platform_device *pdev,
+			  struct auok190x_init_data *init)
 {
 	struct auok190x_board *board = init->board;
 	struct auok190xfb_par *par;
@@ -987,7 +987,6 @@ err_regfb:
 	fb_dealloc_cmap(&info->cmap);
 err_cmap:
 	fb_deferred_io_cleanup(info);
-	kfree(info->fbdefio);
 err_defio:
 	vfree((void *)info->screen_base);
 err_irq:
@@ -1007,7 +1006,7 @@ err_reg:
 }
 EXPORT_SYMBOL_GPL(auok190x_common_probe);
 
-int  __devexit auok190x_common_remove(struct platform_device *pdev)
+int  auok190x_common_remove(struct platform_device *pdev)
 {
 	struct fb_info *info = platform_get_drvdata(pdev);
 	struct auok190xfb_par *par = info->par;
@@ -1022,7 +1021,6 @@ int  __devexit auok190x_common_remove(struct platform_device *pdev)
 	fb_dealloc_cmap(&info->cmap);
 
 	fb_deferred_io_cleanup(info);
-	kfree(info->fbdefio);
 
 	vfree((void *)info->screen_base);
 

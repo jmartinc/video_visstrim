@@ -26,7 +26,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
-#include <linux/version.h>
 #include <linux/blkdev.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
@@ -74,7 +73,7 @@ enum fcp_resp_rsp_codes {
 #define FCP_PTA_SIMPLE      0   /* simple task attribute */
 #define FCP_PTA_HEADQ       1   /* head of queue task attribute */
 #define FCP_PTA_ORDERED     2   /* ordered task attribute */
-#define FCP_PTA_ACA         4   /* auto. contigent allegiance */
+#define FCP_PTA_ACA         4   /* auto. contingent allegiance */
 #define FCP_PTA_MASK        7   /* mask for task attribute field */
 #define FCP_PRI_SHIFT       3   /* priority field starts in bit 3 */
 #define FCP_PRI_RESVD_MASK  0x80        /* reserved bits in priority field */
@@ -558,6 +557,7 @@ static bool qlt_check_fcport_exist(struct scsi_qla_host *vha,
 	int pmap_len;
 	fc_port_t *fcport;
 	int global_resets;
+	unsigned long flags;
 
 retry:
 	global_resets = atomic_read(&ha->tgt.qla_tgt->tgt_global_resets_count);
@@ -626,10 +626,10 @@ retry:
 	    sess->s_id.b.area, sess->loop_id, fcport->d_id.b.domain,
 	    fcport->d_id.b.al_pa, fcport->d_id.b.area, fcport->loop_id);
 
-	sess->s_id = fcport->d_id;
-	sess->loop_id = fcport->loop_id;
-	sess->conf_compl_supported = !!(fcport->flags &
-	    FCF_CONF_COMP_SUPPORTED);
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+	ha->tgt.tgt_ops->update_sess(sess, fcport->d_id, fcport->loop_id,
+				(fcport->flags & FCF_CONF_COMP_SUPPORTED));
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 
 	res = true;
 
@@ -741,10 +741,9 @@ static struct qla_tgt_sess *qlt_create_sess(
 				qlt_undelete_sess(sess);
 
 			kref_get(&sess->se_sess->sess_kref);
-			sess->s_id = fcport->d_id;
-			sess->loop_id = fcport->loop_id;
-			sess->conf_compl_supported = !!(fcport->flags &
-			    FCF_CONF_COMP_SUPPORTED);
+			ha->tgt.tgt_ops->update_sess(sess, fcport->d_id, fcport->loop_id,
+						(fcport->flags & FCF_CONF_COMP_SUPPORTED));
+
 			if (sess->local && !local)
 				sess->local = 0;
 			spin_unlock_irqrestore(&ha->hardware_lock, flags);
@@ -797,8 +796,7 @@ static struct qla_tgt_sess *qlt_create_sess(
 	 */
 	kref_get(&sess->se_sess->sess_kref);
 
-	sess->conf_compl_supported = !!(fcport->flags &
-	    FCF_CONF_COMP_SUPPORTED);
+	sess->conf_compl_supported = (fcport->flags & FCF_CONF_COMP_SUPPORTED);
 	BUILD_BUG_ON(sizeof(sess->port_name) != sizeof(fcport->port_name));
 	memcpy(sess->port_name, fcport->port_name, sizeof(sess->port_name));
 
@@ -870,10 +868,8 @@ void qlt_fc_port_added(struct scsi_qla_host *vha, fc_port_t *fcport)
 			ql_dbg(ql_dbg_tgt_mgt, vha, 0xf007,
 			    "Reappeared sess %p\n", sess);
 		}
-		sess->s_id = fcport->d_id;
-		sess->loop_id = fcport->loop_id;
-		sess->conf_compl_supported = !!(fcport->flags &
-		    FCF_CONF_COMP_SUPPORTED);
+		ha->tgt.tgt_ops->update_sess(sess, fcport->d_id, fcport->loop_id,
+					(fcport->flags & FCF_CONF_COMP_SUPPORTED));
 	}
 
 	if (sess && sess->local) {
@@ -970,7 +966,7 @@ void qlt_stop_phase1(struct qla_tgt *tgt)
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 	mutex_unlock(&ha->tgt.tgt_mutex);
 
-	flush_delayed_work_sync(&tgt->sess_del_work);
+	flush_delayed_work(&tgt->sess_del_work);
 
 	ql_dbg(ql_dbg_tgt_mgt, vha, 0xf009,
 	    "Waiting for sess works (tgt %p)", tgt);
@@ -1033,7 +1029,7 @@ void qlt_stop_phase2(struct qla_tgt *tgt)
 EXPORT_SYMBOL(qlt_stop_phase2);
 
 /* Called from qlt_remove_target() -> qla2x00_remove_one() */
-void qlt_release(struct qla_tgt *tgt)
+static void qlt_release(struct qla_tgt *tgt)
 {
 	struct qla_hw_data *ha = tgt->ha;
 
@@ -1268,8 +1264,27 @@ static int __qlt_24xx_handle_abts(struct scsi_qla_host *vha,
 	struct abts_recv_from_24xx *abts, struct qla_tgt_sess *sess)
 {
 	struct qla_hw_data *ha = vha->hw;
+	struct se_session *se_sess = sess->se_sess;
 	struct qla_tgt_mgmt_cmd *mcmd;
+	struct se_cmd *se_cmd;
+	u32 lun = 0;
 	int rc;
+	bool found_lun = false;
+
+	spin_lock(&se_sess->sess_cmd_lock);
+	list_for_each_entry(se_cmd, &se_sess->sess_cmd_list, se_cmd_list) {
+		struct qla_tgt_cmd *cmd =
+			container_of(se_cmd, struct qla_tgt_cmd, se_cmd);
+		if (cmd->tag == abts->exchange_addr_to_abort) {
+			lun = cmd->unpacked_lun;
+			found_lun = true;
+			break;
+		}
+	}
+	spin_unlock(&se_sess->sess_cmd_lock);
+
+	if (!found_lun)
+		return -ENOENT;
 
 	ql_dbg(ql_dbg_tgt_mgt, vha, 0xf00f,
 	    "qla_target(%d): task abort (tag=%d)\n",
@@ -1287,7 +1302,7 @@ static int __qlt_24xx_handle_abts(struct scsi_qla_host *vha,
 	mcmd->sess = sess;
 	memcpy(&mcmd->orig_iocb.abts, abts, sizeof(mcmd->orig_iocb.abts));
 
-	rc = ha->tgt.tgt_ops->handle_tmr(mcmd, 0, TMR_ABORT_TASK,
+	rc = ha->tgt.tgt_ops->handle_tmr(mcmd, lun, TMR_ABORT_TASK,
 	    abts->exchange_addr_to_abort);
 	if (rc != 0) {
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf052,
@@ -1404,7 +1419,7 @@ static void qlt_24xx_send_task_mgmt_ctio(struct scsi_qla_host *ha,
 	ctio->u.status1.scsi_status =
 	    __constant_cpu_to_le16(SS_RESPONSE_INFO_LEN_VALID);
 	ctio->u.status1.response_len = __constant_cpu_to_le16(8);
-	((uint32_t *)ctio->u.status1.sense_data)[0] = cpu_to_be32(resp_code);
+	ctio->u.status1.sense_data[0] = resp_code;
 
 	qla2x00_start_iocbs(ha, ha->req);
 }
@@ -2477,11 +2492,9 @@ static void qlt_do_ctio_completion(struct scsi_qla_host *vha, uint32_t handle,
 	}
 
 	cmd = qlt_ctio_to_cmd(vha, handle, ctio);
-	if (cmd == NULL) {
-		if (status != CTIO_SUCCESS)
-			qlt_term_ctio_exchange(vha, ctio, NULL, status);
+	if (cmd == NULL)
 		return;
-	}
+
 	se_cmd = &cmd->se_cmd;
 	tfo = se_cmd->se_tfo;
 
@@ -2646,19 +2659,9 @@ static void qlt_do_work(struct work_struct *work)
 	spin_lock_irqsave(&ha->hardware_lock, flags);
 	sess = ha->tgt.tgt_ops->find_sess_by_s_id(vha,
 	    atio->u.isp24.fcp_hdr.s_id);
-	if (sess) {
-		if (unlikely(sess->tearing_down)) {
-			sess = NULL;
-			spin_unlock_irqrestore(&ha->hardware_lock, flags);
-			goto out_term;
-		} else {
-			/*
-			 * Do the extra kref_get() before dropping
-			 * qla_hw_data->hardware_lock.
-			 */
-			kref_get(&sess->se_sess->sess_kref);
-		}
-	}
+	/* Do kref_get() before dropping qla_hw_data->hardware_lock. */
+	if (sess)
+		kref_get(&sess->se_sess->sess_kref);
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 
 	if (unlikely(!sess)) {
@@ -2727,10 +2730,12 @@ static void qlt_do_work(struct work_struct *work)
 out_term:
 	ql_dbg(ql_dbg_tgt_mgt, vha, 0xf020, "Terminating work cmd %p", cmd);
 	/*
-	 * cmd has not sent to target yet, so pass NULL as the second argument
+	 * cmd has not sent to target yet, so pass NULL as the second
+	 * argument to qlt_send_term_exchange() and free the memory here.
 	 */
 	spin_lock_irqsave(&ha->hardware_lock, flags);
 	qlt_send_term_exchange(vha, NULL, &cmd->atio, 1);
+	kmem_cache_free(qla_tgt_cmd_cachep, cmd);
 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 	if (sess)
 		ha->tgt.tgt_ops->put_sess(sess);
@@ -3961,7 +3966,7 @@ void qlt_async_event(uint16_t code, struct scsi_qla_host *vha,
 {
 	struct qla_hw_data *ha = vha->hw;
 	struct qla_tgt *tgt = ha->tgt.qla_tgt;
-	int reason_code;
+	int login_code;
 
 	ql_dbg(ql_dbg_tgt, vha, 0xe039,
 	    "scsi(%ld): ha state %d init_done %d oper_mode %d topo %d\n",
@@ -3994,7 +3999,7 @@ void qlt_async_event(uint16_t code, struct scsi_qla_host *vha,
 	case MBA_RSP_TRANSFER_ERR:	/* Response Transfer Error */
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf03a,
 		    "qla_target(%d): System error async event %#x "
-		    "occured", vha->vp_idx, code);
+		    "occurred", vha->vp_idx, code);
 		break;
 	case MBA_WAKEUP_THRES:		/* Request Queue Wake-up. */
 		set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
@@ -4003,10 +4008,10 @@ void qlt_async_event(uint16_t code, struct scsi_qla_host *vha,
 	case MBA_LOOP_UP:
 	{
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf03b,
-		    "qla_target(%d): Async LOOP_UP occured "
-		    "(m[1]=%x, m[2]=%x, m[3]=%x, m[4]=%x)", vha->vp_idx,
-		    le16_to_cpu(mailbox[1]), le16_to_cpu(mailbox[2]),
-		    le16_to_cpu(mailbox[3]), le16_to_cpu(mailbox[4]));
+		    "qla_target(%d): Async LOOP_UP occurred "
+		    "(m[0]=%x, m[1]=%x, m[2]=%x, m[3]=%x)", vha->vp_idx,
+		    le16_to_cpu(mailbox[0]), le16_to_cpu(mailbox[1]),
+		    le16_to_cpu(mailbox[2]), le16_to_cpu(mailbox[3]));
 		if (tgt->link_reinit_iocb_pending) {
 			qlt_send_notify_ack(vha, (void *)&tgt->link_reinit_iocb,
 			    0, 0, 0, 0, 0, 0);
@@ -4020,34 +4025,35 @@ void qlt_async_event(uint16_t code, struct scsi_qla_host *vha,
 	case MBA_LIP_RESET:
 	case MBA_RSCN_UPDATE:
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf03c,
-		    "qla_target(%d): Async event %#x occured "
-		    "(m[1]=%x, m[2]=%x, m[3]=%x, m[4]=%x)", vha->vp_idx, code,
-		    le16_to_cpu(mailbox[1]), le16_to_cpu(mailbox[2]),
-		    le16_to_cpu(mailbox[3]), le16_to_cpu(mailbox[4]));
+		    "qla_target(%d): Async event %#x occurred "
+		    "(m[0]=%x, m[1]=%x, m[2]=%x, m[3]=%x)", vha->vp_idx, code,
+		    le16_to_cpu(mailbox[0]), le16_to_cpu(mailbox[1]),
+		    le16_to_cpu(mailbox[2]), le16_to_cpu(mailbox[3]));
 		break;
 
 	case MBA_PORT_UPDATE:
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf03d,
 		    "qla_target(%d): Port update async event %#x "
-		    "occured: updating the ports database (m[1]=%x, m[2]=%x, "
-		    "m[3]=%x, m[4]=%x)", vha->vp_idx, code,
-		    le16_to_cpu(mailbox[1]), le16_to_cpu(mailbox[2]),
-		    le16_to_cpu(mailbox[3]), le16_to_cpu(mailbox[4]));
-		reason_code = le16_to_cpu(mailbox[2]);
-		if (reason_code == 0x4)
+		    "occurred: updating the ports database (m[0]=%x, m[1]=%x, "
+		    "m[2]=%x, m[3]=%x)", vha->vp_idx, code,
+		    le16_to_cpu(mailbox[0]), le16_to_cpu(mailbox[1]),
+		    le16_to_cpu(mailbox[2]), le16_to_cpu(mailbox[3]));
+
+		login_code = le16_to_cpu(mailbox[2]);
+		if (login_code == 0x4)
 			ql_dbg(ql_dbg_tgt_mgt, vha, 0xf03e,
 			    "Async MB 2: Got PLOGI Complete\n");
-		else if (reason_code == 0x7)
+		else if (login_code == 0x7)
 			ql_dbg(ql_dbg_tgt_mgt, vha, 0xf03f,
 			    "Async MB 2: Port Logged Out\n");
 		break;
 
 	default:
 		ql_dbg(ql_dbg_tgt_mgt, vha, 0xf040,
-		    "qla_target(%d): Async event %#x occured: "
-		    "ignore (m[1]=%x, m[2]=%x, m[3]=%x, m[4]=%x)", vha->vp_idx,
-		    code, le16_to_cpu(mailbox[1]), le16_to_cpu(mailbox[2]),
-		    le16_to_cpu(mailbox[3]), le16_to_cpu(mailbox[4]));
+		    "qla_target(%d): Async event %#x occurred: "
+		    "ignore (m[0]=%x, m[1]=%x, m[2]=%x, m[3]=%x)", vha->vp_idx,
+		    code, le16_to_cpu(mailbox[0]), le16_to_cpu(mailbox[1]),
+		    le16_to_cpu(mailbox[2]), le16_to_cpu(mailbox[3]));
 		break;
 	}
 

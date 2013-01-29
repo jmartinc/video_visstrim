@@ -14,10 +14,11 @@ extern struct sock *unix_get_socket(struct file *filp);
 extern struct sock *unix_peer_get(struct sock *);
 
 #define UNIX_HASH_SIZE	256
+#define UNIX_HASH_BITS	8
 
 extern unsigned int unix_tot_inflight;
 extern spinlock_t unix_table_lock;
-extern struct hlist_head unix_socket_table[UNIX_HASH_SIZE + 1];
+extern struct hlist_head unix_socket_table[2 * UNIX_HASH_SIZE];
 
 struct unix_address {
 	atomic_t	refcnt;
@@ -52,7 +53,6 @@ struct unix_sock {
 	struct path		path;
 	struct mutex		readlock;
 	struct sock		*peer;
-	struct sock		*other;
 	struct list_head	link;
 	atomic_long_t		inflight;
 	spinlock_t		lock;

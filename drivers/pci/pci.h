@@ -8,7 +8,6 @@
 
 /* Functions internal to the PCI core code */
 
-extern int pci_uevent(struct device *dev, struct kobj_uevent_env *env);
 extern int pci_create_sysfs_dev_files(struct pci_dev *pdev);
 extern void pci_remove_sysfs_dev_files(struct pci_dev *pdev);
 #if !defined(CONFIG_DMI) && !defined(CONFIG_ACPI)
@@ -67,9 +66,13 @@ struct pci_platform_pm_ops {
 
 extern int pci_set_platform_pm(struct pci_platform_pm_ops *ops);
 extern void pci_update_current_state(struct pci_dev *dev, pci_power_t state);
+extern void pci_power_up(struct pci_dev *dev);
 extern void pci_disable_enabled_device(struct pci_dev *dev);
 extern int pci_finish_runtime_suspend(struct pci_dev *dev);
 extern int __pci_pme_wakeup(struct pci_dev *dev, void *ign);
+extern void pci_wakeup_bus(struct pci_bus *bus);
+extern void pci_config_pm_runtime_get(struct pci_dev *dev);
+extern void pci_config_pm_runtime_put(struct pci_dev *dev);
 extern void pci_pm_init(struct pci_dev *dev);
 extern void platform_pci_wakeup_init(struct pci_dev *dev);
 extern void pci_allocate_cap_save_buffers(struct pci_dev *dev);
@@ -85,13 +88,6 @@ static inline bool pci_is_bridge(struct pci_dev *pci_dev)
 {
 	return !!(pci_dev->subordinate);
 }
-
-extern int pci_user_read_config_byte(struct pci_dev *dev, int where, u8 *val);
-extern int pci_user_read_config_word(struct pci_dev *dev, int where, u16 *val);
-extern int pci_user_read_config_dword(struct pci_dev *dev, int where, u32 *val);
-extern int pci_user_write_config_byte(struct pci_dev *dev, int where, u8 val);
-extern int pci_user_write_config_word(struct pci_dev *dev, int where, u16 val);
-extern int pci_user_write_config_dword(struct pci_dev *dev, int where, u32 val);
 
 struct pci_vpd_ops {
 	ssize_t (*read)(struct pci_dev *dev, loff_t pos, size_t count, void *buf);
@@ -124,7 +120,7 @@ static inline int pci_proc_detach_bus(struct pci_bus *bus) { return 0; }
 #endif
 
 /* Functions for PCI Hotplug drivers to use */
-extern unsigned int pci_do_scan_bus(struct pci_bus *bus);
+int pci_hp_add_bridge(struct pci_dev *dev);
 
 #ifdef HAVE_PCI_LEGACY
 extern void pci_create_legacy_files(struct pci_bus *bus);
@@ -162,11 +158,8 @@ static inline int pci_no_d1d2(struct pci_dev *dev)
 }
 extern struct device_attribute pci_dev_attrs[];
 extern struct device_attribute pcibus_dev_attrs[];
-#ifdef CONFIG_HOTPLUG
+extern struct device_type pci_dev_type;
 extern struct bus_attribute pci_bus_attrs[];
-#else
-#define pci_bus_attrs	NULL
-#endif
 
 
 /**
@@ -237,13 +230,14 @@ struct pci_sriov {
 	int nres;		/* number of resources */
 	u32 cap;		/* SR-IOV Capabilities */
 	u16 ctrl;		/* SR-IOV Control */
-	u16 total;		/* total VFs associated with the PF */
-	u16 initial;		/* initial VFs associated with the PF */
-	u16 nr_virtfn;		/* number of VFs available */
+	u16 total_VFs;		/* total VFs associated with the PF */
+	u16 initial_VFs;	/* initial VFs associated with the PF */
+	u16 num_VFs;		/* number of VFs available */
 	u16 offset;		/* first VF Routing ID offset */
 	u16 stride;		/* following VF stride */
 	u32 pgsz;		/* page size for BAR alignment */
 	u8 link;		/* Function Dependency Link */
+	u16 driver_max_VFs;	/* max num VFs driver supports */
 	struct pci_dev *dev;	/* lowest numbered PF */
 	struct pci_dev *self;	/* this PF */
 	struct mutex lock;	/* lock for VF bus */

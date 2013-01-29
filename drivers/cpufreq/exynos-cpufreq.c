@@ -31,13 +31,13 @@ static unsigned int locking_frequency;
 static bool frequency_locked;
 static DEFINE_MUTEX(cpufreq_lock);
 
-int exynos_verify_speed(struct cpufreq_policy *policy)
+static int exynos_verify_speed(struct cpufreq_policy *policy)
 {
 	return cpufreq_frequency_table_verify(policy,
 					      exynos_info->freq_table);
 }
 
-unsigned int exynos_getspeed(unsigned int cpu)
+static unsigned int exynos_getspeed(unsigned int cpu)
 {
 	return clk_get_rate(exynos_info->cpu_clk) / 1000;
 }
@@ -62,8 +62,18 @@ static int exynos_target(struct cpufreq_policy *policy,
 		goto out;
 	}
 
-	if (cpufreq_frequency_table_target(policy, freq_table,
-					   freqs.old, relation, &old_index)) {
+	/*
+	 * The policy max have been changed so that we cannot get proper
+	 * old_index with cpufreq_frequency_table_target(). Thus, ignore
+	 * policy and get the index from the raw freqeuncy table.
+	 */
+	for (old_index = 0;
+		freq_table[old_index].frequency != CPUFREQ_TABLE_END;
+		old_index++)
+		if (freq_table[old_index].frequency == freqs.old)
+			break;
+
+	if (freq_table[old_index].frequency == CPUFREQ_TABLE_END) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -90,7 +100,8 @@ static int exynos_target(struct cpufreq_policy *policy,
 	}
 	arm_volt = volt_table[index];
 
-	cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
+	for_each_cpu(freqs.cpu, policy->cpus)
+		cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
 
 	/* When the new frequency is higher than current frequency */
 	if ((freqs.new > freqs.old) && !safe_arm_volt) {
@@ -105,7 +116,8 @@ static int exynos_target(struct cpufreq_policy *policy,
 	if (freqs.new != freqs.old)
 		exynos_info->set_freq(old_index, index);
 
-	cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
+	for_each_cpu(freqs.cpu, policy->cpus)
+		cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
 
 	/* When the new frequency is lower than current frequency */
 	if ((freqs.new < freqs.old) ||
@@ -225,6 +237,7 @@ static int exynos_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		cpumask_copy(policy->related_cpus, cpu_possible_mask);
 		cpumask_copy(policy->cpus, cpu_online_mask);
 	} else {
+		policy->shared_type = CPUFREQ_SHARED_TYPE_ANY;
 		cpumask_setall(policy->cpus);
 	}
 

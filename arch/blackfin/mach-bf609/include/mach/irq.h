@@ -9,9 +9,6 @@
 
 #include <mach-common/irq.h>
 
-#undef BFIN_IRQ
-#define BFIN_IRQ(x) ((x) + IVG15)
-
 #define NR_PERI_INTS		(5 * 32)
 
 #define IRQ_SEC_ERR		BFIN_IRQ(0)	/* SEC Error */
@@ -293,8 +290,12 @@
 
 #define NR_MACH_IRQS		(IRQ_PG15 + 1)
 
+#define SEC_SCTL_PRIO_OFFSET	8
+
 #ifndef __ASSEMBLY__
 #include <linux/types.h>
+
+extern u8 sec_int_priority[];
 
 /*
  * bfin pint registers layout

@@ -36,6 +36,7 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/namei.h>
+#include <linux/random.h>
 #include <net/ipv6.h>
 #include "cifsfs.h"
 #include "cifspdu.h"
@@ -48,10 +49,11 @@
 #include <linux/key-type.h>
 #include "cifs_spnego.h"
 #include "fscache.h"
-#define CIFS_MAGIC_NUMBER 0xFF534D42	/* the first four bytes of SMB PDUs */
+#ifdef CONFIG_CIFS_SMB2
+#include "smb2pdu.h"
+#endif
 
 int cifsFYI = 0;
-int cifsERROR = 1;
 int traceSMB = 0;
 bool enable_oplocks = true;
 unsigned int linuxExtEnabled = 1;
@@ -61,30 +63,33 @@ unsigned int global_secflags = CIFSSEC_DEF;
 unsigned int sign_CIFS_PDUs = 1;
 static const struct super_operations cifs_super_ops;
 unsigned int CIFSMaxBufSize = CIFS_MAX_MSGSIZE;
-module_param(CIFSMaxBufSize, int, 0);
+module_param(CIFSMaxBufSize, uint, 0);
 MODULE_PARM_DESC(CIFSMaxBufSize, "Network buffer size (not including header). "
 				 "Default: 16384 Range: 8192 to 130048");
 unsigned int cifs_min_rcv = CIFS_MIN_RCV_POOL;
-module_param(cifs_min_rcv, int, 0);
+module_param(cifs_min_rcv, uint, 0);
 MODULE_PARM_DESC(cifs_min_rcv, "Network buffers in pool. Default: 4 Range: "
 				"1 to 64");
 unsigned int cifs_min_small = 30;
-module_param(cifs_min_small, int, 0);
+module_param(cifs_min_small, uint, 0);
 MODULE_PARM_DESC(cifs_min_small, "Small network buffers in pool. Default: 30 "
 				 "Range: 2 to 256");
 unsigned int cifs_max_pending = CIFS_MAX_REQ;
-module_param(cifs_max_pending, int, 0444);
+module_param(cifs_max_pending, uint, 0444);
 MODULE_PARM_DESC(cifs_max_pending, "Simultaneous requests to server. "
 				   "Default: 32767 Range: 2 to 32767.");
 module_param(enable_oplocks, bool, 0644);
-MODULE_PARM_DESC(enable_oplocks, "Enable or disable oplocks (bool). Default:"
-				 "y/Y/1");
+MODULE_PARM_DESC(enable_oplocks, "Enable or disable oplocks. Default: y/Y/1");
 
 extern mempool_t *cifs_sm_req_poolp;
 extern mempool_t *cifs_req_poolp;
 extern mempool_t *cifs_mid_poolp;
 
 struct workqueue_struct	*cifsiod_wq;
+
+#ifdef CONFIG_CIFS_SMB2
+__u8 cifs_client_guid[SMB2_CLIENT_GUID_SIZE];
+#endif
 
 static int
 cifs_read_super(struct super_block *sb)
@@ -157,12 +162,11 @@ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct super_block *sb = dentry->d_sb;
 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
 	struct cifs_tcon *tcon = cifs_sb_master_tcon(cifs_sb);
-	int rc = -EOPNOTSUPP;
-	int xid;
+	struct TCP_Server_Info *server = tcon->ses->server;
+	unsigned int xid;
+	int rc = 0;
 
-	xid = GetXid();
-
-	buf->f_type = CIFS_MAGIC_NUMBER;
+	xid = get_xid();
 
 	/*
 	 * PATH_MAX may be too long - it would presumably be total path,
@@ -175,29 +179,10 @@ cifs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_files = 0;	/* undefined */
 	buf->f_ffree = 0;	/* unlimited */
 
-	/*
-	 * We could add a second check for a QFS Unix capability bit
-	 */
-	if ((tcon->ses->capabilities & CAP_UNIX) &&
-	    (CIFS_POSIX_EXTENSIONS & le64_to_cpu(tcon->fsUnixInfo.Capability)))
-		rc = CIFSSMBQFSPosixInfo(xid, tcon, buf);
+	if (server->ops->queryfs)
+		rc = server->ops->queryfs(xid, tcon, buf);
 
-	/*
-	 * Only need to call the old QFSInfo if failed on newer one,
-	 * e.g. by OS/2.
-	 **/
-	if (rc && (tcon->ses->capabilities & CAP_NT_SMBS))
-		rc = CIFSSMBQFSInfo(xid, tcon, buf);
-
-	/*
-	 * Some old Windows servers also do not support level 103, retry with
-	 * older level one if old server failed the previous call or we
-	 * bypassed it because we detected that this was an older LANMAN sess
-	 */
-	if (rc)
-		rc = SMBOldQFSInfo(xid, tcon, buf);
-
-	FreeXid(xid);
+	free_xid(xid);
 	return 0;
 }
 
@@ -236,9 +221,10 @@ cifs_alloc_inode(struct super_block *sb)
 		return NULL;
 	cifs_inode->cifsAttrs = 0x20;	/* default */
 	cifs_inode->time = 0;
-	/* Until the file is open and we have gotten oplock
-	info back from the server, can not assume caching of
-	file data or metadata */
+	/*
+	 * Until the file is open and we have gotten oplock info back from the
+	 * server, can not assume caching of file data or metadata.
+	 */
 	cifs_set_oplock_level(cifs_inode, 0);
 	cifs_inode->delete_pending = false;
 	cifs_inode->invalid_mapping = false;
@@ -246,18 +232,22 @@ cifs_alloc_inode(struct super_block *sb)
 	cifs_inode->server_eof = 0;
 	cifs_inode->uniqueid = 0;
 	cifs_inode->createtime = 0;
-
-	/* Can not set i_flags here - they get immediately overwritten
-	   to zero by the VFS */
-/*	cifs_inode->vfs_inode.i_flags = S_NOATIME | S_NOCMTIME;*/
+#ifdef CONFIG_CIFS_SMB2
+	get_random_bytes(cifs_inode->lease_key, SMB2_LEASE_KEY_SIZE);
+#endif
+	/*
+	 * Can not set i_flags here - they get immediately overwritten to zero
+	 * by the VFS.
+	 */
+	/* cifs_inode->vfs_inode.i_flags = S_NOATIME | S_NOCMTIME; */
 	INIT_LIST_HEAD(&cifs_inode->openFileList);
+	INIT_LIST_HEAD(&cifs_inode->llist);
 	return &cifs_inode->vfs_inode;
 }
 
 static void cifs_i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
 	kmem_cache_free(cifs_inode_cachep, CIFS_I(inode));
 }
 
@@ -358,7 +348,8 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 	cifs_show_security(s, tcon->ses->server);
 	cifs_show_cache_flavor(s, cifs_sb);
 
-	seq_printf(s, ",unc=%s", tcon->treeName);
+	seq_printf(s, ",unc=");
+	seq_escape(s, tcon->treeName, " \t\n\\");
 
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MULTIUSER)
 		seq_printf(s, ",multiuser");
@@ -638,7 +629,10 @@ cifs_do_mount(struct file_system_type *fs_type,
 	mnt_data.cifs_sb = cifs_sb;
 	mnt_data.flags = flags;
 
-	sb = sget(fs_type, cifs_match_super, cifs_set_super, &mnt_data);
+	/* BB should we make this contingent on mount parm? */
+	flags |= MS_NODIRATIME | MS_NOATIME;
+
+	sb = sget(fs_type, cifs_match_super, cifs_set_super, flags, &mnt_data);
 	if (IS_ERR(sb)) {
 		root = ERR_CAST(sb);
 		cifs_umount(cifs_sb);
@@ -649,10 +643,6 @@ cifs_do_mount(struct file_system_type *fs_type,
 		cFYI(1, "Use existing superblock");
 		cifs_umount(cifs_sb);
 	} else {
-		sb->s_flags = flags;
-		/* BB should we make this contingent on mount parm? */
-		sb->s_flags |= MS_NODIRATIME | MS_NOATIME;
-
 		rc = cifs_read_super(sb);
 		if (rc) {
 			root = ERR_PTR(rc);
@@ -703,13 +693,13 @@ static ssize_t cifs_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	return written;
 }
 
-static loff_t cifs_llseek(struct file *file, loff_t offset, int origin)
+static loff_t cifs_llseek(struct file *file, loff_t offset, int whence)
 {
 	/*
-	 * origin == SEEK_END || SEEK_DATA || SEEK_HOLE => we must revalidate
+	 * whence == SEEK_END || SEEK_DATA || SEEK_HOLE => we must revalidate
 	 * the cached file length
 	 */
-	if (origin != SEEK_SET && origin != SEEK_CUR) {
+	if (whence != SEEK_SET && whence != SEEK_CUR) {
 		int rc;
 		struct inode *inode = file->f_path.dentry->d_inode;
 
@@ -736,7 +726,7 @@ static loff_t cifs_llseek(struct file *file, loff_t offset, int origin)
 		if (rc < 0)
 			return (loff_t)rc;
 	}
-	return generic_file_llseek(file, offset, origin);
+	return generic_file_llseek(file, offset, whence);
 }
 
 static int cifs_setlease(struct file *file, long arg, struct file_lock **lease)
@@ -778,6 +768,7 @@ struct file_system_type cifs_fs_type = {
 };
 const struct inode_operations cifs_dir_inode_ops = {
 	.create = cifs_create,
+	.atomic_open = cifs_atomic_open,
 	.lookup = cifs_lookup,
 	.getattr = cifs_getattr,
 	.unlink = cifs_unlink,
@@ -955,7 +946,7 @@ cifs_init_once(void *inode)
 	struct cifsInodeInfo *cifsi = inode;
 
 	inode_init_once(&cifsi->vfs_inode);
-	mutex_init(&cifsi->lock_mutex);
+	init_rwsem(&cifsi->lock_sem);
 }
 
 static int
@@ -975,12 +966,25 @@ cifs_init_inodecache(void)
 static void
 cifs_destroy_inodecache(void)
 {
+	/*
+	 * Make sure all delayed rcu free inodes are flushed before we
+	 * destroy cache.
+	 */
+	rcu_barrier();
 	kmem_cache_destroy(cifs_inode_cachep);
 }
 
 static int
 cifs_init_request_bufs(void)
 {
+	size_t max_hdr_size = MAX_CIFS_HDR_SIZE;
+#ifdef CONFIG_CIFS_SMB2
+	/*
+	 * SMB2 maximum header size is bigger than CIFS one - no problems to
+	 * allocate some more bytes for CIFS.
+	 */
+	max_hdr_size = MAX_SMB2_HDR_SIZE;
+#endif
 	if (CIFSMaxBufSize < 8192) {
 	/* Buffer size can not be smaller than 2 * PATH_MAX since maximum
 	Unicode path name has to fit in any SMB/CIFS path based frames */
@@ -992,8 +996,7 @@ cifs_init_request_bufs(void)
 	}
 /*	cERROR(1, "CIFSMaxBufSize %d 0x%x",CIFSMaxBufSize,CIFSMaxBufSize); */
 	cifs_req_cachep = kmem_cache_create("cifs_request",
-					    CIFSMaxBufSize +
-					    MAX_CIFS_HDR_SIZE, 0,
+					    CIFSMaxBufSize + max_hdr_size, 0,
 					    SLAB_HWCACHE_ALIGN, NULL);
 	if (cifs_req_cachep == NULL)
 		return -ENOMEM;
@@ -1118,6 +1121,10 @@ init_cifs(void)
 	spin_lock_init(&cifs_file_list_lock);
 	spin_lock_init(&GlobalMid_Lock);
 
+#ifdef CONFIG_CIFS_SMB2
+	get_random_bytes(cifs_client_guid, SMB2_CLIENT_GUID_SIZE);
+#endif
+
 	if (cifs_max_pending < 2) {
 		cifs_max_pending = 2;
 		cFYI(1, "cifs_max_pending set to min of 2");
@@ -1196,7 +1203,6 @@ exit_cifs(void)
 	unregister_filesystem(&cifs_fs_type);
 	cifs_dfs_release_automount_timer();
 #ifdef CONFIG_CIFS_ACL
-	cifs_destroy_idmaptrees();
 	exit_cifs_idmap();
 #endif
 #ifdef CONFIG_CIFS_UPCALL

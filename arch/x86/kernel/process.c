@@ -1,3 +1,5 @@
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
@@ -64,15 +66,13 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 {
 	int ret;
 
-	unlazy_fpu(src);
-
 	*dst = *src;
 	if (fpu_allocated(&src->thread.fpu)) {
 		memset(&dst->thread.fpu, 0, sizeof(dst->thread.fpu));
 		ret = fpu_alloc(&dst->thread.fpu);
 		if (ret)
 			return ret;
-		fpu_copy(&dst->thread.fpu, &src->thread.fpu);
+		fpu_copy(dst, src);
 	}
 	return 0;
 }
@@ -93,16 +93,6 @@ void arch_task_cache_init(void)
         	kmem_cache_create("task_xstate", xstate_size,
 				  __alignof__(union thread_xstate),
 				  SLAB_PANIC | SLAB_NOTRACK, NULL);
-}
-
-static inline void drop_fpu(struct task_struct *tsk)
-{
-	/*
-	 * Forget coprocessor state..
-	 */
-	tsk->fpu_counter = 0;
-	clear_fpu(tsk);
-	clear_used_math();
 }
 
 /*
@@ -145,16 +135,14 @@ void show_regs_common(void)
 	/* Board Name is optional */
 	board = dmi_get_system_info(DMI_BOARD_NAME);
 
-	printk(KERN_CONT "\n");
-	printk(KERN_DEFAULT "Pid: %d, comm: %.20s %s %s %.*s",
-		current->pid, current->comm, print_tainted(),
-		init_utsname()->release,
-		(int)strcspn(init_utsname()->version, " "),
-		init_utsname()->version);
-	printk(KERN_CONT " %s %s", vendor, product);
-	if (board)
-		printk(KERN_CONT "/%s", board);
-	printk(KERN_CONT "\n");
+	printk(KERN_DEFAULT "Pid: %d, comm: %.20s %s %s %.*s %s %s%s%s\n",
+	       current->pid, current->comm, print_tainted(),
+	       init_utsname()->release,
+	       (int)strcspn(init_utsname()->version, " "),
+	       init_utsname()->version,
+	       vendor, product,
+	       board ? "/" : "",
+	       board ? board : "");
 }
 
 void flush_thread(void)
@@ -163,7 +151,13 @@ void flush_thread(void)
 
 	flush_ptrace_hw_breakpoint(tsk);
 	memset(tsk->thread.tls_array, 0, sizeof(tsk->thread.tls_array));
-	drop_fpu(tsk);
+	drop_init_fpu(tsk);
+	/*
+	 * Free the FPU state for non xsave platforms. They get reallocated
+	 * lazily at the first use.
+	 */
+	if (!use_eager_fpu())
+		free_thread_xstate(tsk);
 }
 
 static void hard_disable_TSC(void)
@@ -268,101 +262,6 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 	propagate_user_return_notify(prev_p, next_p);
 }
 
-int sys_fork(struct pt_regs *regs)
-{
-	return do_fork(SIGCHLD, regs->sp, regs, 0, NULL, NULL);
-}
-
-/*
- * This is trivial, and on the face of it looks like it
- * could equally well be done in user mode.
- *
- * Not so, for quite unobvious reasons - register pressure.
- * In user mode vfork() cannot have a stack frame, and if
- * done by calling the "clone()" system call directly, you
- * do not have enough call-clobbered registers to hold all
- * the information you need.
- */
-int sys_vfork(struct pt_regs *regs)
-{
-	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, regs->sp, regs, 0,
-		       NULL, NULL);
-}
-
-long
-sys_clone(unsigned long clone_flags, unsigned long newsp,
-	  void __user *parent_tid, void __user *child_tid, struct pt_regs *regs)
-{
-	if (!newsp)
-		newsp = regs->sp;
-	return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
-}
-
-/*
- * This gets run with %si containing the
- * function to call, and %di containing
- * the "args".
- */
-extern void kernel_thread_helper(void);
-
-/*
- * Create a kernel thread
- */
-int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
-{
-	struct pt_regs regs;
-
-	memset(&regs, 0, sizeof(regs));
-
-	regs.si = (unsigned long) fn;
-	regs.di = (unsigned long) arg;
-
-#ifdef CONFIG_X86_32
-	regs.ds = __USER_DS;
-	regs.es = __USER_DS;
-	regs.fs = __KERNEL_PERCPU;
-	regs.gs = __KERNEL_STACK_CANARY;
-#else
-	regs.ss = __KERNEL_DS;
-#endif
-
-	regs.orig_ax = -1;
-	regs.ip = (unsigned long) kernel_thread_helper;
-	regs.cs = __KERNEL_CS | get_kernel_rpl();
-	regs.flags = X86_EFLAGS_IF | X86_EFLAGS_BIT1;
-
-	/* Ok, create the new process.. */
-	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
-}
-EXPORT_SYMBOL(kernel_thread);
-
-/*
- * sys_execve() executes a new program.
- */
-long sys_execve(const char __user *name,
-		const char __user *const __user *argv,
-		const char __user *const __user *envp, struct pt_regs *regs)
-{
-	long error;
-	char *filename;
-
-	filename = getname(name);
-	error = PTR_ERR(filename);
-	if (IS_ERR(filename))
-		return error;
-	error = do_execve(filename, argv, envp, regs);
-
-#ifdef CONFIG_X86_32
-	if (error == 0) {
-		/* Make sure we don't return using sysenter.. */
-                set_thread_flag(TIF_IRET);
-        }
-#endif
-
-	putname(filename);
-	return error;
-}
-
 /*
  * Idle related variables and functions
  */
@@ -376,11 +275,6 @@ void (*pm_idle)(void);
 #ifdef CONFIG_APM_MODULE
 EXPORT_SYMBOL(pm_idle);
 #endif
-
-static inline int hlt_use_halt(void)
-{
-	return 1;
-}
 
 #ifndef CONFIG_SMP
 static inline void play_dead(void)
@@ -481,28 +375,22 @@ void cpu_idle(void)
  */
 void default_idle(void)
 {
-	if (hlt_use_halt()) {
-		trace_power_start_rcuidle(POWER_CSTATE, 1, smp_processor_id());
-		trace_cpu_idle_rcuidle(1, smp_processor_id());
-		current_thread_info()->status &= ~TS_POLLING;
-		/*
-		 * TS_POLLING-cleared state must be visible before we
-		 * test NEED_RESCHED:
-		 */
-		smp_mb();
+	trace_power_start_rcuidle(POWER_CSTATE, 1, smp_processor_id());
+	trace_cpu_idle_rcuidle(1, smp_processor_id());
+	current_thread_info()->status &= ~TS_POLLING;
+	/*
+	 * TS_POLLING-cleared state must be visible before we
+	 * test NEED_RESCHED:
+	 */
+	smp_mb();
 
-		if (!need_resched())
-			safe_halt();	/* enables interrupts racelessly */
-		else
-			local_irq_enable();
-		current_thread_info()->status |= TS_POLLING;
-		trace_power_end_rcuidle(smp_processor_id());
-		trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, smp_processor_id());
-	} else {
+	if (!need_resched())
+		safe_halt();	/* enables interrupts racelessly */
+	else
 		local_irq_enable();
-		/* loop is done by the caller */
-		cpu_relax();
-	}
+	current_thread_info()->status |= TS_POLLING;
+	trace_power_end_rcuidle(smp_processor_id());
+	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, smp_processor_id());
 }
 #ifdef CONFIG_APM_MODULE
 EXPORT_SYMBOL(default_idle);
@@ -645,7 +533,7 @@ static void amd_e400_idle(void)
 			amd_e400_c1e_detected = true;
 			if (!boot_cpu_has(X86_FEATURE_NONSTOP_TSC))
 				mark_tsc_unstable("TSC halt in AMD C1E");
-			printk(KERN_INFO "System has AMD C1E enabled\n");
+			pr_info("System has AMD C1E enabled\n");
 		}
 	}
 
@@ -659,8 +547,7 @@ static void amd_e400_idle(void)
 			 */
 			clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_FORCE,
 					   &cpu);
-			printk(KERN_INFO "Switch to broadcast mode on CPU%d\n",
-			       cpu);
+			pr_info("Switch to broadcast mode on CPU%d\n", cpu);
 		}
 		clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_ENTER, &cpu);
 
@@ -681,8 +568,7 @@ void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c)
 {
 #ifdef CONFIG_SMP
 	if (pm_idle == poll_idle && smp_num_siblings > 1) {
-		printk_once(KERN_WARNING "WARNING: polling idle and HT enabled,"
-			" performance may degrade.\n");
+		pr_warn_once("WARNING: polling idle and HT enabled, performance may degrade\n");
 	}
 #endif
 	if (pm_idle)
@@ -692,11 +578,11 @@ void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c)
 		/*
 		 * One CPU supports mwait => All CPUs supports mwait
 		 */
-		printk(KERN_INFO "using mwait in idle threads.\n");
+		pr_info("using mwait in idle threads\n");
 		pm_idle = mwait_idle;
 	} else if (cpu_has_amd_erratum(amd_erratum_400)) {
 		/* E400: APIC timer interrupt does not wake up CPU from C1e */
-		printk(KERN_INFO "using AMD E400 aware idle routine\n");
+		pr_info("using AMD E400 aware idle routine\n");
 		pm_idle = amd_e400_idle;
 	} else
 		pm_idle = default_idle;
@@ -715,7 +601,7 @@ static int __init idle_setup(char *str)
 		return -EINVAL;
 
 	if (!strcmp(str, "poll")) {
-		printk("using polling idle threads.\n");
+		pr_info("using polling idle threads\n");
 		pm_idle = poll_idle;
 		boot_option_idle_override = IDLE_POLL;
 	} else if (!strcmp(str, "mwait")) {

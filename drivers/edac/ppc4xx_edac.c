@@ -727,10 +727,10 @@ ppc4xx_edac_handle_ce(struct mem_ctl_info *mci,
 
 	for (row = 0; row < mci->nr_csrows; row++)
 		if (ppc4xx_edac_check_bank_error(status, row))
-			edac_mc_handle_error(HW_EVENT_ERR_CORRECTED, mci,
+			edac_mc_handle_error(HW_EVENT_ERR_CORRECTED, mci, 1,
 					     0, 0, 0,
 					     row, 0, -1,
-					     message, "", NULL);
+					     message, "");
 }
 
 /**
@@ -758,10 +758,10 @@ ppc4xx_edac_handle_ue(struct mem_ctl_info *mci,
 
 	for (row = 0; row < mci->nr_csrows; row++)
 		if (ppc4xx_edac_check_bank_error(status, row))
-			edac_mc_handle_error(HW_EVENT_ERR_UNCORRECTED, mci,
+			edac_mc_handle_error(HW_EVENT_ERR_UNCORRECTED, mci, 1,
 					     page, offset, 0,
 					     row, 0, -1,
-					     message, "", NULL);
+					     message, "");
 }
 
 /**
@@ -838,8 +838,7 @@ ppc4xx_edac_isr(int irq, void *dev_id)
  *
  * Returns a device type width enumeration.
  */
-static enum dev_type __devinit
-ppc4xx_edac_get_dtype(u32 mcopt1)
+static enum dev_type ppc4xx_edac_get_dtype(u32 mcopt1)
 {
 	switch (mcopt1 & SDRAM_MCOPT1_WDTH_MASK) {
 	case SDRAM_MCOPT1_WDTH_16:
@@ -862,8 +861,7 @@ ppc4xx_edac_get_dtype(u32 mcopt1)
  *
  * Returns a memory type enumeration.
  */
-static enum mem_type __devinit
-ppc4xx_edac_get_mtype(u32 mcopt1)
+static enum mem_type ppc4xx_edac_get_mtype(u32 mcopt1)
 {
 	bool rden = ((mcopt1 & SDRAM_MCOPT1_RDEN_MASK) == SDRAM_MCOPT1_RDEN);
 
@@ -893,8 +891,7 @@ ppc4xx_edac_get_mtype(u32 mcopt1)
  * Returns 0 if OK; otherwise, -EINVAL if the memory bank size
  * configuration cannot be determined.
  */
-static int __devinit
-ppc4xx_edac_init_csrows(struct mem_ctl_info *mci, u32 mcopt1)
+static int ppc4xx_edac_init_csrows(struct mem_ctl_info *mci, u32 mcopt1)
 {
 	const struct ppc4xx_edac_pdata *pdata = mci->pvt_info;
 	int status = 0;
@@ -1011,11 +1008,9 @@ ppc4xx_edac_init_csrows(struct mem_ctl_info *mci, u32 mcopt1)
  *
  * Returns 0 if OK; otherwise, < 0 on error.
  */
-static int __devinit
-ppc4xx_edac_mc_init(struct mem_ctl_info *mci,
-		    struct platform_device *op,
-		    const dcr_host_t *dcr_host,
-		    u32 mcopt1)
+static int ppc4xx_edac_mc_init(struct mem_ctl_info *mci,
+			       struct platform_device *op,
+			       const dcr_host_t *dcr_host, u32 mcopt1)
 {
 	int status = 0;
 	const u32 memcheck = (mcopt1 & SDRAM_MCOPT1_MCHK_MASK);
@@ -1027,9 +1022,9 @@ ppc4xx_edac_mc_init(struct mem_ctl_info *mci,
 
 	/* Initial driver pointers and private data */
 
-	mci->dev		= &op->dev;
+	mci->pdev		= &op->dev;
 
-	dev_set_drvdata(mci->dev, mci);
+	dev_set_drvdata(mci->pdev, mci);
 
 	pdata			= mci->pvt_info;
 
@@ -1105,8 +1100,8 @@ ppc4xx_edac_mc_init(struct mem_ctl_info *mci,
  * Returns 0 if OK; otherwise, -ENODEV if the interrupts could not be
  * mapped and assigned.
  */
-static int __devinit
-ppc4xx_edac_register_irq(struct platform_device *op, struct mem_ctl_info *mci)
+static int ppc4xx_edac_register_irq(struct platform_device *op,
+				    struct mem_ctl_info *mci)
 {
 	int status = 0;
 	int ded_irq, sec_irq;
@@ -1183,8 +1178,8 @@ ppc4xx_edac_register_irq(struct platform_device *op, struct mem_ctl_info *mci)
  * Returns 0 if the DCRs were successfully mapped; otherwise, < 0 on
  * error.
  */
-static int __devinit
-ppc4xx_edac_map_dcrs(const struct device_node *np, dcr_host_t *dcr_host)
+static int ppc4xx_edac_map_dcrs(const struct device_node *np,
+				dcr_host_t *dcr_host)
 {
 	unsigned int dcr_base, dcr_len;
 
@@ -1232,7 +1227,7 @@ ppc4xx_edac_map_dcrs(const struct device_node *np, dcr_host_t *dcr_host)
  * Returns 0 if the controller instance was successfully bound to the
  * driver; otherwise, < 0 on error.
  */
-static int __devinit ppc4xx_edac_probe(struct platform_device *op)
+static int ppc4xx_edac_probe(struct platform_device *op)
 {
 	int status = 0;
 	u32 mcopt1, memcheck;
@@ -1334,7 +1329,7 @@ static int __devinit ppc4xx_edac_probe(struct platform_device *op)
 	return 0;
 
  fail1:
-	edac_mc_del_mc(mci->dev);
+	edac_mc_del_mc(mci->pdev);
 
  fail:
 	edac_mc_free(mci);
@@ -1368,7 +1363,7 @@ ppc4xx_edac_remove(struct platform_device *op)
 
 	dcr_unmap(pdata->dcr_host, SDRAM_DCR_RESOURCE_LEN);
 
-	edac_mc_del_mc(mci->dev);
+	edac_mc_del_mc(mci->pdev);
 	edac_mc_free(mci);
 
 	return 0;

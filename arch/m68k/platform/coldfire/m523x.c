@@ -19,28 +19,34 @@
 #include <asm/machdep.h>
 #include <asm/coldfire.h>
 #include <asm/mcfsim.h>
-#include <asm/mcfgpio.h>
+#include <asm/mcfclk.h>
 
 /***************************************************************************/
 
-struct mcf_gpio_chip mcf_gpio_chips[] = {
-	MCFGPS(PIRQ, 1, 7, MCFEPORT_EPDDR, MCFEPORT_EPDR, MCFEPORT_EPPDR),
-	MCFGPF(ADDR, 13, 3),
-	MCFGPF(DATAH, 16, 8),
-	MCFGPF(DATAL, 24, 8),
-	MCFGPF(BUSCTL, 32, 8),
-	MCFGPF(BS, 40, 4),
-	MCFGPF(CS, 49, 7),
-	MCFGPF(SDRAM, 56, 6),
-	MCFGPF(FECI2C, 64, 4),
-	MCFGPF(UARTH, 72, 2),
-	MCFGPF(UARTL, 80, 8),
-	MCFGPF(QSPI, 88, 5),
-	MCFGPF(TIMER, 96, 8),
-	MCFGPF(ETPU, 104, 3),
-};
+DEFINE_CLK(pll, "pll.0", MCF_CLK);
+DEFINE_CLK(sys, "sys.0", MCF_BUSCLK);
+DEFINE_CLK(mcfpit0, "mcfpit.0", MCF_CLK);
+DEFINE_CLK(mcfpit1, "mcfpit.1", MCF_CLK);
+DEFINE_CLK(mcfpit2, "mcfpit.2", MCF_CLK);
+DEFINE_CLK(mcfpit3, "mcfpit.3", MCF_CLK);
+DEFINE_CLK(mcfuart0, "mcfuart.0", MCF_BUSCLK);
+DEFINE_CLK(mcfuart1, "mcfuart.1", MCF_BUSCLK);
+DEFINE_CLK(mcfuart2, "mcfuart.2", MCF_BUSCLK);
+DEFINE_CLK(fec0, "fec.0", MCF_BUSCLK);
 
-unsigned int mcf_gpio_chips_size = ARRAY_SIZE(mcf_gpio_chips);
+struct clk *mcf_clks[] = {
+	&clk_pll,
+	&clk_sys,
+	&clk_mcfpit0,
+	&clk_mcfpit1,
+	&clk_mcfpit2,
+	&clk_mcfpit3,
+	&clk_mcfuart0,
+	&clk_mcfuart1,
+	&clk_mcfuart2,
+	&clk_fec0,
+	NULL
+};
 
 /***************************************************************************/
 
@@ -64,14 +70,8 @@ static void __init m523x_qspi_init(void)
 
 static void __init m523x_fec_init(void)
 {
-	u16 par;
-	u8 v;
-
 	/* Set multi-function pins to ethernet use */
-	par = readw(MCF_IPSBAR + 0x100082);
-	writew(par | 0xf00, MCF_IPSBAR + 0x100082);
-	v = readb(MCF_IPSBAR + 0x100078);
-	writeb(v | 0xc0, MCF_IPSBAR + 0x100078);
+	writeb(readb(MCFGPIO_PAR_FECI2C) | 0xf0, MCFGPIO_PAR_FECI2C);
 }
 
 /***************************************************************************/

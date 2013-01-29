@@ -163,7 +163,7 @@ int ipv6_sock_mc_join(struct sock *sk, int ifindex, const struct in6_addr *addr)
 		rt = rt6_lookup(net, addr, NULL, 0, 0);
 		if (rt) {
 			dev = rt->dst.dev;
-			dst_release(&rt->dst);
+			ip6_rt_put(rt);
 		}
 	} else
 		dev = dev_get_by_index_rcu(net, ifindex);
@@ -211,6 +211,9 @@ int ipv6_sock_mc_drop(struct sock *sk, int ifindex, const struct in6_addr *addr)
 	struct ipv6_mc_socklist __rcu **lnk;
 	struct net *net = sock_net(sk);
 
+	if (!ipv6_addr_is_multicast(addr))
+		return -EINVAL;
+
 	spin_lock(&ipv6_sk_mc_lock);
 	for (lnk = &np->ipv6_mc_list;
 	     (mc_lst = rcu_dereference_protected(*lnk,
@@ -257,7 +260,7 @@ static struct inet6_dev *ip6_mc_find_dev_rcu(struct net *net,
 
 		if (rt) {
 			dev = rt->dst.dev;
-			dst_release(&rt->dst);
+			ip6_rt_put(rt);
 		}
 	} else
 		dev = dev_get_by_index_rcu(net, ifindex);
@@ -280,6 +283,9 @@ void ipv6_sock_mc_close(struct sock *sk)
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct ipv6_mc_socklist *mc_lst;
 	struct net *net = sock_net(sk);
+
+	if (!rcu_access_pointer(np->ipv6_mc_list))
+		return;
 
 	spin_lock(&ipv6_sk_mc_lock);
 	while ((mc_lst = rcu_dereference_protected(np->ipv6_mc_list,

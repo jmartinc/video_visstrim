@@ -20,7 +20,7 @@
 #include <linux/mfd/core.h>
 #include <linux/mfd/tps6105x.h>
 
-static const int tps6105x_voltages[] = {
+static const unsigned int tps6105x_voltages[] = {
 	4500000,
 	5000000,
 	5250000,
@@ -105,22 +105,13 @@ static int tps6105x_regulator_set_voltage_sel(struct regulator_dev *rdev,
 	return 0;
 }
 
-static int tps6105x_regulator_list_voltage(struct regulator_dev *rdev,
-					   unsigned selector)
-{
-	if (selector >= ARRAY_SIZE(tps6105x_voltages))
-		return -EINVAL;
-
-	return tps6105x_voltages[selector];
-}
-
 static struct regulator_ops tps6105x_regulator_ops = {
 	.enable		= tps6105x_regulator_enable,
 	.disable	= tps6105x_regulator_disable,
 	.is_enabled	= tps6105x_regulator_is_enabled,
 	.get_voltage_sel = tps6105x_regulator_get_voltage_sel,
 	.set_voltage_sel = tps6105x_regulator_set_voltage_sel,
-	.list_voltage	= tps6105x_regulator_list_voltage,
+	.list_voltage	= regulator_list_voltage_table,
 };
 
 static const struct regulator_desc tps6105x_regulator_desc = {
@@ -130,12 +121,13 @@ static const struct regulator_desc tps6105x_regulator_desc = {
 	.id		= 0,
 	.owner		= THIS_MODULE,
 	.n_voltages	= ARRAY_SIZE(tps6105x_voltages),
+	.volt_table	= tps6105x_voltages,
 };
 
 /*
  * Registers the chip as a voltage regulator
  */
-static int __devinit tps6105x_regulator_probe(struct platform_device *pdev)
+static int tps6105x_regulator_probe(struct platform_device *pdev)
 {
 	struct tps6105x *tps6105x = dev_get_platdata(&pdev->dev);
 	struct tps6105x_platform_data *pdata = tps6105x->pdata;
@@ -167,7 +159,7 @@ static int __devinit tps6105x_regulator_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit tps6105x_regulator_remove(struct platform_device *pdev)
+static int tps6105x_regulator_remove(struct platform_device *pdev)
 {
 	struct tps6105x *tps6105x = dev_get_platdata(&pdev->dev);
 	regulator_unregister(tps6105x->regulator);
@@ -180,7 +172,7 @@ static struct platform_driver tps6105x_regulator_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = tps6105x_regulator_probe,
-	.remove = __devexit_p(tps6105x_regulator_remove),
+	.remove = tps6105x_regulator_remove,
 };
 
 static __init int tps6105x_regulator_init(void)

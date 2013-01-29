@@ -543,12 +543,12 @@ static void postproc_ep(struct isp1362_hcd *isp1362_hcd, struct isp1362_ep *ep)
 			    usb_pipein(urb->pipe) ? "IN" : "OUT", ep->nextpid,
 			    short_ok ? "" : "not_",
 			    PTD_GET_COUNT(ptd), ep->maxpacket, len);
+			/* save the data underrun error code for later and
+			 * proceed with the status stage
+			 */
+			urb->actual_length += PTD_GET_COUNT(ptd);
 			if (usb_pipecontrol(urb->pipe)) {
 				ep->nextpid = USB_PID_ACK;
-				/* save the data underrun error code for later and
-				 * proceed with the status stage
-				 */
-				urb->actual_length += PTD_GET_COUNT(ptd);
 				BUG_ON(urb->actual_length > urb->transfer_buffer_length);
 
 				if (urb->status == -EINPROGRESS)
@@ -2645,7 +2645,7 @@ static struct hc_driver isp1362_hc_driver = {
 
 /*-------------------------------------------------------------------------*/
 
-static int __devexit isp1362_remove(struct platform_device *pdev)
+static int isp1362_remove(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
 	struct isp1362_hcd *isp1362_hcd = hcd_to_isp1362_hcd(hcd);
@@ -2680,7 +2680,7 @@ static int __devexit isp1362_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit isp1362_probe(struct platform_device *pdev)
+static int isp1362_probe(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd;
 	struct isp1362_hcd *isp1362_hcd;
@@ -2856,7 +2856,7 @@ static int isp1362_resume(struct platform_device *pdev)
 
 static struct platform_driver isp1362_driver = {
 	.probe = isp1362_probe,
-	.remove = __devexit_p(isp1362_remove),
+	.remove = isp1362_remove,
 
 	.suspend = isp1362_suspend,
 	.resume = isp1362_resume,

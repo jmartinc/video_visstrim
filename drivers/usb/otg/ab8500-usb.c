@@ -468,7 +468,7 @@ static int ab8500_usb_v2_res_setup(struct platform_device *pdev,
 	return 0;
 }
 
-static int __devinit ab8500_usb_probe(struct platform_device *pdev)
+static int ab8500_usb_probe(struct platform_device *pdev)
 {
 	struct ab8500_usb	*ab;
 	struct usb_otg		*otg;
@@ -529,7 +529,7 @@ static int __devinit ab8500_usb_probe(struct platform_device *pdev)
 	if (err < 0)
 		goto fail0;
 
-	err = usb_set_transceiver(&ab->phy);
+	err = usb_add_phy(&ab->phy, USB_PHY_TYPE_USB2);
 	if (err) {
 		dev_err(&pdev->dev, "Can't register transceiver\n");
 		goto fail1;
@@ -546,7 +546,7 @@ fail0:
 	return err;
 }
 
-static int __devexit ab8500_usb_remove(struct platform_device *pdev)
+static int ab8500_usb_remove(struct platform_device *pdev)
 {
 	struct ab8500_usb *ab = platform_get_drvdata(pdev);
 
@@ -556,7 +556,7 @@ static int __devexit ab8500_usb_remove(struct platform_device *pdev)
 
 	cancel_work_sync(&ab->phy_dis_work);
 
-	usb_set_transceiver(NULL);
+	usb_remove_phy(&ab->phy);
 
 	ab8500_usb_host_phy_dis(ab);
 	ab8500_usb_peri_phy_dis(ab);
@@ -571,7 +571,7 @@ static int __devexit ab8500_usb_remove(struct platform_device *pdev)
 
 static struct platform_driver ab8500_usb_driver = {
 	.probe		= ab8500_usb_probe,
-	.remove		= __devexit_p(ab8500_usb_remove),
+	.remove		= ab8500_usb_remove,
 	.driver		= {
 		.name	= "ab8500-usb",
 		.owner	= THIS_MODULE,

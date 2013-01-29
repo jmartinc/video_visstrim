@@ -19,8 +19,8 @@
 #include <linux/interrupt.h>
 #include <linux/ioctl.h>
 #include <linux/slab.h>
+#include <linux/platform_data/atmel.h>
 
-#include <mach/board.h>
 #include <mach/at91_rtt.h>
 #include <mach/cpu.h>
 
@@ -58,6 +58,7 @@ struct sam9_rtc {
 	struct rtc_device	*rtcdev;
 	u32			imr;
 	void __iomem		*gpbr;
+	int 			irq;
 };
 
 #define rtt_readl(rtc, field) \
@@ -288,11 +289,11 @@ static const struct rtc_class_ops at91_rtc_ops = {
 /*
  * Initialize and install RTC driver
  */
-static int __devinit at91_rtc_probe(struct platform_device *pdev)
+static int at91_rtc_probe(struct platform_device *pdev)
 {
 	struct resource	*r, *r_gpbr;
 	struct sam9_rtc	*rtc;
-	int		ret;
+	int		ret, irq;
 	u32		mr;
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -302,9 +303,17 @@ static int __devinit at91_rtc_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0) {
+		dev_err(&pdev->dev, "failed to get interrupt resource\n");
+		return irq;
+	}
+
 	rtc = kzalloc(sizeof *rtc, GFP_KERNEL);
 	if (!rtc)
 		return -ENOMEM;
+
+	rtc->irq = irq;
 
 	/* platform setup code should have handled this; sigh */
 	if (!device_can_wakeup(&pdev->dev))
@@ -345,11 +354,10 @@ static int __devinit at91_rtc_probe(struct platform_device *pdev)
 	}
 
 	/* register irq handler after we know what name we'll use */
-	ret = request_irq(AT91_ID_SYS, at91_rtc_interrupt,
-				IRQF_SHARED,
+	ret = request_irq(rtc->irq, at91_rtc_interrupt, IRQF_SHARED,
 				dev_name(&rtc->rtcdev->dev), rtc);
 	if (ret) {
-		dev_dbg(&pdev->dev, "can't share IRQ %d?\n", AT91_ID_SYS);
+		dev_dbg(&pdev->dev, "can't share IRQ %d?\n", rtc->irq);
 		rtc_device_unregister(rtc->rtcdev);
 		goto fail_register;
 	}
@@ -379,14 +387,14 @@ fail:
 /*
  * Disable and remove the RTC driver
  */
-static int __devexit at91_rtc_remove(struct platform_device *pdev)
+static int at91_rtc_remove(struct platform_device *pdev)
 {
 	struct sam9_rtc	*rtc = platform_get_drvdata(pdev);
 	u32		mr = rtt_readl(rtc, MR);
 
 	/* disable all interrupts */
 	rtt_writel(rtc, MR, mr & ~(AT91_RTT_ALMIEN | AT91_RTT_RTTINCIEN));
-	free_irq(AT91_ID_SYS, rtc);
+	free_irq(rtc->irq, rtc);
 
 	rtc_device_unregister(rtc->rtcdev);
 
@@ -423,7 +431,7 @@ static int at91_rtc_suspend(struct platform_device *pdev,
 	rtc->imr = mr & (AT91_RTT_ALMIEN | AT91_RTT_RTTINCIEN);
 	if (rtc->imr) {
 		if (device_may_wakeup(&pdev->dev) && (mr & AT91_RTT_ALMIEN)) {
-			enable_irq_wake(AT91_ID_SYS);
+			enable_irq_wake(rtc->irq);
 			/* don't let RTTINC cause wakeups */
 			if (mr & AT91_RTT_RTTINCIEN)
 				rtt_writel(rtc, MR, mr & ~AT91_RTT_RTTINCIEN);
@@ -441,7 +449,7 @@ static int at91_rtc_resume(struct platform_device *pdev)
 
 	if (rtc->imr) {
 		if (device_may_wakeup(&pdev->dev))
-			disable_irq_wake(AT91_ID_SYS);
+			disable_irq_wake(rtc->irq);
 		mr = rtt_readl(rtc, MR);
 		rtt_writel(rtc, MR, mr | rtc->imr);
 	}
@@ -455,7 +463,7 @@ static int at91_rtc_resume(struct platform_device *pdev)
 
 static struct platform_driver at91_rtc_driver = {
 	.probe		= at91_rtc_probe,
-	.remove		= __devexit_p(at91_rtc_remove),
+	.remove		= at91_rtc_remove,
 	.shutdown	= at91_rtc_shutdown,
 	.suspend	= at91_rtc_suspend,
 	.resume		= at91_rtc_resume,
@@ -465,18 +473,7 @@ static struct platform_driver at91_rtc_driver = {
 	},
 };
 
-static int __init at91_rtc_init(void)
-{
-	return platform_driver_register(&at91_rtc_driver);
-}
-module_init(at91_rtc_init);
-
-static void __exit at91_rtc_exit(void)
-{
-	platform_driver_unregister(&at91_rtc_driver);
-}
-module_exit(at91_rtc_exit);
-
+module_platform_driver(at91_rtc_driver);
 
 MODULE_AUTHOR("Michel Benoit");
 MODULE_DESCRIPTION("RTC driver for Atmel AT91SAM9x");

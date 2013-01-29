@@ -202,8 +202,11 @@ static struct resource physmap_flash_resource = {
 	.end	= 0x107fffff,
 };
 
+static const char *ar7_probe_types[] = { "ar7part", NULL };
+
 static struct physmap_flash_data physmap_flash_data = {
 	.width	= 2,
+	.part_probe_types = ar7_probe_types,
 };
 
 static struct platform_device physmap_flash = {
@@ -310,10 +313,10 @@ static void __init cpmac_get_mac(int instance, unsigned char *dev_addr)
 					&dev_addr[4], &dev_addr[5]) != 6) {
 			pr_warning("cannot parse mac address, "
 					"using random address\n");
-			random_ether_addr(dev_addr);
+			eth_random_addr(dev_addr);
 		}
 	} else
-		random_ether_addr(dev_addr);
+		eth_random_addr(dev_addr);
 }
 
 /*****************************************************************************

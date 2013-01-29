@@ -1,7 +1,7 @@
 /*
  * wm8962.c  --  WM8962 ALSA SoC Audio driver
  *
- * Copyright 2010 Wolfson Microelectronics plc
+ * Copyright 2010-2 Wolfson Microelectronics plc
  *
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
  *
@@ -2501,6 +2501,9 @@ static int wm8962_set_bias_level(struct snd_soc_codec *codec,
 		/* VMID 2*250k */
 		snd_soc_update_bits(codec, WM8962_PWR_MGMT_1,
 				    WM8962_VMID_SEL_MASK, 0x100);
+
+		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF)
+			msleep(100);
 		break;
 
 	case SND_SOC_BIAS_OFF:
@@ -2579,6 +2582,9 @@ static int wm8962_hw_params(struct snd_pcm_substream *substream,
 	snd_soc_update_bits(codec, WM8962_ADDITIONAL_CONTROL_3,
 			    WM8962_SAMPLE_RATE_INT_MODE |
 			    WM8962_SAMPLE_RATE_MASK, adctl3);
+
+	dev_dbg(codec->dev, "hw_params set BCLK %dHz LRCLK %dHz\n",
+		wm8962->bclk, wm8962->lrclk);
 
 	if (codec->dapm.bias_level == SND_SOC_BIAS_ON)
 		wm8962_configure_bclk(codec);
@@ -3582,8 +3588,8 @@ static const struct regmap_config wm8962_regmap = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
+static int wm8962_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8962_pdata *pdata = dev_get_platdata(&i2c->dev);
 	struct wm8962_priv *wm8962;
@@ -3604,7 +3610,7 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	for (i = 0; i < ARRAY_SIZE(wm8962->supplies); i++)
 		wm8962->supplies[i].supply = wm8962_supply_names[i];
 
-	ret = regulator_bulk_get(&i2c->dev, ARRAY_SIZE(wm8962->supplies),
+	ret = devm_regulator_bulk_get(&i2c->dev, ARRAY_SIZE(wm8962->supplies),
 				 wm8962->supplies);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to request supplies: %d\n", ret);
@@ -3615,10 +3621,10 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 				    wm8962->supplies);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to enable supplies: %d\n", ret);
-		goto err_get;
+		return ret;
 	}
 
-	wm8962->regmap = regmap_init_i2c(i2c, &wm8962_regmap);
+	wm8962->regmap = devm_regmap_init_i2c(i2c, &wm8962_regmap);
 	if (IS_ERR(wm8962->regmap)) {
 		ret = PTR_ERR(wm8962->regmap);
 		dev_err(&i2c->dev, "Failed to allocate regmap: %d\n", ret);
@@ -3635,20 +3641,20 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	ret = regmap_read(wm8962->regmap, WM8962_SOFTWARE_RESET, &reg);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to read ID register\n");
-		goto err_regmap;
+		goto err_enable;
 	}
 	if (reg != 0x6243) {
 		dev_err(&i2c->dev,
 			"Device is not a WM8962, ID %x != 0x6243\n", reg);
 		ret = -EINVAL;
-		goto err_regmap;
+		goto err_enable;
 	}
 
 	ret = regmap_read(wm8962->regmap, WM8962_RIGHT_INPUT_VOLUME, &reg);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to read device revision: %d\n",
 			ret);
-		goto err_regmap;
+		goto err_enable;
 	}
 
 	dev_info(&i2c->dev, "customer id %x revision %c\n",
@@ -3661,7 +3667,7 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	ret = wm8962_reset(wm8962);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to issue reset\n");
-		goto err_regmap;
+		goto err_enable;
 	}
 
 	if (pdata && pdata->in4_dc_measure) {
@@ -3680,30 +3686,22 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	ret = snd_soc_register_codec(&i2c->dev,
 				     &soc_codec_dev_wm8962, &wm8962_dai, 1);
 	if (ret < 0)
-		goto err_regmap;
+		goto err_enable;
 
 	/* The drivers should power up as needed */
 	regulator_bulk_disable(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
 
 	return 0;
 
-err_regmap:
-	regmap_exit(wm8962->regmap);
 err_enable:
 	regulator_bulk_disable(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
-err_get:
-	regulator_bulk_free(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
 err:
 	return ret;
 }
 
-static __devexit int wm8962_i2c_remove(struct i2c_client *client)
+static int wm8962_i2c_remove(struct i2c_client *client)
 {
-	struct wm8962_priv *wm8962 = dev_get_drvdata(&client->dev);
-
 	snd_soc_unregister_codec(&client->dev);
-	regmap_exit(wm8962->regmap);
-	regulator_bulk_free(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
 	return 0;
 }
 
@@ -3722,22 +3720,10 @@ static int wm8962_runtime_resume(struct device *dev)
 	}
 
 	regcache_cache_only(wm8962->regmap, false);
+
+	wm8962_reset(wm8962);
+
 	regcache_sync(wm8962->regmap);
-
-	regmap_update_bits(wm8962->regmap, WM8962_ANTI_POP,
-			   WM8962_STARTUP_BIAS_ENA | WM8962_VMID_BUF_ENA,
-			   WM8962_STARTUP_BIAS_ENA | WM8962_VMID_BUF_ENA);
-
-	/* Bias enable at 2*50k for ramp */
-	regmap_update_bits(wm8962->regmap, WM8962_PWR_MGMT_1,
-			   WM8962_VMID_SEL_MASK | WM8962_BIAS_ENA,
-			   WM8962_BIAS_ENA | 0x180);
-
-	msleep(5);
-
-	/* VMID back to 2x250k for standby */
-	regmap_update_bits(wm8962->regmap, WM8962_PWR_MGMT_1,
-			   WM8962_VMID_SEL_MASK, 0x100);
 
 	return 0;
 }
@@ -3779,7 +3765,7 @@ static struct i2c_driver wm8962_i2c_driver = {
 		.pm = &wm8962_pm,
 	},
 	.probe =    wm8962_i2c_probe,
-	.remove =   __devexit_p(wm8962_i2c_remove),
+	.remove =   wm8962_i2c_remove,
 	.id_table = wm8962_i2c_id,
 };
 

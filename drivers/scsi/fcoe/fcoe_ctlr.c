@@ -788,11 +788,11 @@ static unsigned long fcoe_ctlr_age_fcfs(struct fcoe_ctlr *fip)
 	unsigned long deadline;
 	unsigned long sel_time = 0;
 	struct list_head del_list;
-	struct fcoe_dev_stats *stats;
+	struct fc_stats *stats;
 
 	INIT_LIST_HEAD(&del_list);
 
-	stats = per_cpu_ptr(fip->lp->dev_stats, get_cpu());
+	stats = per_cpu_ptr(fip->lp->stats, get_cpu());
 
 	list_for_each_entry_safe(fcf, next, &fip->fcfs, list) {
 		deadline = fcf->time + fcf->fka_period + fcf->fka_period / 2;
@@ -1104,8 +1104,8 @@ static void fcoe_ctlr_recv_els(struct fcoe_ctlr *fip, struct sk_buff *skb)
 	struct fc_frame_header *fh = NULL;
 	struct fip_desc *desc;
 	struct fip_encaps *els;
-	struct fcoe_dev_stats *stats;
 	struct fcoe_fcf *sel;
+	struct fc_stats *stats;
 	enum fip_desc_type els_dtype = 0;
 	u8 els_op;
 	u8 sub;
@@ -1249,7 +1249,7 @@ static void fcoe_ctlr_recv_els(struct fcoe_ctlr *fip, struct sk_buff *skb)
 	fr_dev(fp) = lport;
 	fr_encaps(fp) = els_dtype;
 
-	stats = per_cpu_ptr(lport->dev_stats, get_cpu());
+	stats = per_cpu_ptr(lport->stats, get_cpu());
 	stats->RxFrames++;
 	stats->RxWords += skb->len / FIP_BPW;
 	put_cpu();
@@ -1353,7 +1353,7 @@ static void fcoe_ctlr_recv_clr_vlink(struct fcoe_ctlr *fip,
 						      ntoh24(vp->fd_fc_id));
 			if (vn_port && (vn_port == lport)) {
 				mutex_lock(&fip->ctlr_mutex);
-				per_cpu_ptr(lport->dev_stats,
+				per_cpu_ptr(lport->stats,
 					    get_cpu())->VLinkFailureCount++;
 				put_cpu();
 				fcoe_ctlr_reset(fip);
@@ -1383,8 +1383,7 @@ static void fcoe_ctlr_recv_clr_vlink(struct fcoe_ctlr *fip,
 		 * followed by physical port
 		 */
 		mutex_lock(&fip->ctlr_mutex);
-		per_cpu_ptr(lport->dev_stats,
-			    get_cpu())->VLinkFailureCount++;
+		per_cpu_ptr(lport->stats, get_cpu())->VLinkFailureCount++;
 		put_cpu();
 		fcoe_ctlr_reset(fip);
 		mutex_unlock(&fip->ctlr_mutex);
@@ -2145,7 +2144,7 @@ static void fcoe_ctlr_vn_restart(struct fcoe_ctlr *fip)
 	 */
 	port_id = fip->port_id;
 	if (fip->probe_tries)
-		port_id = prandom32(&fip->rnd_state) & 0xffff;
+		port_id = prandom_u32_state(&fip->rnd_state) & 0xffff;
 	else if (!port_id)
 		port_id = fip->lp->wwpn & 0xffff;
 	if (!port_id || port_id == 0xffff)
@@ -2170,7 +2169,7 @@ static void fcoe_ctlr_vn_restart(struct fcoe_ctlr *fip)
 static void fcoe_ctlr_vn_start(struct fcoe_ctlr *fip)
 {
 	fip->probe_tries = 0;
-	prandom32_seed(&fip->rnd_state, fip->lp->wwpn);
+	prandom_seed_state(&fip->rnd_state, fip->lp->wwpn);
 	fcoe_ctlr_vn_restart(fip);
 }
 

@@ -89,9 +89,12 @@ static int ad5398_set_current_limit(struct regulator_dev *rdev, int min_uA, int 
 	unsigned short data;
 	int ret;
 
-	if (min_uA > chip->max_uA || min_uA < chip->min_uA)
-		return -EINVAL;
-	if (max_uA > chip->max_uA || max_uA < chip->min_uA)
+	if (min_uA < chip->min_uA)
+		min_uA = chip->min_uA;
+	if (max_uA > chip->max_uA)
+		max_uA = chip->max_uA;
+
+	if (min_uA > chip->max_uA || max_uA < chip->min_uA)
 		return -EINVAL;
 
 	selector = DIV_ROUND_UP((min_uA - chip->min_uA) * chip->current_level,
@@ -208,7 +211,7 @@ static const struct i2c_device_id ad5398_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, ad5398_id);
 
-static int __devinit ad5398_probe(struct i2c_client *client,
+static int ad5398_probe(struct i2c_client *client,
 				const struct i2c_device_id *id)
 {
 	struct regulator_init_data *init_data = client->dev.platform_data;
@@ -253,7 +256,7 @@ err:
 	return ret;
 }
 
-static int __devexit ad5398_remove(struct i2c_client *client)
+static int ad5398_remove(struct i2c_client *client)
 {
 	struct ad5398_chip_info *chip = i2c_get_clientdata(client);
 
@@ -263,7 +266,7 @@ static int __devexit ad5398_remove(struct i2c_client *client)
 
 static struct i2c_driver ad5398_driver = {
 	.probe = ad5398_probe,
-	.remove = __devexit_p(ad5398_remove),
+	.remove = ad5398_remove,
 	.driver		= {
 		.name	= "ad5398",
 	},

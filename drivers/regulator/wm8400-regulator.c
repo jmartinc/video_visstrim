@@ -28,34 +28,26 @@ static int wm8400_ldo_list_voltage(struct regulator_dev *dev,
 	if (selector < 15)
 		return 900000 + (selector * 50000);
 	else
-		return 1600000 + ((selector - 14) * 100000);
+		return 1700000 + ((selector - 15) * 100000);
 }
 
 static int wm8400_ldo_map_voltage(struct regulator_dev *dev,
 				  int min_uV, int max_uV)
 {
 	u16 val;
+	int volt;
 
 	if (min_uV < 900000 || min_uV > 3300000)
 		return -EINVAL;
 
-	if (min_uV < 1700000) {
-		/* Steps of 50mV from 900mV;  */
+	if (min_uV < 1700000) /* Steps of 50mV from 900mV;  */
 		val = DIV_ROUND_UP(min_uV - 900000, 50000);
+	else /* Steps of 100mV from 1700mV */
+		val = DIV_ROUND_UP(min_uV - 1700000, 100000) + 15;
 
-		if ((val * 50000) + 900000 > max_uV)
-			return -EINVAL;
-		BUG_ON((val * 50000) + 900000 < min_uV);
-	} else {
-		/* Steps of 100mV from 1700mV */
-		val = DIV_ROUND_UP(min_uV - 1700000, 100000);
-
-		if ((val * 100000) + 1700000 > max_uV)
-			return -EINVAL;
-		BUG_ON((val * 100000) + 1700000 < min_uV);
-
-		val += 0xf;
-	}
+	volt = wm8400_ldo_list_voltage(dev, val);
+	if (volt < min_uV || volt > max_uV)
+		return -EINVAL;
 
 	return val;
 }
@@ -128,13 +120,8 @@ static int wm8400_dcdc_set_mode(struct regulator_dev *dev, unsigned int mode)
 
 	case REGULATOR_MODE_IDLE:
 		/* Datasheet: standby */
-		ret = wm8400_set_bits(wm8400, WM8400_DCDC1_CONTROL_1 + offset,
-				      WM8400_DC1_ACTIVE, 0);
-		if (ret != 0)
-			return ret;
 		return wm8400_set_bits(wm8400, WM8400_DCDC1_CONTROL_1 + offset,
-				       WM8400_DC1_SLEEP, 0);
-
+				       WM8400_DC1_ACTIVE | WM8400_DC1_SLEEP, 0);
 	default:
 		return -EINVAL;
 	}
@@ -152,6 +139,7 @@ static struct regulator_ops wm8400_dcdc_ops = {
 	.enable = regulator_enable_regmap,
 	.disable = regulator_disable_regmap,
 	.list_voltage = regulator_list_voltage_linear,
+	.map_voltage = regulator_map_voltage_linear,
 	.get_voltage_sel = regulator_get_voltage_sel_regmap,
 	.set_voltage_sel = regulator_set_voltage_sel_regmap,
 	.get_mode = wm8400_dcdc_get_mode,
@@ -238,7 +226,7 @@ static struct regulator_desc regulators[] = {
 	},
 };
 
-static int __devinit wm8400_regulator_probe(struct platform_device *pdev)
+static int wm8400_regulator_probe(struct platform_device *pdev)
 {
 	struct wm8400 *wm8400 = container_of(pdev, struct wm8400, regulators[pdev->id]);
 	struct regulator_config config = { };
@@ -258,7 +246,7 @@ static int __devinit wm8400_regulator_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit wm8400_regulator_remove(struct platform_device *pdev)
+static int wm8400_regulator_remove(struct platform_device *pdev)
 {
 	struct regulator_dev *rdev = platform_get_drvdata(pdev);
 
@@ -273,7 +261,7 @@ static struct platform_driver wm8400_regulator_driver = {
 		.name = "wm8400-regulator",
 	},
 	.probe = wm8400_regulator_probe,
-	.remove = __devexit_p(wm8400_regulator_remove),
+	.remove = wm8400_regulator_remove,
 };
 
 /**

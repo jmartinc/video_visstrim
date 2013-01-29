@@ -29,10 +29,9 @@
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
 #include <linux/export.h>
-#include "drmP.h"
-#include "drm.h"
+#include <drm/drmP.h>
 #include "intel_drv.h"
-#include "i915_drm.h"
+#include <drm/i915_drm.h>
 #include "i915_drv.h"
 
 struct gmbus_port {
@@ -433,7 +432,7 @@ timeout:
 	I915_WRITE(GMBUS0 + reg_offset, 0);
 
 	/* Hardware may not support GMBUS over these pins? Try GPIO bitbanging instead. */
-	bus->force_bit = true;
+	bus->force_bit = 1;
 	ret = i2c_bit_algo.master_xfer(adapter, msgs, num);
 
 out:
@@ -486,18 +485,19 @@ int intel_setup_gmbus(struct drm_device *dev)
 		bus->dev_priv = dev_priv;
 
 		bus->adapter.algo = &gmbus_algorithm;
-		ret = i2c_add_adapter(&bus->adapter);
-		if (ret)
-			goto err;
 
 		/* By default use a conservative clock rate */
 		bus->reg0 = port | GMBUS_RATE_100KHZ;
 
 		/* gmbus seems to be broken on i830 */
 		if (IS_I830(dev))
-			bus->force_bit = true;
+			bus->force_bit = 1;
 
 		intel_gpio_setup(bus, port);
+
+		ret = i2c_add_adapter(&bus->adapter);
+		if (ret)
+			goto err;
 	}
 
 	intel_i2c_reset(dev_priv->dev);
@@ -532,16 +532,16 @@ void intel_gmbus_force_bit(struct i2c_adapter *adapter, bool force_bit)
 {
 	struct intel_gmbus *bus = to_intel_gmbus(adapter);
 
-	bus->force_bit = force_bit;
+	bus->force_bit += force_bit ? 1 : -1;
+	DRM_DEBUG_KMS("%sabling bit-banging on %s. force bit now %d\n",
+		      force_bit ? "en" : "dis", adapter->name,
+		      bus->force_bit);
 }
 
 void intel_teardown_gmbus(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	int i;
-
-	if (dev_priv->gmbus == NULL)
-		return;
 
 	for (i = 0; i < GMBUS_NUM_PORTS; i++) {
 		struct intel_gmbus *bus = &dev_priv->gmbus[i];

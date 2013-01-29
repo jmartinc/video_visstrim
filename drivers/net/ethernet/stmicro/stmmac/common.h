@@ -22,6 +22,9 @@
   Author: Giuseppe Cavallaro <peppe.cavallaro@st.com>
 *******************************************************************************/
 
+#ifndef __COMMON_H__
+#define __COMMON_H__
+
 #include <linux/etherdevice.h>
 #include <linux/netdevice.h>
 #include <linux/phy.h>
@@ -44,6 +47,10 @@
 #else
 #define CHIP_DBG(fmt, args...)  do { } while (0)
 #endif
+
+/* Synopsys Core versions */
+#define	DWMAC_CORE_3_40	0x34
+#define	DWMAC_CORE_3_50	0x35
 
 #undef FRAME_FILTER_DEBUG
 /* #define FRAME_FILTER_DEBUG */
@@ -78,7 +85,7 @@ struct stmmac_extra_stats {
 	unsigned long rx_missed_cntr;
 	unsigned long rx_overflow_cntr;
 	unsigned long rx_vlan;
-	/* Tx/Rx IRQ errors */
+	/* Tx/Rx IRQ error info */
 	unsigned long tx_undeflow_irq;
 	unsigned long tx_process_stopped_irq;
 	unsigned long tx_jabber_irq;
@@ -88,13 +95,28 @@ struct stmmac_extra_stats {
 	unsigned long rx_watchdog_irq;
 	unsigned long tx_early_irq;
 	unsigned long fatal_bus_error_irq;
-	/* Extra info */
+	/* Tx/Rx IRQ Events */
+	unsigned long rx_early_irq;
 	unsigned long threshold;
 	unsigned long tx_pkt_n;
 	unsigned long rx_pkt_n;
-	unsigned long poll_n;
-	unsigned long sched_timer_n;
 	unsigned long normal_irq_n;
+	unsigned long rx_normal_irq_n;
+	unsigned long napi_poll;
+	unsigned long tx_normal_irq_n;
+	unsigned long tx_clean;
+	unsigned long tx_reset_ic_bit;
+	unsigned long irq_receive_pmt_irq_n;
+	/* MMC info */
+	unsigned long mmc_tx_irq_n;
+	unsigned long mmc_rx_irq_n;
+	unsigned long mmc_rx_csum_offload_irq_n;
+	/* EEE */
+	unsigned long irq_tx_path_in_lpi_mode_n;
+	unsigned long irq_tx_path_exit_lpi_mode_n;
+	unsigned long irq_rx_path_in_lpi_mode_n;
+	unsigned long irq_rx_path_exit_lpi_mode_n;
+	unsigned long phy_eee_wakeup_error_n;
 };
 
 /* CSR Frequency Access Defines*/
@@ -149,6 +171,15 @@ struct stmmac_extra_stats {
 #define DMA_HW_FEAT_ACTPHYIF	0x70000000 /* Active/selected PHY interface */
 #define DEFAULT_DMA_PBL		8
 
+/* Max/Min RI Watchdog Timer count value */
+#define MAX_DMA_RIWT		0xff
+#define MIN_DMA_RIWT		0x20
+/* Tx coalesce parameters */
+#define STMMAC_COAL_TX_TIMER	40000
+#define STMMAC_MAX_COAL_TX_TICK	100000
+#define STMMAC_TX_MAX_FRAMES	256
+#define STMMAC_TX_FRAMES	64
+
 enum rx_frame_status { /* IPC status */
 	good_frame = 0,
 	discard_frame = 1,
@@ -156,10 +187,22 @@ enum rx_frame_status { /* IPC status */
 	llc_snap = 4,
 };
 
-enum tx_dma_irq_status {
-	tx_hard_error = 1,
-	tx_hard_error_bump_tc = 2,
-	handle_tx_rx = 3,
+enum dma_irq_status {
+	tx_hard_error = 0x1,
+	tx_hard_error_bump_tc = 0x2,
+	handle_rx = 0x4,
+	handle_tx = 0x8,
+};
+
+enum core_specific_irq_mask {
+	core_mmc_tx_irq = 1,
+	core_mmc_rx_irq = 2,
+	core_mmc_rx_csum_offload_irq = 4,
+	core_irq_receive_pmt_irq = 8,
+	core_irq_tx_path_in_lpi_mode = 16,
+	core_irq_tx_path_exit_lpi_mode = 32,
+	core_irq_rx_path_in_lpi_mode = 64,
+	core_irq_rx_path_exit_lpi_mode = 128,
 };
 
 /* DMA HW capabilities */
@@ -207,6 +250,10 @@ struct dma_features {
 #define MAC_CTRL_REG		0x00000000	/* MAC Control */
 #define MAC_ENABLE_TX		0x00000008	/* Transmitter Enable */
 #define MAC_RNABLE_RX		0x00000004	/* Receiver Enable */
+
+/* Default LPI timers */
+#define STMMAC_DEFAULT_LIT_LS_TIMER	0x3E8
+#define STMMAC_DEFAULT_TWT_LS_TIMER	0x0
 
 struct stmmac_desc_ops {
 	/* DMA RX descriptor ring initialization */
@@ -268,6 +315,8 @@ struct stmmac_dma_ops {
 			      struct stmmac_extra_stats *x);
 	/* If supported then get the optional core features */
 	unsigned int (*get_hw_feature) (void __iomem *ioaddr);
+	/* Program the HW RX Watchdog */
+	void (*rx_watchdog) (void __iomem *ioaddr, u32 riwt);
 };
 
 struct stmmac_ops {
@@ -278,7 +327,7 @@ struct stmmac_ops {
 	/* Dump MAC registers */
 	void (*dump_regs) (void __iomem *ioaddr);
 	/* Handle extra events on specific interrupts hw dependent */
-	void (*host_irq_status) (void __iomem *ioaddr);
+	int (*host_irq_status) (void __iomem *ioaddr);
 	/* Multicast filter setting */
 	void (*set_filter) (struct net_device *dev, int id);
 	/* Flow control setting */
@@ -291,6 +340,10 @@ struct stmmac_ops {
 			       unsigned int reg_n);
 	void (*get_umac_addr) (void __iomem *ioaddr, unsigned char *addr,
 			       unsigned int reg_n);
+	void (*set_eee_mode) (void __iomem *ioaddr);
+	void (*reset_eee_mode) (void __iomem *ioaddr);
+	void (*set_eee_timer) (void __iomem *ioaddr, int ls, int tw);
+	void (*set_eee_pls) (void __iomem *ioaddr, int link);
 };
 
 struct mac_link {
@@ -337,3 +390,5 @@ extern void stmmac_set_mac(void __iomem *ioaddr, bool enable);
 
 extern void dwmac_dma_flush_tx_fifo(void __iomem *ioaddr);
 extern const struct stmmac_ring_mode_ops ring_mode_ops;
+
+#endif /* __COMMON_H__ */

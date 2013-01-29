@@ -95,7 +95,7 @@ static inline u32 ltq_calc_bar11mask(void)
 	return bar11mask;
 }
 
-static int __devinit ltq_pci_startup(struct platform_device *pdev)
+static int ltq_pci_startup(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
 	const __be32 *req_mask, *bus_clk;
@@ -129,7 +129,7 @@ static int __devinit ltq_pci_startup(struct platform_device *pdev)
 
 	/* setup reset gpio used by pci */
 	reset_gpio = of_get_named_gpio(node, "gpio-reset", 0);
-	if (reset_gpio > 0)
+	if (gpio_is_valid(reset_gpio))
 		devm_gpio_request(&pdev->dev, reset_gpio, "pci-reset");
 
 	/* enable auto-switching between PCI and EBU */
@@ -192,7 +192,7 @@ static int __devinit ltq_pci_startup(struct platform_device *pdev)
 	ltq_ebu_w32(ltq_ebu_r32(LTQ_EBU_PCC_IEN) | 0x10, LTQ_EBU_PCC_IEN);
 
 	/* toggle reset pin */
-	if (reset_gpio > 0) {
+	if (gpio_is_valid(reset_gpio)) {
 		__gpio_set_value(reset_gpio, 0);
 		wmb();
 		mdelay(1);
@@ -201,7 +201,7 @@ static int __devinit ltq_pci_startup(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit ltq_pci_probe(struct platform_device *pdev)
+static int ltq_pci_probe(struct platform_device *pdev)
 {
 	struct resource *res_cfg, *res_bridge;
 

@@ -98,7 +98,7 @@ static struct snd_soc_card imx_mc13783 = {
 	.num_dapm_routes = ARRAY_SIZE(imx_mc13783_routes),
 };
 
-static int __devinit imx_mc13783_probe(struct platform_device *pdev)
+static int imx_mc13783_probe(struct platform_device *pdev)
 {
 	int ret;
 
@@ -111,27 +111,44 @@ static int __devinit imx_mc13783_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	imx_audmux_v2_configure_port(MX31_AUDMUX_PORT4_SSI_PINS_4,
-		IMX_AUDMUX_V2_PTCR_SYN,
-		IMX_AUDMUX_V2_PDCR_RXDSEL(MX31_AUDMUX_PORT1_SSI0) |
-		IMX_AUDMUX_V2_PDCR_MODE(1) |
-		IMX_AUDMUX_V2_PDCR_INMMASK(0xfc));
-	imx_audmux_v2_configure_port(MX31_AUDMUX_PORT1_SSI0,
-		IMX_AUDMUX_V2_PTCR_SYN |
-		IMX_AUDMUX_V2_PTCR_TFSDIR |
-		IMX_AUDMUX_V2_PTCR_TFSEL(MX31_AUDMUX_PORT4_SSI_PINS_4) |
-		IMX_AUDMUX_V2_PTCR_TCLKDIR |
-		IMX_AUDMUX_V2_PTCR_TCSEL(MX31_AUDMUX_PORT4_SSI_PINS_4) |
-		IMX_AUDMUX_V2_PTCR_RFSDIR |
-		IMX_AUDMUX_V2_PTCR_RFSEL(MX31_AUDMUX_PORT4_SSI_PINS_4) |
-		IMX_AUDMUX_V2_PTCR_RCLKDIR |
-		IMX_AUDMUX_V2_PTCR_RCSEL(MX31_AUDMUX_PORT4_SSI_PINS_4),
-		IMX_AUDMUX_V2_PDCR_RXDSEL(MX31_AUDMUX_PORT4_SSI_PINS_4));
+	if (machine_is_mx31_3ds()) {
+		imx_audmux_v2_configure_port(MX31_AUDMUX_PORT4_SSI_PINS_4,
+			IMX_AUDMUX_V2_PTCR_SYN,
+			IMX_AUDMUX_V2_PDCR_RXDSEL(MX31_AUDMUX_PORT1_SSI0) |
+			IMX_AUDMUX_V2_PDCR_MODE(1) |
+			IMX_AUDMUX_V2_PDCR_INMMASK(0xfc));
+		imx_audmux_v2_configure_port(MX31_AUDMUX_PORT1_SSI0,
+			IMX_AUDMUX_V2_PTCR_SYN |
+			IMX_AUDMUX_V2_PTCR_TFSDIR |
+			IMX_AUDMUX_V2_PTCR_TFSEL(MX31_AUDMUX_PORT4_SSI_PINS_4) |
+			IMX_AUDMUX_V2_PTCR_TCLKDIR |
+			IMX_AUDMUX_V2_PTCR_TCSEL(MX31_AUDMUX_PORT4_SSI_PINS_4) |
+			IMX_AUDMUX_V2_PTCR_RFSDIR |
+			IMX_AUDMUX_V2_PTCR_RFSEL(MX31_AUDMUX_PORT4_SSI_PINS_4) |
+			IMX_AUDMUX_V2_PTCR_RCLKDIR |
+			IMX_AUDMUX_V2_PTCR_RCSEL(MX31_AUDMUX_PORT4_SSI_PINS_4),
+			IMX_AUDMUX_V2_PDCR_RXDSEL(MX31_AUDMUX_PORT4_SSI_PINS_4));
+	} else if (machine_is_mx27_3ds()) {
+		imx_audmux_v1_configure_port(MX27_AUDMUX_HPCR1_SSI0,
+			IMX_AUDMUX_V1_PCR_SYN |
+			IMX_AUDMUX_V1_PCR_TFSDIR |
+			IMX_AUDMUX_V1_PCR_TCLKDIR |
+			IMX_AUDMUX_V1_PCR_RFSDIR |
+			IMX_AUDMUX_V1_PCR_RCLKDIR |
+			IMX_AUDMUX_V1_PCR_TFCSEL(MX27_AUDMUX_HPCR3_SSI_PINS_4) |
+			IMX_AUDMUX_V1_PCR_RFCSEL(MX27_AUDMUX_HPCR3_SSI_PINS_4) |
+			IMX_AUDMUX_V1_PCR_RXDSEL(MX27_AUDMUX_HPCR3_SSI_PINS_4)
+		);
+		imx_audmux_v1_configure_port(MX27_AUDMUX_HPCR3_SSI_PINS_4,
+			IMX_AUDMUX_V1_PCR_SYN |
+			IMX_AUDMUX_V1_PCR_RXDSEL(MX27_AUDMUX_HPCR1_SSI0)
+		);
+	}
 
 	return ret;
 }
 
-static int __devexit imx_mc13783_remove(struct platform_device *pdev)
+static int imx_mc13783_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_card(&imx_mc13783);
 
@@ -144,7 +161,7 @@ static struct platform_driver imx_mc13783_audio_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = imx_mc13783_probe,
-	.remove = __devexit_p(imx_mc13783_remove)
+	.remove = imx_mc13783_remove
 };
 
 module_platform_driver(imx_mc13783_audio_driver);

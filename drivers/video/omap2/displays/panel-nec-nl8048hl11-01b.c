@@ -76,6 +76,12 @@ static struct omap_video_timings nec_8048_panel_timings = {
 	.vfp		= 3,
 	.vsw		= 1,
 	.vbp		= 4,
+
+	.vsync_level	= OMAPDSS_SIG_ACTIVE_LOW,
+	.hsync_level	= OMAPDSS_SIG_ACTIVE_LOW,
+	.data_pclk_edge	= OMAPDSS_DRIVE_SIG_RISING_EDGE,
+	.de_level	= OMAPDSS_SIG_ACTIVE_HIGH,
+	.sync_pclk_edge	= OMAPDSS_DRIVE_SIG_RISING_EDGE,
 };
 
 static int nec_8048_bl_update_status(struct backlight_device *bl)
@@ -116,9 +122,6 @@ static int nec_8048_panel_probe(struct omap_dss_device *dssdev)
 	struct backlight_properties props;
 	int r;
 
-	dssdev->panel.config = OMAP_DSS_LCD_TFT | OMAP_DSS_LCD_IVS |
-				OMAP_DSS_LCD_IHS | OMAP_DSS_LCD_RF |
-				OMAP_DSS_LCD_ONOFF;
 	dssdev->panel.timings = nec_8048_panel_timings;
 
 	necd = kzalloc(sizeof(*necd), GFP_KERNEL);
@@ -171,6 +174,9 @@ static int nec_8048_panel_power_on(struct omap_dss_device *dssdev)
 
 	if (dssdev->state == OMAP_DSS_DISPLAY_ACTIVE)
 		return 0;
+
+	omapdss_dpi_set_timings(dssdev, &dssdev->panel.timings);
+	omapdss_dpi_set_data_lines(dssdev, dssdev->phy.dpi.data_lines);
 
 	r = omapdss_dpi_display_enable(dssdev);
 	if (r)
@@ -230,28 +236,6 @@ static void nec_8048_panel_disable(struct omap_dss_device *dssdev)
 	dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
 }
 
-static int nec_8048_panel_suspend(struct omap_dss_device *dssdev)
-{
-	nec_8048_panel_power_off(dssdev);
-
-	dssdev->state = OMAP_DSS_DISPLAY_SUSPENDED;
-
-	return 0;
-}
-
-static int nec_8048_panel_resume(struct omap_dss_device *dssdev)
-{
-	int r;
-
-	r = nec_8048_panel_power_on(dssdev);
-	if (r)
-		return r;
-
-	dssdev->state = OMAP_DSS_DISPLAY_ACTIVE;
-
-	return 0;
-}
-
 static int nec_8048_recommended_bpp(struct omap_dss_device *dssdev)
 {
 	return 16;
@@ -262,8 +246,6 @@ static struct omap_dss_driver nec_8048_driver = {
 	.remove			= nec_8048_panel_remove,
 	.enable			= nec_8048_panel_enable,
 	.disable		= nec_8048_panel_disable,
-	.suspend		= nec_8048_panel_suspend,
-	.resume			= nec_8048_panel_resume,
 	.get_recommended_bpp	= nec_8048_recommended_bpp,
 
 	.driver		= {
@@ -341,7 +323,7 @@ static int nec_8048_spi_resume(struct spi_device *spi)
 
 static struct spi_driver nec_8048_spi_driver = {
 	.probe		= nec_8048_spi_probe,
-	.remove		= __devexit_p(nec_8048_spi_remove),
+	.remove		= nec_8048_spi_remove,
 	.suspend	= nec_8048_spi_suspend,
 	.resume		= nec_8048_spi_resume,
 	.driver		= {

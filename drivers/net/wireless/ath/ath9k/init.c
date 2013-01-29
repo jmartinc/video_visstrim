@@ -23,6 +23,11 @@
 
 #include "ath9k.h"
 
+struct ath9k_eeprom_ctx {
+	struct completion complete;
+	struct ath_hw *ah;
+};
+
 static char *dev_info = "ath9k";
 
 MODULE_AUTHOR("Atheros Communications");
@@ -45,6 +50,10 @@ MODULE_PARM_DESC(blink, "Enable LED blink on activity");
 static int ath9k_btcoex_enable;
 module_param_named(btcoex_enable, ath9k_btcoex_enable, int, 0444);
 MODULE_PARM_DESC(btcoex_enable, "Enable wifi-BT coexistence");
+
+static int ath9k_enable_diversity;
+module_param_named(enable_diversity, ath9k_enable_diversity, int, 0444);
+MODULE_PARM_DESC(enable_diversity, "Enable Antenna diversity for AR9565");
 
 bool is_ath9k_unloaded;
 /* We use the hw_value as an index into our private channel structure */
@@ -258,7 +267,7 @@ static void setup_ht_cap(struct ath_softc *sc,
 	ht_info->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
 	ht_info->ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
 
-	if (AR_SREV_9330(ah) || AR_SREV_9485(ah))
+	if (AR_SREV_9330(ah) || AR_SREV_9485(ah) || AR_SREV_9565(ah))
 		max_streams = 1;
 	else if (AR_SREV_9462(ah))
 		max_streams = 2;
@@ -431,9 +440,10 @@ static int ath9k_init_queues(struct ath_softc *sc)
 	sc->config.cabqReadytime = ATH_CABQ_READY_TIME;
 	ath_cabq_update(sc);
 
-	for (i = 0; i < WME_NUM_AC; i++) {
+	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
 		sc->tx.txq_map[i] = ath_txq_setup(sc, ATH9K_TX_QUEUE_DATA, i);
 		sc->tx.txq_map[i]->mac80211_qnum = i;
+		sc->tx.txq_max_pending[i] = ATH_MAX_QDEPTH;
 	}
 	return 0;
 }
@@ -489,6 +499,7 @@ static void ath9k_init_misc(struct ath_softc *sc)
 
 	setup_timer(&common->ani.timer, ath_ani_calibrate, (unsigned long)sc);
 
+	sc->last_rssi = ATH_RSSI_DUMMY_MARKER;
 	sc->config.txpowlimit = ATH_TXPOWER_MAX;
 	memcpy(common->bssidmask, ath_bcast_mac, ETH_ALEN);
 	sc->beacon.slottime = ATH9K_SLOT_TIME_9;
@@ -498,6 +509,51 @@ static void ath9k_init_misc(struct ath_softc *sc)
 
 	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_ANT_DIV_COMB)
 		sc->ant_comb.count = ATH_ANT_DIV_COMB_INIT_COUNT;
+}
+
+static void ath9k_eeprom_request_cb(const struct firmware *eeprom_blob,
+				    void *ctx)
+{
+	struct ath9k_eeprom_ctx *ec = ctx;
+
+	if (eeprom_blob)
+		ec->ah->eeprom_blob = eeprom_blob;
+
+	complete(&ec->complete);
+}
+
+static int ath9k_eeprom_request(struct ath_softc *sc, const char *name)
+{
+	struct ath9k_eeprom_ctx ec;
+	struct ath_hw *ah = ah = sc->sc_ah;
+	int err;
+
+	/* try to load the EEPROM content asynchronously */
+	init_completion(&ec.complete);
+	ec.ah = sc->sc_ah;
+
+	err = request_firmware_nowait(THIS_MODULE, 1, name, sc->dev, GFP_KERNEL,
+				      &ec, ath9k_eeprom_request_cb);
+	if (err < 0) {
+		ath_err(ath9k_hw_common(ah),
+			"EEPROM request failed\n");
+		return err;
+	}
+
+	wait_for_completion(&ec.complete);
+
+	if (!ah->eeprom_blob) {
+		ath_err(ath9k_hw_common(ah),
+			"Unable to load EEPROM file %s\n", name);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static void ath9k_eeprom_release(struct ath_softc *sc)
+{
+	release_firmware(sc->sc_ah->eeprom_blob);
 }
 
 static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
@@ -544,21 +600,31 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	common->debug_mask = ath9k_debug;
 	common->btcoex_enabled = ath9k_btcoex_enable == 1;
 	common->disable_ani = false;
+
+	/*
+	 * Enable Antenna diversity only when BTCOEX is disabled
+	 * and the user manually requests the feature.
+	 */
+	if (!common->btcoex_enabled && ath9k_enable_diversity)
+		common->antenna_diversity = 1;
+
 	spin_lock_init(&common->cc_lock);
 
 	spin_lock_init(&sc->sc_serial_rw);
 	spin_lock_init(&sc->sc_pm_lock);
 	mutex_init(&sc->mutex);
-#ifdef CONFIG_ATH9K_DEBUGFS
-	spin_lock_init(&sc->nodes_lock);
-	INIT_LIST_HEAD(&sc->nodes);
-#endif
 #ifdef CONFIG_ATH9K_MAC_DEBUG
 	spin_lock_init(&sc->debug.samp_lock);
 #endif
 	tasklet_init(&sc->intr_tq, ath9k_tasklet, (unsigned long)sc);
-	tasklet_init(&sc->bcon_tasklet, ath_beacon_tasklet,
+	tasklet_init(&sc->bcon_tasklet, ath9k_beacon_tasklet,
 		     (unsigned long)sc);
+
+	INIT_WORK(&sc->hw_reset_work, ath_reset_work);
+	INIT_WORK(&sc->hw_check_work, ath_hw_check);
+	INIT_WORK(&sc->paprd_work, ath_paprd_calibrate);
+	INIT_DELAYED_WORK(&sc->hw_pll_work, ath_hw_pll_work);
+	setup_timer(&sc->rx_poll_timer, ath_rx_poll, (unsigned long)sc);
 
 	/*
 	 * Cache line size is used to size and align various
@@ -566,6 +632,12 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	 */
 	ath_read_cachesize(common, &csz);
 	common->cachelsz = csz << 2; /* convert to bytes */
+
+	if (pdata && pdata->eeprom_name) {
+		ret = ath9k_eeprom_request(sc, pdata->eeprom_name);
+		if (ret)
+			goto err_eeprom;
+	}
 
 	/* Initializes the hardware for all supported chipsets */
 	ret = ath9k_hw_init(ah);
@@ -589,6 +661,10 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 
 	ath9k_cmn_init_crypto(sc->sc_ah);
 	ath9k_init_misc(sc);
+	ath_fill_led_pin(sc);
+
+	if (common->bus_ops->aspm_init)
+		common->bus_ops->aspm_init(common);
 
 	return 0;
 
@@ -599,7 +675,8 @@ err_btcoex:
 err_queues:
 	ath9k_hw_deinit(ah);
 err_hw:
-
+	ath9k_eeprom_release(sc);
+err_eeprom:
 	kfree(ah);
 	sc->sc_ah = NULL;
 
@@ -663,6 +740,7 @@ static const struct ieee80211_iface_combination if_comb = {
 	.n_limits = ARRAY_SIZE(if_limits),
 	.max_interfaces = 2048,
 	.num_different_channels = 1,
+	.beacon_int_infra_match = true,
 };
 
 void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
@@ -702,6 +780,24 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 	hw->wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
 	hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS;
 	hw->wiphy->flags |= WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL;
+
+#ifdef CONFIG_PM_SLEEP
+
+	if ((ah->caps.hw_caps & ATH9K_HW_WOW_DEVICE_CAPABLE) &&
+	    device_can_wakeup(sc->dev)) {
+
+		hw->wiphy->wowlan.flags = WIPHY_WOWLAN_MAGIC_PKT |
+					  WIPHY_WOWLAN_DISCONNECT;
+		hw->wiphy->wowlan.n_patterns = MAX_NUM_USER_PATTERN;
+		hw->wiphy->wowlan.pattern_min_len = 1;
+		hw->wiphy->wowlan.pattern_max_len = MAX_PATTERN_SIZE;
+
+	}
+
+	atomic_set(&sc->wow_sleep_proc_intr, -1);
+	atomic_set(&sc->wow_got_bmiss_intr, -1);
+
+#endif
 
 	hw->queues = 4;
 	hw->max_rates = 4;
@@ -782,11 +878,6 @@ int ath9k_init_device(u16 devid, struct ath_softc *sc,
 		ARRAY_SIZE(ath9k_tpt_blink));
 #endif
 
-	INIT_WORK(&sc->hw_reset_work, ath_reset_work);
-	INIT_WORK(&sc->hw_check_work, ath_hw_check);
-	INIT_WORK(&sc->paprd_work, ath_paprd_calibrate);
-	INIT_DELAYED_WORK(&sc->hw_pll_work, ath_hw_pll_work);
-
 	/* Register with mac80211 */
 	error = ieee80211_register_hw(hw);
 	if (error)
@@ -804,9 +895,6 @@ int ath9k_init_device(u16 devid, struct ath_softc *sc,
 		if (error)
 			goto error_world;
 	}
-
-	setup_timer(&sc->rx_poll_timer, ath_rx_poll, (unsigned long)sc);
-	sc->last_rssi = ATH_RSSI_DUMMY_MARKER;
 
 	ath_init_leds(sc);
 	ath_start_rfkill_poll(sc);
@@ -851,6 +939,7 @@ static void ath9k_deinit_softc(struct ath_softc *sc)
 	if (sc->dfs_detector != NULL)
 		sc->dfs_detector->exit(sc->dfs_detector);
 
+	ath9k_eeprom_release(sc);
 	kfree(sc->sc_ah);
 	sc->sc_ah = NULL;
 }

@@ -250,10 +250,11 @@ cbq_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 			else if ((cl = defmap[res.classid & TC_PRIO_MAX]) == NULL)
 				cl = defmap[TC_PRIO_BESTEFFORT];
 
-			if (cl == NULL || cl->level >= head->level)
+			if (cl == NULL)
 				goto fallback;
 		}
-
+		if (cl->level >= head->level)
+			goto fallback;
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
 		case TC_ACT_QUEUED:
@@ -508,8 +509,7 @@ static void cbq_ovl_delay(struct cbq_class *cl)
 			cl->cpriority = TC_CBQ_MAXPRIO;
 			q->pmask |= (1<<TC_CBQ_MAXPRIO);
 
-			expires = ktime_set(0, 0);
-			expires = ktime_add_ns(expires, PSCHED_TICKS2NS(sched));
+			expires = ns_to_ktime(PSCHED_TICKS2NS(sched));
 			if (hrtimer_try_to_cancel(&q->delay_timer) &&
 			    ktime_to_ns(ktime_sub(
 					hrtimer_get_expires(&q->delay_timer),

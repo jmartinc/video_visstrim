@@ -117,7 +117,7 @@ static void psb_intel_crtc_commit(struct drm_crtc *crtc)
 }
 
 static bool psb_intel_crtc_mode_fixup(struct drm_crtc *crtc,
-				  struct drm_display_mode *mode,
+				  const struct drm_display_mode *mode,
 				  struct drm_display_mode *adjusted_mode)
 {
 	return true;
@@ -820,7 +820,7 @@ static int mdfld_crtc_mode_set(struct drm_crtc *crtc,
 	REG_WRITE(map->pos, 0);
 
 	if (psb_intel_encoder)
-		drm_connector_property_get_value(connector,
+		drm_object_property_get_value(&connector->base,
 			dev->mode_config.scaling_mode_property, &scalingType);
 
 	if (scalingType == DRM_MODE_SCALE_NO_SCALE) {

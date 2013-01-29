@@ -62,8 +62,8 @@ acpi_ex_store_object_to_index(union acpi_operand_object *val_desc,
  * FUNCTION:    acpi_ex_store
  *
  * PARAMETERS:  *source_desc        - Value to be stored
- *              *dest_desc          - Where to store it.  Must be an NS node
- *                                    or a union acpi_operand_object of type
+ *              *dest_desc          - Where to store it. Must be an NS node
+ *                                    or union acpi_operand_object of type
  *                                    Reference;
  *              walk_state          - Current walk state
  *
@@ -361,7 +361,7 @@ acpi_ex_store_object_to_index(union acpi_operand_object *source_desc,
  * FUNCTION:    acpi_ex_store_object_to_node
  *
  * PARAMETERS:  source_desc             - Value to be stored
- *              Node                    - Named object to receive the value
+ *              node                    - Named object to receive the value
  *              walk_state              - Current walk state
  *              implicit_conversion     - Perform implicit conversion (yes/no)
  *
@@ -374,7 +374,7 @@ acpi_ex_store_object_to_index(union acpi_operand_object *source_desc,
  *              with the input value.
  *
  *              When storing into an object the data is converted to the
- *              target object type then stored in the object.  This means
+ *              target object type then stored in the object. This means
  *              that the target object type (for an initialized target) will
  *              not be changed by a store operation.
  *
@@ -491,7 +491,7 @@ acpi_ex_store_object_to_node(union acpi_operand_object *source_desc,
 				  acpi_ut_get_object_type_name(source_desc),
 				  source_desc, node));
 
-		/* No conversions for all other types.  Just attach the source object */
+		/* No conversions for all other types. Just attach the source object */
 
 		status = acpi_ns_attach_object(node, source_desc,
 					       source_desc->common.type);

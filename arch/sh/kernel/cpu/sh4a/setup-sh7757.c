@@ -19,6 +19,7 @@
 #include <linux/sh_timer.h>
 #include <linux/sh_dma.h>
 #include <linux/sh_intc.h>
+#include <linux/usb/ohci_pdriver.h>
 #include <cpu/dma-register.h>
 #include <cpu/sh7757.h>
 
@@ -215,6 +216,20 @@ static const struct sh_dmae_slave_config sh7757_dmae1_slaves[] = {
 		.chcr		= DM_INC | 0x800 | 0x40000000 |
 				  TS_INDEX2VAL(XMIT_SZ_8BIT),
 		.mid_rid	= 0x42,
+	},
+	{
+		.slave_id	= SHDMA_SLAVE_RSPI_TX,
+		.addr		= 0xfe480004,
+		.chcr		= SM_INC | 0x800 | 0x40000000 |
+				  TS_INDEX2VAL(XMIT_SZ_16BIT),
+		.mid_rid	= 0xc1,
+	},
+	{
+		.slave_id	= SHDMA_SLAVE_RSPI_RX,
+		.addr		= 0xfe480004,
+		.chcr		= DM_INC | 0x800 | 0x40000000 |
+				  TS_INDEX2VAL(XMIT_SZ_16BIT),
+		.mid_rid	= 0xc2,
 	},
 };
 
@@ -736,12 +751,15 @@ static struct resource usb_ohci_resources[] = {
 	},
 };
 
+static struct usb_ohci_pdata usb_ohci_pdata;
+
 static struct platform_device usb_ohci_device = {
-	.name		= "sh_ohci",
+	.name		= "ohci-platform",
 	.id		= -1,
 	.dev = {
 		.dma_mask = &usb_ohci_device.dev.coherent_dma_mask,
 		.coherent_dma_mask = DMA_BIT_MASK(32),
+		.platform_data	= &usb_ohci_pdata,
 	},
 	.num_resources	= ARRAY_SIZE(usb_ohci_resources),
 	.resource	= usb_ohci_resources,

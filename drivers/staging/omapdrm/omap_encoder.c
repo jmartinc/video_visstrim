@@ -48,7 +48,7 @@ static void omap_encoder_dpms(struct drm_encoder *encoder, int mode)
 }
 
 static bool omap_encoder_mode_fixup(struct drm_encoder *encoder,
-				  struct drm_display_mode *mode,
+				  const struct drm_display_mode *mode,
 				  struct drm_display_mode *adjusted_mode)
 {
 	struct omap_encoder *omap_encoder = to_omap_encoder(encoder);
@@ -72,9 +72,9 @@ static void omap_encoder_mode_set(struct drm_encoder *encoder,
 
 	for (i = 0; i < priv->num_connectors; i++) {
 		struct drm_connector *connector = priv->connectors[i];
-		if (connector->encoder == encoder) {
+		if (connector->encoder == encoder)
 			omap_connector_mode_set(connector, mode);
-		}
+
 	}
 }
 
@@ -163,9 +163,8 @@ struct drm_encoder *omap_encoder_init(struct drm_device *dev,
 	return encoder;
 
 fail:
-	if (encoder) {
+	if (encoder)
 		omap_encoder_destroy(encoder);
-	}
 
 	return NULL;
 }

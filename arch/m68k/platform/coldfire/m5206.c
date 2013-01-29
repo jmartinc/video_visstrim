@@ -16,15 +16,26 @@
 #include <asm/machdep.h>
 #include <asm/coldfire.h>
 #include <asm/mcfsim.h>
-#include <asm/mcfgpio.h>
+#include <asm/mcfclk.h>
 
 /***************************************************************************/
 
-struct mcf_gpio_chip mcf_gpio_chips[] = {
-	MCFGPS(PP, 0, 8, MCFSIM_PADDR, MCFSIM_PADAT, MCFSIM_PADAT),
-};
+DEFINE_CLK(pll, "pll.0", MCF_CLK);
+DEFINE_CLK(sys, "sys.0", MCF_BUSCLK);
+DEFINE_CLK(mcftmr0, "mcftmr.0", MCF_BUSCLK);
+DEFINE_CLK(mcftmr1, "mcftmr.1", MCF_BUSCLK);
+DEFINE_CLK(mcfuart0, "mcfuart.0", MCF_BUSCLK);
+DEFINE_CLK(mcfuart1, "mcfuart.1", MCF_BUSCLK);
 
-unsigned int mcf_gpio_chips_size = ARRAY_SIZE(mcf_gpio_chips);
+struct clk *mcf_clks[] = {
+	&clk_pll,
+	&clk_sys,
+	&clk_mcftmr0,
+	&clk_mcftmr1,
+	&clk_mcfuart0,
+	&clk_mcfuart1,
+	NULL
+};
 
 /***************************************************************************/
 

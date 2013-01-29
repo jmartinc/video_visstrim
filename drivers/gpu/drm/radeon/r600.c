@@ -30,8 +30,8 @@
 #include <linux/firmware.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
-#include "drmP.h"
-#include "radeon_drm.h"
+#include <drm/drmP.h>
+#include <drm/radeon_drm.h>
 #include "radeon.h"
 #include "radeon_asic.h"
 #include "radeon_mode.h"
@@ -98,7 +98,7 @@ int r600_debugfs_mc_info_init(struct radeon_device *rdev);
 
 /* r600,rv610,rv630,rv620,rv635,rv670 */
 int r600_mc_wait_for_idle(struct radeon_device *rdev);
-void r600_gpu_init(struct radeon_device *rdev);
+static void r600_gpu_init(struct radeon_device *rdev);
 void r600_fini(struct radeon_device *rdev);
 void r600_irq_disable(struct radeon_device *rdev);
 static void r600_pcie_gen2_enable(struct radeon_device *rdev);
@@ -709,6 +709,7 @@ void r600_hpd_init(struct radeon_device *rdev)
 {
 	struct drm_device *dev = rdev->ddev;
 	struct drm_connector *connector;
+	unsigned enable = 0;
 
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
 		struct radeon_connector *radeon_connector = to_radeon_connector(connector);
@@ -729,28 +730,22 @@ void r600_hpd_init(struct radeon_device *rdev)
 			switch (radeon_connector->hpd.hpd) {
 			case RADEON_HPD_1:
 				WREG32(DC_HPD1_CONTROL, tmp);
-				rdev->irq.hpd[0] = true;
 				break;
 			case RADEON_HPD_2:
 				WREG32(DC_HPD2_CONTROL, tmp);
-				rdev->irq.hpd[1] = true;
 				break;
 			case RADEON_HPD_3:
 				WREG32(DC_HPD3_CONTROL, tmp);
-				rdev->irq.hpd[2] = true;
 				break;
 			case RADEON_HPD_4:
 				WREG32(DC_HPD4_CONTROL, tmp);
-				rdev->irq.hpd[3] = true;
 				break;
 				/* DCE 3.2 */
 			case RADEON_HPD_5:
 				WREG32(DC_HPD5_CONTROL, tmp);
-				rdev->irq.hpd[4] = true;
 				break;
 			case RADEON_HPD_6:
 				WREG32(DC_HPD6_CONTROL, tmp);
-				rdev->irq.hpd[5] = true;
 				break;
 			default:
 				break;
@@ -759,85 +754,73 @@ void r600_hpd_init(struct radeon_device *rdev)
 			switch (radeon_connector->hpd.hpd) {
 			case RADEON_HPD_1:
 				WREG32(DC_HOT_PLUG_DETECT1_CONTROL, DC_HOT_PLUG_DETECTx_EN);
-				rdev->irq.hpd[0] = true;
 				break;
 			case RADEON_HPD_2:
 				WREG32(DC_HOT_PLUG_DETECT2_CONTROL, DC_HOT_PLUG_DETECTx_EN);
-				rdev->irq.hpd[1] = true;
 				break;
 			case RADEON_HPD_3:
 				WREG32(DC_HOT_PLUG_DETECT3_CONTROL, DC_HOT_PLUG_DETECTx_EN);
-				rdev->irq.hpd[2] = true;
 				break;
 			default:
 				break;
 			}
 		}
+		enable |= 1 << radeon_connector->hpd.hpd;
 		radeon_hpd_set_polarity(rdev, radeon_connector->hpd.hpd);
 	}
-	if (rdev->irq.installed)
-		r600_irq_set(rdev);
+	radeon_irq_kms_enable_hpd(rdev, enable);
 }
 
 void r600_hpd_fini(struct radeon_device *rdev)
 {
 	struct drm_device *dev = rdev->ddev;
 	struct drm_connector *connector;
+	unsigned disable = 0;
 
-	if (ASIC_IS_DCE3(rdev)) {
-		list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
-			struct radeon_connector *radeon_connector = to_radeon_connector(connector);
+	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+		struct radeon_connector *radeon_connector = to_radeon_connector(connector);
+		if (ASIC_IS_DCE3(rdev)) {
 			switch (radeon_connector->hpd.hpd) {
 			case RADEON_HPD_1:
 				WREG32(DC_HPD1_CONTROL, 0);
-				rdev->irq.hpd[0] = false;
 				break;
 			case RADEON_HPD_2:
 				WREG32(DC_HPD2_CONTROL, 0);
-				rdev->irq.hpd[1] = false;
 				break;
 			case RADEON_HPD_3:
 				WREG32(DC_HPD3_CONTROL, 0);
-				rdev->irq.hpd[2] = false;
 				break;
 			case RADEON_HPD_4:
 				WREG32(DC_HPD4_CONTROL, 0);
-				rdev->irq.hpd[3] = false;
 				break;
 				/* DCE 3.2 */
 			case RADEON_HPD_5:
 				WREG32(DC_HPD5_CONTROL, 0);
-				rdev->irq.hpd[4] = false;
 				break;
 			case RADEON_HPD_6:
 				WREG32(DC_HPD6_CONTROL, 0);
-				rdev->irq.hpd[5] = false;
 				break;
 			default:
 				break;
 			}
-		}
-	} else {
-		list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
-			struct radeon_connector *radeon_connector = to_radeon_connector(connector);
+		} else {
 			switch (radeon_connector->hpd.hpd) {
 			case RADEON_HPD_1:
 				WREG32(DC_HOT_PLUG_DETECT1_CONTROL, 0);
-				rdev->irq.hpd[0] = false;
 				break;
 			case RADEON_HPD_2:
 				WREG32(DC_HOT_PLUG_DETECT2_CONTROL, 0);
-				rdev->irq.hpd[1] = false;
 				break;
 			case RADEON_HPD_3:
 				WREG32(DC_HOT_PLUG_DETECT3_CONTROL, 0);
-				rdev->irq.hpd[2] = false;
 				break;
 			default:
 				break;
 			}
 		}
+		disable |= 1 << radeon_connector->hpd.hpd;
 	}
+	radeon_irq_kms_disable_hpd(rdev, disable);
 }
 
 /*
@@ -898,7 +881,7 @@ int r600_pcie_gart_init(struct radeon_device *rdev)
 	return radeon_gart_table_vram_alloc(rdev);
 }
 
-int r600_pcie_gart_enable(struct radeon_device *rdev)
+static int r600_pcie_gart_enable(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int r, i;
@@ -955,7 +938,7 @@ int r600_pcie_gart_enable(struct radeon_device *rdev)
 	return 0;
 }
 
-void r600_pcie_gart_disable(struct radeon_device *rdev)
+static void r600_pcie_gart_disable(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int i;
@@ -988,14 +971,14 @@ void r600_pcie_gart_disable(struct radeon_device *rdev)
 	radeon_gart_table_vram_unpin(rdev);
 }
 
-void r600_pcie_gart_fini(struct radeon_device *rdev)
+static void r600_pcie_gart_fini(struct radeon_device *rdev)
 {
 	radeon_gart_fini(rdev);
 	r600_pcie_gart_disable(rdev);
 	radeon_gart_table_vram_free(rdev);
 }
 
-void r600_agp_enable(struct radeon_device *rdev)
+static void r600_agp_enable(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int i;
@@ -1175,7 +1158,7 @@ static void r600_vram_gtt_location(struct radeon_device *rdev, struct radeon_mc 
 	}
 }
 
-int r600_mc_init(struct radeon_device *rdev)
+static int r600_mc_init(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int chansize, numchan;
@@ -1275,9 +1258,8 @@ void r600_vram_scratch_fini(struct radeon_device *rdev)
  * reset, it's up to the caller to determine if the GPU needs one. We
  * might add an helper function to check that.
  */
-int r600_gpu_soft_reset(struct radeon_device *rdev)
+static void r600_gpu_soft_reset_gfx(struct radeon_device *rdev)
 {
-	struct rv515_mc_save save;
 	u32 grbm_busy_mask = S_008010_VC_BUSY(1) | S_008010_VGT_BUSY_NO_DMA(1) |
 				S_008010_VGT_BUSY(1) | S_008010_TA03_BUSY(1) |
 				S_008010_TC_BUSY(1) | S_008010_SX_BUSY(1) |
@@ -1297,21 +1279,26 @@ int r600_gpu_soft_reset(struct radeon_device *rdev)
 	u32 tmp;
 
 	if (!(RREG32(GRBM_STATUS) & GUI_ACTIVE))
-		return 0;
+		return;
 
-	dev_info(rdev->dev, "GPU softreset \n");
-	dev_info(rdev->dev, "  R_008010_GRBM_STATUS=0x%08X\n",
+	dev_info(rdev->dev, "  R_008010_GRBM_STATUS      = 0x%08X\n",
 		RREG32(R_008010_GRBM_STATUS));
-	dev_info(rdev->dev, "  R_008014_GRBM_STATUS2=0x%08X\n",
+	dev_info(rdev->dev, "  R_008014_GRBM_STATUS2     = 0x%08X\n",
 		RREG32(R_008014_GRBM_STATUS2));
-	dev_info(rdev->dev, "  R_000E50_SRBM_STATUS=0x%08X\n",
+	dev_info(rdev->dev, "  R_000E50_SRBM_STATUS      = 0x%08X\n",
 		RREG32(R_000E50_SRBM_STATUS));
-	rv515_mc_stop(rdev, &save);
-	if (r600_mc_wait_for_idle(rdev)) {
-		dev_warn(rdev->dev, "Wait for MC idle timedout !\n");
-	}
+	dev_info(rdev->dev, "  R_008674_CP_STALLED_STAT1 = 0x%08X\n",
+		RREG32(CP_STALLED_STAT1));
+	dev_info(rdev->dev, "  R_008678_CP_STALLED_STAT2 = 0x%08X\n",
+		RREG32(CP_STALLED_STAT2));
+	dev_info(rdev->dev, "  R_00867C_CP_BUSY_STAT     = 0x%08X\n",
+		RREG32(CP_BUSY_STAT));
+	dev_info(rdev->dev, "  R_008680_CP_STAT          = 0x%08X\n",
+		RREG32(CP_STAT));
+
 	/* Disable CP parsing/prefetching */
 	WREG32(R_0086D8_CP_ME_CNTL, S_0086D8_CP_ME_HALT(1));
+
 	/* Check if any of the rendering block is busy and reset it */
 	if ((RREG32(R_008010_GRBM_STATUS) & grbm_busy_mask) ||
 	    (RREG32(R_008014_GRBM_STATUS2) & grbm2_busy_mask)) {
@@ -1341,14 +1328,75 @@ int r600_gpu_soft_reset(struct radeon_device *rdev)
 	RREG32(R_008020_GRBM_SOFT_RESET);
 	mdelay(15);
 	WREG32(R_008020_GRBM_SOFT_RESET, 0);
+
+	dev_info(rdev->dev, "  R_008010_GRBM_STATUS      = 0x%08X\n",
+		RREG32(R_008010_GRBM_STATUS));
+	dev_info(rdev->dev, "  R_008014_GRBM_STATUS2     = 0x%08X\n",
+		RREG32(R_008014_GRBM_STATUS2));
+	dev_info(rdev->dev, "  R_000E50_SRBM_STATUS      = 0x%08X\n",
+		RREG32(R_000E50_SRBM_STATUS));
+	dev_info(rdev->dev, "  R_008674_CP_STALLED_STAT1 = 0x%08X\n",
+		RREG32(CP_STALLED_STAT1));
+	dev_info(rdev->dev, "  R_008678_CP_STALLED_STAT2 = 0x%08X\n",
+		RREG32(CP_STALLED_STAT2));
+	dev_info(rdev->dev, "  R_00867C_CP_BUSY_STAT     = 0x%08X\n",
+		RREG32(CP_BUSY_STAT));
+	dev_info(rdev->dev, "  R_008680_CP_STAT          = 0x%08X\n",
+		RREG32(CP_STAT));
+
+}
+
+static void r600_gpu_soft_reset_dma(struct radeon_device *rdev)
+{
+	u32 tmp;
+
+	if (RREG32(DMA_STATUS_REG) & DMA_IDLE)
+		return;
+
+	dev_info(rdev->dev, "  R_00D034_DMA_STATUS_REG   = 0x%08X\n",
+		RREG32(DMA_STATUS_REG));
+
+	/* Disable DMA */
+	tmp = RREG32(DMA_RB_CNTL);
+	tmp &= ~DMA_RB_ENABLE;
+	WREG32(DMA_RB_CNTL, tmp);
+
+	/* Reset dma */
+	if (rdev->family >= CHIP_RV770)
+		WREG32(SRBM_SOFT_RESET, RV770_SOFT_RESET_DMA);
+	else
+		WREG32(SRBM_SOFT_RESET, SOFT_RESET_DMA);
+	RREG32(SRBM_SOFT_RESET);
+	udelay(50);
+	WREG32(SRBM_SOFT_RESET, 0);
+
+	dev_info(rdev->dev, "  R_00D034_DMA_STATUS_REG   = 0x%08X\n",
+		RREG32(DMA_STATUS_REG));
+}
+
+static int r600_gpu_soft_reset(struct radeon_device *rdev, u32 reset_mask)
+{
+	struct rv515_mc_save save;
+
+	if (reset_mask == 0)
+		return 0;
+
+	dev_info(rdev->dev, "GPU softreset: 0x%08X\n", reset_mask);
+
+	rv515_mc_stop(rdev, &save);
+	if (r600_mc_wait_for_idle(rdev)) {
+		dev_warn(rdev->dev, "Wait for MC idle timedout !\n");
+	}
+
+	if (reset_mask & (RADEON_RESET_GFX | RADEON_RESET_COMPUTE))
+		r600_gpu_soft_reset_gfx(rdev);
+
+	if (reset_mask & RADEON_RESET_DMA)
+		r600_gpu_soft_reset_dma(rdev);
+
 	/* Wait a little for things to settle down */
 	mdelay(1);
-	dev_info(rdev->dev, "  R_008010_GRBM_STATUS=0x%08X\n",
-		RREG32(R_008010_GRBM_STATUS));
-	dev_info(rdev->dev, "  R_008014_GRBM_STATUS2=0x%08X\n",
-		RREG32(R_008014_GRBM_STATUS2));
-	dev_info(rdev->dev, "  R_000E50_SRBM_STATUS=0x%08X\n",
-		RREG32(R_000E50_SRBM_STATUS));
+
 	rv515_mc_resume(rdev, &save);
 	return 0;
 }
@@ -1371,9 +1419,34 @@ bool r600_gpu_is_lockup(struct radeon_device *rdev, struct radeon_ring *ring)
 	return radeon_ring_test_lockup(rdev, ring);
 }
 
+/**
+ * r600_dma_is_lockup - Check if the DMA engine is locked up
+ *
+ * @rdev: radeon_device pointer
+ * @ring: radeon_ring structure holding ring information
+ *
+ * Check if the async DMA engine is locked up (r6xx-evergreen).
+ * Returns true if the engine appears to be locked up, false if not.
+ */
+bool r600_dma_is_lockup(struct radeon_device *rdev, struct radeon_ring *ring)
+{
+	u32 dma_status_reg;
+
+	dma_status_reg = RREG32(DMA_STATUS_REG);
+	if (dma_status_reg & DMA_IDLE) {
+		radeon_ring_lockup_update(ring);
+		return false;
+	}
+	/* force ring activities */
+	radeon_ring_force_activity(rdev, ring);
+	return radeon_ring_test_lockup(rdev, ring);
+}
+
 int r600_asic_reset(struct radeon_device *rdev)
 {
-	return r600_gpu_soft_reset(rdev);
+	return r600_gpu_soft_reset(rdev, (RADEON_RESET_GFX |
+					  RADEON_RESET_COMPUTE |
+					  RADEON_RESET_DMA));
 }
 
 u32 r6xx_remap_render_backend(struct radeon_device *rdev,
@@ -1425,16 +1498,10 @@ u32 r6xx_remap_render_backend(struct radeon_device *rdev,
 
 int r600_count_pipe_bits(uint32_t val)
 {
-	int i, ret = 0;
-
-	for (i = 0; i < 32; i++) {
-		ret += val & 1;
-		val >>= 1;
-	}
-	return ret;
+	return hweight32(val);
 }
 
-void r600_gpu_init(struct radeon_device *rdev)
+static void r600_gpu_init(struct radeon_device *rdev)
 {
 	u32 tiling_config;
 	u32 ramcfg;
@@ -1595,6 +1662,7 @@ void r600_gpu_init(struct radeon_device *rdev)
 	WREG32(GB_TILING_CONFIG, tiling_config);
 	WREG32(DCP_TILING_CONFIG, tiling_config & 0xffff);
 	WREG32(HDP_TILING_CONFIG, tiling_config & 0xffff);
+	WREG32(DMA_TILING_CONFIG, tiling_config & 0xffff);
 
 	tmp = R6XX_MAX_PIPES - r600_count_pipe_bits((cc_gc_shader_pipe_config & INACTIVE_QD_PIPES_MASK) >> 8);
 	WREG32(VGT_OUT_DEALLOC_CNTL, (tmp * 4) & DEALLOC_DIST_MASK);
@@ -1839,6 +1907,7 @@ void r600_gpu_init(struct radeon_device *rdev)
 	WREG32(PA_CL_ENHANCE, (CLIP_VTX_REORDER_ENA |
 			       NUM_CLIP_SEQ(3)));
 	WREG32(PA_SC_ENHANCE, FORCE_EOV_MAX_CLK_CNT(4095));
+	WREG32(VC_ENHANCE, 0);
 }
 
 
@@ -1871,6 +1940,7 @@ void r600_cp_stop(struct radeon_device *rdev)
 	radeon_ttm_set_active_vram_size(rdev, rdev->mc.visible_vram_size);
 	WREG32(R_0086D8_CP_ME_CNTL, S_0086D8_CP_ME_HALT(1));
 	WREG32(SCRATCH_UMSK, 0);
+	rdev->ring[RADEON_RING_TYPE_GFX_INDEX].ready = false;
 }
 
 int r600_init_microcode(struct radeon_device *rdev)
@@ -2171,20 +2241,153 @@ int r600_cp_resume(struct radeon_device *rdev)
 void r600_ring_init(struct radeon_device *rdev, struct radeon_ring *ring, unsigned ring_size)
 {
 	u32 rb_bufsz;
+	int r;
 
 	/* Align ring size */
 	rb_bufsz = drm_order(ring_size / 8);
 	ring_size = (1 << (rb_bufsz + 1)) * 4;
 	ring->ring_size = ring_size;
 	ring->align_mask = 16 - 1;
+
+	if (radeon_ring_supports_scratch_reg(rdev, ring)) {
+		r = radeon_scratch_get(rdev, &ring->rptr_save_reg);
+		if (r) {
+			DRM_ERROR("failed to get scratch reg for rptr save (%d).\n", r);
+			ring->rptr_save_reg = 0;
+		}
+	}
 }
 
 void r600_cp_fini(struct radeon_device *rdev)
 {
+	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	r600_cp_stop(rdev);
-	radeon_ring_fini(rdev, &rdev->ring[RADEON_RING_TYPE_GFX_INDEX]);
+	radeon_ring_fini(rdev, ring);
+	radeon_scratch_free(rdev, ring->rptr_save_reg);
 }
 
+/*
+ * DMA
+ * Starting with R600, the GPU has an asynchronous
+ * DMA engine.  The programming model is very similar
+ * to the 3D engine (ring buffer, IBs, etc.), but the
+ * DMA controller has it's own packet format that is
+ * different form the PM4 format used by the 3D engine.
+ * It supports copying data, writing embedded data,
+ * solid fills, and a number of other things.  It also
+ * has support for tiling/detiling of buffers.
+ */
+/**
+ * r600_dma_stop - stop the async dma engine
+ *
+ * @rdev: radeon_device pointer
+ *
+ * Stop the async dma engine (r6xx-evergreen).
+ */
+void r600_dma_stop(struct radeon_device *rdev)
+{
+	u32 rb_cntl = RREG32(DMA_RB_CNTL);
+
+	radeon_ttm_set_active_vram_size(rdev, rdev->mc.visible_vram_size);
+
+	rb_cntl &= ~DMA_RB_ENABLE;
+	WREG32(DMA_RB_CNTL, rb_cntl);
+
+	rdev->ring[R600_RING_TYPE_DMA_INDEX].ready = false;
+}
+
+/**
+ * r600_dma_resume - setup and start the async dma engine
+ *
+ * @rdev: radeon_device pointer
+ *
+ * Set up the DMA ring buffer and enable it. (r6xx-evergreen).
+ * Returns 0 for success, error for failure.
+ */
+int r600_dma_resume(struct radeon_device *rdev)
+{
+	struct radeon_ring *ring = &rdev->ring[R600_RING_TYPE_DMA_INDEX];
+	u32 rb_cntl, dma_cntl;
+	u32 rb_bufsz;
+	int r;
+
+	/* Reset dma */
+	if (rdev->family >= CHIP_RV770)
+		WREG32(SRBM_SOFT_RESET, RV770_SOFT_RESET_DMA);
+	else
+		WREG32(SRBM_SOFT_RESET, SOFT_RESET_DMA);
+	RREG32(SRBM_SOFT_RESET);
+	udelay(50);
+	WREG32(SRBM_SOFT_RESET, 0);
+
+	WREG32(DMA_SEM_INCOMPLETE_TIMER_CNTL, 0);
+	WREG32(DMA_SEM_WAIT_FAIL_TIMER_CNTL, 0);
+
+	/* Set ring buffer size in dwords */
+	rb_bufsz = drm_order(ring->ring_size / 4);
+	rb_cntl = rb_bufsz << 1;
+#ifdef __BIG_ENDIAN
+	rb_cntl |= DMA_RB_SWAP_ENABLE | DMA_RPTR_WRITEBACK_SWAP_ENABLE;
+#endif
+	WREG32(DMA_RB_CNTL, rb_cntl);
+
+	/* Initialize the ring buffer's read and write pointers */
+	WREG32(DMA_RB_RPTR, 0);
+	WREG32(DMA_RB_WPTR, 0);
+
+	/* set the wb address whether it's enabled or not */
+	WREG32(DMA_RB_RPTR_ADDR_HI,
+	       upper_32_bits(rdev->wb.gpu_addr + R600_WB_DMA_RPTR_OFFSET) & 0xFF);
+	WREG32(DMA_RB_RPTR_ADDR_LO,
+	       ((rdev->wb.gpu_addr + R600_WB_DMA_RPTR_OFFSET) & 0xFFFFFFFC));
+
+	if (rdev->wb.enabled)
+		rb_cntl |= DMA_RPTR_WRITEBACK_ENABLE;
+
+	WREG32(DMA_RB_BASE, ring->gpu_addr >> 8);
+
+	/* enable DMA IBs */
+	WREG32(DMA_IB_CNTL, DMA_IB_ENABLE);
+
+	dma_cntl = RREG32(DMA_CNTL);
+	dma_cntl &= ~CTXEMPTY_INT_ENABLE;
+	WREG32(DMA_CNTL, dma_cntl);
+
+	if (rdev->family >= CHIP_RV770)
+		WREG32(DMA_MODE, 1);
+
+	ring->wptr = 0;
+	WREG32(DMA_RB_WPTR, ring->wptr << 2);
+
+	ring->rptr = RREG32(DMA_RB_RPTR) >> 2;
+
+	WREG32(DMA_RB_CNTL, rb_cntl | DMA_RB_ENABLE);
+
+	ring->ready = true;
+
+	r = radeon_ring_test(rdev, R600_RING_TYPE_DMA_INDEX, ring);
+	if (r) {
+		ring->ready = false;
+		return r;
+	}
+
+	radeon_ttm_set_active_vram_size(rdev, rdev->mc.real_vram_size);
+
+	return 0;
+}
+
+/**
+ * r600_dma_fini - tear down the async dma engine
+ *
+ * @rdev: radeon_device pointer
+ *
+ * Stop the async dma engine and free the ring (r6xx-evergreen).
+ */
+void r600_dma_fini(struct radeon_device *rdev)
+{
+	r600_dma_stop(rdev);
+	radeon_ring_fini(rdev, &rdev->ring[R600_RING_TYPE_DMA_INDEX]);
+}
 
 /*
  * GPU scratch registers helpers function.
@@ -2205,7 +2408,7 @@ int r600_ring_test(struct radeon_device *rdev, struct radeon_ring *ring)
 {
 	uint32_t scratch;
 	uint32_t tmp = 0;
-	unsigned i, ridx = radeon_ring_index(rdev, ring);
+	unsigned i;
 	int r;
 
 	r = radeon_scratch_get(rdev, &scratch);
@@ -2216,7 +2419,7 @@ int r600_ring_test(struct radeon_device *rdev, struct radeon_ring *ring)
 	WREG32(scratch, 0xCAFEDEAD);
 	r = radeon_ring_lock(rdev, ring, 3);
 	if (r) {
-		DRM_ERROR("radeon: cp failed to lock ring %d (%d).\n", ridx, r);
+		DRM_ERROR("radeon: cp failed to lock ring %d (%d).\n", ring->idx, r);
 		radeon_scratch_free(rdev, scratch);
 		return r;
 	}
@@ -2231,15 +2434,73 @@ int r600_ring_test(struct radeon_device *rdev, struct radeon_ring *ring)
 		DRM_UDELAY(1);
 	}
 	if (i < rdev->usec_timeout) {
-		DRM_INFO("ring test on %d succeeded in %d usecs\n", ridx, i);
+		DRM_INFO("ring test on %d succeeded in %d usecs\n", ring->idx, i);
 	} else {
 		DRM_ERROR("radeon: ring %d test failed (scratch(0x%04X)=0x%08X)\n",
-			  ridx, scratch, tmp);
+			  ring->idx, scratch, tmp);
 		r = -EINVAL;
 	}
 	radeon_scratch_free(rdev, scratch);
 	return r;
 }
+
+/**
+ * r600_dma_ring_test - simple async dma engine test
+ *
+ * @rdev: radeon_device pointer
+ * @ring: radeon_ring structure holding ring information
+ *
+ * Test the DMA engine by writing using it to write an
+ * value to memory. (r6xx-SI).
+ * Returns 0 for success, error for failure.
+ */
+int r600_dma_ring_test(struct radeon_device *rdev,
+		       struct radeon_ring *ring)
+{
+	unsigned i;
+	int r;
+	void __iomem *ptr = (void *)rdev->vram_scratch.ptr;
+	u32 tmp;
+
+	if (!ptr) {
+		DRM_ERROR("invalid vram scratch pointer\n");
+		return -EINVAL;
+	}
+
+	tmp = 0xCAFEDEAD;
+	writel(tmp, ptr);
+
+	r = radeon_ring_lock(rdev, ring, 4);
+	if (r) {
+		DRM_ERROR("radeon: dma failed to lock ring %d (%d).\n", ring->idx, r);
+		return r;
+	}
+	radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_WRITE, 0, 0, 1));
+	radeon_ring_write(ring, rdev->vram_scratch.gpu_addr & 0xfffffffc);
+	radeon_ring_write(ring, upper_32_bits(rdev->vram_scratch.gpu_addr) & 0xff);
+	radeon_ring_write(ring, 0xDEADBEEF);
+	radeon_ring_unlock_commit(rdev, ring);
+
+	for (i = 0; i < rdev->usec_timeout; i++) {
+		tmp = readl(ptr);
+		if (tmp == 0xDEADBEEF)
+			break;
+		DRM_UDELAY(1);
+	}
+
+	if (i < rdev->usec_timeout) {
+		DRM_INFO("ring test on %d succeeded in %d usecs\n", ring->idx, i);
+	} else {
+		DRM_ERROR("radeon: ring %d test failed (0x%08X)\n",
+			  ring->idx, tmp);
+		r = -EINVAL;
+	}
+	return r;
+}
+
+/*
+ * CP fences/semaphores
+ */
 
 void r600_fence_ring_emit(struct radeon_device *rdev,
 			  struct radeon_fence *fence)
@@ -2304,36 +2565,150 @@ void r600_semaphore_ring_emit(struct radeon_device *rdev,
 	radeon_ring_write(ring, (upper_32_bits(addr) & 0xff) | sel);
 }
 
+/*
+ * DMA fences/semaphores
+ */
+
+/**
+ * r600_dma_fence_ring_emit - emit a fence on the DMA ring
+ *
+ * @rdev: radeon_device pointer
+ * @fence: radeon fence object
+ *
+ * Add a DMA fence packet to the ring to write
+ * the fence seq number and DMA trap packet to generate
+ * an interrupt if needed (r6xx-r7xx).
+ */
+void r600_dma_fence_ring_emit(struct radeon_device *rdev,
+			      struct radeon_fence *fence)
+{
+	struct radeon_ring *ring = &rdev->ring[fence->ring];
+	u64 addr = rdev->fence_drv[fence->ring].gpu_addr;
+
+	/* write the fence */
+	radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_FENCE, 0, 0, 0));
+	radeon_ring_write(ring, addr & 0xfffffffc);
+	radeon_ring_write(ring, (upper_32_bits(addr) & 0xff));
+	radeon_ring_write(ring, lower_32_bits(fence->seq));
+	/* generate an interrupt */
+	radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_TRAP, 0, 0, 0));
+}
+
+/**
+ * r600_dma_semaphore_ring_emit - emit a semaphore on the dma ring
+ *
+ * @rdev: radeon_device pointer
+ * @ring: radeon_ring structure holding ring information
+ * @semaphore: radeon semaphore object
+ * @emit_wait: wait or signal semaphore
+ *
+ * Add a DMA semaphore packet to the ring wait on or signal
+ * other rings (r6xx-SI).
+ */
+void r600_dma_semaphore_ring_emit(struct radeon_device *rdev,
+				  struct radeon_ring *ring,
+				  struct radeon_semaphore *semaphore,
+				  bool emit_wait)
+{
+	u64 addr = semaphore->gpu_addr;
+	u32 s = emit_wait ? 0 : 1;
+
+	radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_SEMAPHORE, 0, s, 0));
+	radeon_ring_write(ring, addr & 0xfffffffc);
+	radeon_ring_write(ring, upper_32_bits(addr) & 0xff);
+}
+
 int r600_copy_blit(struct radeon_device *rdev,
 		   uint64_t src_offset,
 		   uint64_t dst_offset,
 		   unsigned num_gpu_pages,
-		   struct radeon_fence *fence)
+		   struct radeon_fence **fence)
 {
+	struct radeon_semaphore *sem = NULL;
 	struct radeon_sa_bo *vb = NULL;
 	int r;
 
-	r = r600_blit_prepare_copy(rdev, num_gpu_pages, &vb);
+	r = r600_blit_prepare_copy(rdev, num_gpu_pages, fence, &vb, &sem);
 	if (r) {
 		return r;
 	}
 	r600_kms_blit_copy(rdev, src_offset, dst_offset, num_gpu_pages, vb);
-	r600_blit_done_copy(rdev, fence, vb);
+	r600_blit_done_copy(rdev, fence, vb, sem);
 	return 0;
 }
 
-void r600_blit_suspend(struct radeon_device *rdev)
+/**
+ * r600_copy_dma - copy pages using the DMA engine
+ *
+ * @rdev: radeon_device pointer
+ * @src_offset: src GPU address
+ * @dst_offset: dst GPU address
+ * @num_gpu_pages: number of GPU pages to xfer
+ * @fence: radeon fence object
+ *
+ * Copy GPU paging using the DMA engine (r6xx).
+ * Used by the radeon ttm implementation to move pages if
+ * registered as the asic copy callback.
+ */
+int r600_copy_dma(struct radeon_device *rdev,
+		  uint64_t src_offset, uint64_t dst_offset,
+		  unsigned num_gpu_pages,
+		  struct radeon_fence **fence)
 {
-	int r;
+	struct radeon_semaphore *sem = NULL;
+	int ring_index = rdev->asic->copy.dma_ring_index;
+	struct radeon_ring *ring = &rdev->ring[ring_index];
+	u32 size_in_dw, cur_size_in_dw;
+	int i, num_loops;
+	int r = 0;
 
-	/* unpin shaders bo */
-	if (rdev->r600_blit.shader_obj) {
-		r = radeon_bo_reserve(rdev->r600_blit.shader_obj, false);
-		if (!r) {
-			radeon_bo_unpin(rdev->r600_blit.shader_obj);
-			radeon_bo_unreserve(rdev->r600_blit.shader_obj);
-		}
+	r = radeon_semaphore_create(rdev, &sem);
+	if (r) {
+		DRM_ERROR("radeon: moving bo (%d).\n", r);
+		return r;
 	}
+
+	size_in_dw = (num_gpu_pages << RADEON_GPU_PAGE_SHIFT) / 4;
+	num_loops = DIV_ROUND_UP(size_in_dw, 0xFFFE);
+	r = radeon_ring_lock(rdev, ring, num_loops * 4 + 8);
+	if (r) {
+		DRM_ERROR("radeon: moving bo (%d).\n", r);
+		radeon_semaphore_free(rdev, &sem, NULL);
+		return r;
+	}
+
+	if (radeon_fence_need_sync(*fence, ring->idx)) {
+		radeon_semaphore_sync_rings(rdev, sem, (*fence)->ring,
+					    ring->idx);
+		radeon_fence_note_sync(*fence, ring->idx);
+	} else {
+		radeon_semaphore_free(rdev, &sem, NULL);
+	}
+
+	for (i = 0; i < num_loops; i++) {
+		cur_size_in_dw = size_in_dw;
+		if (cur_size_in_dw > 0xFFFE)
+			cur_size_in_dw = 0xFFFE;
+		size_in_dw -= cur_size_in_dw;
+		radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_COPY, 0, 0, cur_size_in_dw));
+		radeon_ring_write(ring, dst_offset & 0xfffffffc);
+		radeon_ring_write(ring, src_offset & 0xfffffffc);
+		radeon_ring_write(ring, (((upper_32_bits(dst_offset) & 0xff) << 16) |
+					 (upper_32_bits(src_offset) & 0xff)));
+		src_offset += cur_size_in_dw * 4;
+		dst_offset += cur_size_in_dw * 4;
+	}
+
+	r = radeon_fence_emit(rdev, fence, ring->idx);
+	if (r) {
+		radeon_ring_unlock_undo(rdev, ring);
+		return r;
+	}
+
+	radeon_ring_unlock_commit(rdev, ring);
+	radeon_semaphore_free(rdev, &sem, *fence);
+
+	return r;
 }
 
 int r600_set_surface_reg(struct radeon_device *rdev, int reg,
@@ -2349,9 +2724,9 @@ void r600_clear_surface_reg(struct radeon_device *rdev, int reg)
 	/* FIXME: implement */
 }
 
-int r600_startup(struct radeon_device *rdev)
+static int r600_startup(struct radeon_device *rdev)
 {
-	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
+	struct radeon_ring *ring;
 	int r;
 
 	/* enable pcie gen2 link */
@@ -2396,6 +2771,12 @@ int r600_startup(struct radeon_device *rdev)
 		return r;
 	}
 
+	r = radeon_fence_driver_start_ring(rdev, R600_RING_TYPE_DMA_INDEX);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing DMA fences (%d).\n", r);
+		return r;
+	}
+
 	/* Enable IRQ */
 	r = r600_irq_init(rdev);
 	if (r) {
@@ -2405,12 +2786,20 @@ int r600_startup(struct radeon_device *rdev)
 	}
 	r600_irq_set(rdev);
 
+	ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	r = radeon_ring_init(rdev, ring, ring->ring_size, RADEON_WB_CP_RPTR_OFFSET,
 			     R600_CP_RB_RPTR, R600_CP_RB_WPTR,
 			     0, 0xfffff, RADEON_CP_PACKET2);
-
 	if (r)
 		return r;
+
+	ring = &rdev->ring[R600_RING_TYPE_DMA_INDEX];
+	r = radeon_ring_init(rdev, ring, ring->ring_size, R600_WB_DMA_RPTR_OFFSET,
+			     DMA_RB_RPTR, DMA_RB_WPTR,
+			     2, 0x3fffc, DMA_PACKET(DMA_PACKET_NOP, 0, 0, 0));
+	if (r)
+		return r;
+
 	r = r600_cp_load_microcode(rdev);
 	if (r)
 		return r;
@@ -2418,13 +2807,15 @@ int r600_startup(struct radeon_device *rdev)
 	if (r)
 		return r;
 
-	r = radeon_ib_pool_start(rdev);
+	r = r600_dma_resume(rdev);
 	if (r)
 		return r;
 
-	r = radeon_ib_ring_tests(rdev);
-	if (r)
+	r = radeon_ib_pool_init(rdev);
+	if (r) {
+		dev_err(rdev->dev, "IB initialization failed (%d).\n", r);
 		return r;
+	}
 
 	r = r600_audio_init(rdev);
 	if (r) {
@@ -2474,11 +2865,8 @@ int r600_resume(struct radeon_device *rdev)
 int r600_suspend(struct radeon_device *rdev)
 {
 	r600_audio_fini(rdev);
-	radeon_ib_pool_suspend(rdev);
-	r600_blit_suspend(rdev);
-	/* FIXME: we should wait for ring to be empty */
 	r600_cp_stop(rdev);
-	rdev->ring[RADEON_RING_TYPE_GFX_INDEX].ready = false;
+	r600_dma_stop(rdev);
 	r600_irq_suspend(rdev);
 	radeon_wb_disable(rdev);
 	r600_pcie_gart_disable(rdev);
@@ -2551,6 +2939,9 @@ int r600_init(struct radeon_device *rdev)
 	rdev->ring[RADEON_RING_TYPE_GFX_INDEX].ring_obj = NULL;
 	r600_ring_init(rdev, &rdev->ring[RADEON_RING_TYPE_GFX_INDEX], 1024 * 1024);
 
+	rdev->ring[R600_RING_TYPE_DMA_INDEX].ring_obj = NULL;
+	r600_ring_init(rdev, &rdev->ring[R600_RING_TYPE_DMA_INDEX], 64 * 1024);
+
 	rdev->ih.ring_obj = NULL;
 	r600_ih_ring_init(rdev, 64 * 1024);
 
@@ -2558,20 +2949,15 @@ int r600_init(struct radeon_device *rdev)
 	if (r)
 		return r;
 
-	r = radeon_ib_pool_init(rdev);
 	rdev->accel_working = true;
-	if (r) {
-		dev_err(rdev->dev, "IB initialization failed (%d).\n", r);
-		rdev->accel_working = false;
-	}
-
 	r = r600_startup(rdev);
 	if (r) {
 		dev_err(rdev->dev, "disabling GPU acceleration\n");
 		r600_cp_fini(rdev);
+		r600_dma_fini(rdev);
 		r600_irq_fini(rdev);
 		radeon_wb_fini(rdev);
-		r100_ib_fini(rdev);
+		radeon_ib_pool_fini(rdev);
 		radeon_irq_kms_fini(rdev);
 		r600_pcie_gart_fini(rdev);
 		rdev->accel_working = false;
@@ -2585,9 +2971,10 @@ void r600_fini(struct radeon_device *rdev)
 	r600_audio_fini(rdev);
 	r600_blit_fini(rdev);
 	r600_cp_fini(rdev);
+	r600_dma_fini(rdev);
 	r600_irq_fini(rdev);
 	radeon_wb_fini(rdev);
-	r100_ib_fini(rdev);
+	radeon_ib_pool_fini(rdev);
 	radeon_irq_kms_fini(rdev);
 	r600_pcie_gart_fini(rdev);
 	r600_vram_scratch_fini(rdev);
@@ -2606,9 +2993,24 @@ void r600_fini(struct radeon_device *rdev)
  */
 void r600_ring_ib_execute(struct radeon_device *rdev, struct radeon_ib *ib)
 {
-	struct radeon_ring *ring = &rdev->ring[ib->fence->ring];
+	struct radeon_ring *ring = &rdev->ring[ib->ring];
+	u32 next_rptr;
 
-	/* FIXME: implement */
+	if (ring->rptr_save_reg) {
+		next_rptr = ring->wptr + 3 + 4;
+		radeon_ring_write(ring, PACKET3(PACKET3_SET_CONFIG_REG, 1));
+		radeon_ring_write(ring, ((ring->rptr_save_reg -
+					 PACKET3_SET_CONFIG_REG_OFFSET) >> 2));
+		radeon_ring_write(ring, next_rptr);
+	} else if (rdev->wb.enabled) {
+		next_rptr = ring->wptr + 5 + 4;
+		radeon_ring_write(ring, PACKET3(PACKET3_MEM_WRITE, 3));
+		radeon_ring_write(ring, ring->next_rptr_gpu_addr & 0xfffffffc);
+		radeon_ring_write(ring, (upper_32_bits(ring->next_rptr_gpu_addr) & 0xff) | (1 << 18));
+		radeon_ring_write(ring, next_rptr);
+		radeon_ring_write(ring, 0);
+	}
+
 	radeon_ring_write(ring, PACKET3(PACKET3_INDIRECT_BUFFER, 2));
 	radeon_ring_write(ring,
 #ifdef __BIG_ENDIAN
@@ -2626,7 +3028,6 @@ int r600_ib_test(struct radeon_device *rdev, struct radeon_ring *ring)
 	uint32_t tmp = 0;
 	unsigned i;
 	int r;
-	int ring_index = radeon_ring_index(rdev, ring);
 
 	r = radeon_scratch_get(rdev, &scratch);
 	if (r) {
@@ -2634,26 +3035,24 @@ int r600_ib_test(struct radeon_device *rdev, struct radeon_ring *ring)
 		return r;
 	}
 	WREG32(scratch, 0xCAFEDEAD);
-	r = radeon_ib_get(rdev, ring_index, &ib, 256);
+	r = radeon_ib_get(rdev, ring->idx, &ib, NULL, 256);
 	if (r) {
 		DRM_ERROR("radeon: failed to get ib (%d).\n", r);
-		return r;
+		goto free_scratch;
 	}
 	ib.ptr[0] = PACKET3(PACKET3_SET_CONFIG_REG, 1);
 	ib.ptr[1] = ((scratch - PACKET3_SET_CONFIG_REG_OFFSET) >> 2);
 	ib.ptr[2] = 0xDEADBEEF;
 	ib.length_dw = 3;
-	r = radeon_ib_schedule(rdev, &ib);
+	r = radeon_ib_schedule(rdev, &ib, NULL);
 	if (r) {
-		radeon_scratch_free(rdev, scratch);
-		radeon_ib_free(rdev, &ib);
 		DRM_ERROR("radeon: failed to schedule ib (%d).\n", r);
-		return r;
+		goto free_ib;
 	}
 	r = radeon_fence_wait(ib.fence, false);
 	if (r) {
 		DRM_ERROR("radeon: fence wait failed (%d).\n", r);
-		return r;
+		goto free_ib;
 	}
 	for (i = 0; i < rdev->usec_timeout; i++) {
 		tmp = RREG32(scratch);
@@ -2668,9 +3067,109 @@ int r600_ib_test(struct radeon_device *rdev, struct radeon_ring *ring)
 			  scratch, tmp);
 		r = -EINVAL;
 	}
+free_ib:
+	radeon_ib_free(rdev, &ib);
+free_scratch:
 	radeon_scratch_free(rdev, scratch);
+	return r;
+}
+
+/**
+ * r600_dma_ib_test - test an IB on the DMA engine
+ *
+ * @rdev: radeon_device pointer
+ * @ring: radeon_ring structure holding ring information
+ *
+ * Test a simple IB in the DMA ring (r6xx-SI).
+ * Returns 0 on success, error on failure.
+ */
+int r600_dma_ib_test(struct radeon_device *rdev, struct radeon_ring *ring)
+{
+	struct radeon_ib ib;
+	unsigned i;
+	int r;
+	void __iomem *ptr = (void *)rdev->vram_scratch.ptr;
+	u32 tmp = 0;
+
+	if (!ptr) {
+		DRM_ERROR("invalid vram scratch pointer\n");
+		return -EINVAL;
+	}
+
+	tmp = 0xCAFEDEAD;
+	writel(tmp, ptr);
+
+	r = radeon_ib_get(rdev, ring->idx, &ib, NULL, 256);
+	if (r) {
+		DRM_ERROR("radeon: failed to get ib (%d).\n", r);
+		return r;
+	}
+
+	ib.ptr[0] = DMA_PACKET(DMA_PACKET_WRITE, 0, 0, 1);
+	ib.ptr[1] = rdev->vram_scratch.gpu_addr & 0xfffffffc;
+	ib.ptr[2] = upper_32_bits(rdev->vram_scratch.gpu_addr) & 0xff;
+	ib.ptr[3] = 0xDEADBEEF;
+	ib.length_dw = 4;
+
+	r = radeon_ib_schedule(rdev, &ib, NULL);
+	if (r) {
+		radeon_ib_free(rdev, &ib);
+		DRM_ERROR("radeon: failed to schedule ib (%d).\n", r);
+		return r;
+	}
+	r = radeon_fence_wait(ib.fence, false);
+	if (r) {
+		DRM_ERROR("radeon: fence wait failed (%d).\n", r);
+		return r;
+	}
+	for (i = 0; i < rdev->usec_timeout; i++) {
+		tmp = readl(ptr);
+		if (tmp == 0xDEADBEEF)
+			break;
+		DRM_UDELAY(1);
+	}
+	if (i < rdev->usec_timeout) {
+		DRM_INFO("ib test on ring %d succeeded in %u usecs\n", ib.fence->ring, i);
+	} else {
+		DRM_ERROR("radeon: ib test failed (0x%08X)\n", tmp);
+		r = -EINVAL;
+	}
 	radeon_ib_free(rdev, &ib);
 	return r;
+}
+
+/**
+ * r600_dma_ring_ib_execute - Schedule an IB on the DMA engine
+ *
+ * @rdev: radeon_device pointer
+ * @ib: IB object to schedule
+ *
+ * Schedule an IB in the DMA ring (r6xx-r7xx).
+ */
+void r600_dma_ring_ib_execute(struct radeon_device *rdev, struct radeon_ib *ib)
+{
+	struct radeon_ring *ring = &rdev->ring[ib->ring];
+
+	if (rdev->wb.enabled) {
+		u32 next_rptr = ring->wptr + 4;
+		while ((next_rptr & 7) != 5)
+			next_rptr++;
+		next_rptr += 3;
+		radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_WRITE, 0, 0, 1));
+		radeon_ring_write(ring, ring->next_rptr_gpu_addr & 0xfffffffc);
+		radeon_ring_write(ring, upper_32_bits(ring->next_rptr_gpu_addr) & 0xff);
+		radeon_ring_write(ring, next_rptr);
+	}
+
+	/* The indirect buffer packet must end on an 8 DW boundary in the DMA ring.
+	 * Pad as necessary with NOPs.
+	 */
+	while ((ring->wptr & 7) != 5)
+		radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_NOP, 0, 0, 0));
+	radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_INDIRECT_BUFFER, 0, 0, 0));
+	radeon_ring_write(ring, (ib->gpu_addr & 0xFFFFFFE0));
+	radeon_ring_write(ring, (ib->length_dw << 16) | (upper_32_bits(ib->gpu_addr) & 0xFF));
+
 }
 
 /*
@@ -2856,7 +3355,6 @@ void r600_disable_interrupts(struct radeon_device *rdev)
 	WREG32(IH_RB_RPTR, 0);
 	WREG32(IH_RB_WPTR, 0);
 	rdev->ih.enabled = false;
-	rdev->ih.wptr = 0;
 	rdev->ih.rptr = 0;
 }
 
@@ -2865,6 +3363,8 @@ static void r600_disable_interrupt_state(struct radeon_device *rdev)
 	u32 tmp;
 
 	WREG32(CP_INT_CNTL, CNTX_BUSY_INT_ENABLE | CNTX_EMPTY_INT_ENABLE);
+	tmp = RREG32(DMA_CNTL) & ~TRAP_ENABLE;
+	WREG32(DMA_CNTL, tmp);
 	WREG32(GRBM_INT_CNTL, 0);
 	WREG32(DxMODE_INT_MASK, 0);
 	WREG32(D1GRPH_INTERRUPT_CONTROL, 0);
@@ -3006,6 +3506,7 @@ int r600_irq_set(struct radeon_device *rdev)
 	u32 grbm_int_cntl = 0;
 	u32 hdmi0, hdmi1;
 	u32 d1grph = 0, d2grph = 0;
+	u32 dma_cntl;
 
 	if (!rdev->irq.installed) {
 		WARN(1, "Can't enable IRQ/MSI because no handler is installed\n");
@@ -3040,19 +3541,26 @@ int r600_irq_set(struct radeon_device *rdev)
 		hdmi0 = RREG32(HDMI0_AUDIO_PACKET_CONTROL) & ~HDMI0_AZ_FORMAT_WTRIG_MASK;
 		hdmi1 = RREG32(HDMI1_AUDIO_PACKET_CONTROL) & ~HDMI0_AZ_FORMAT_WTRIG_MASK;
 	}
+	dma_cntl = RREG32(DMA_CNTL) & ~TRAP_ENABLE;
 
-	if (rdev->irq.sw_int[RADEON_RING_TYPE_GFX_INDEX]) {
+	if (atomic_read(&rdev->irq.ring_int[RADEON_RING_TYPE_GFX_INDEX])) {
 		DRM_DEBUG("r600_irq_set: sw int\n");
 		cp_int_cntl |= RB_INT_ENABLE;
 		cp_int_cntl |= TIME_STAMP_INT_ENABLE;
 	}
+
+	if (atomic_read(&rdev->irq.ring_int[R600_RING_TYPE_DMA_INDEX])) {
+		DRM_DEBUG("r600_irq_set: sw int dma\n");
+		dma_cntl |= TRAP_ENABLE;
+	}
+
 	if (rdev->irq.crtc_vblank_int[0] ||
-	    rdev->irq.pflip[0]) {
+	    atomic_read(&rdev->irq.pflip[0])) {
 		DRM_DEBUG("r600_irq_set: vblank 0\n");
 		mode_int |= D1MODE_VBLANK_INT_MASK;
 	}
 	if (rdev->irq.crtc_vblank_int[1] ||
-	    rdev->irq.pflip[1]) {
+	    atomic_read(&rdev->irq.pflip[1])) {
 		DRM_DEBUG("r600_irq_set: vblank 1\n");
 		mode_int |= D2MODE_VBLANK_INT_MASK;
 	}
@@ -3088,12 +3596,9 @@ int r600_irq_set(struct radeon_device *rdev)
 		DRM_DEBUG("r600_irq_set: hdmi 0\n");
 		hdmi1 |= HDMI0_AZ_FORMAT_WTRIG_MASK;
 	}
-	if (rdev->irq.gui_idle) {
-		DRM_DEBUG("gui idle\n");
-		grbm_int_cntl |= GUI_IDLE_INT_ENABLE;
-	}
 
 	WREG32(CP_INT_CNTL, cp_int_cntl);
+	WREG32(DMA_CNTL, dma_cntl);
 	WREG32(DxMODE_INT_MASK, mode_int);
 	WREG32(D1GRPH_INTERRUPT_CONTROL, d1grph);
 	WREG32(D2GRPH_INTERRUPT_CONTROL, d2grph);
@@ -3308,7 +3813,6 @@ int r600_irq_process(struct radeon_device *rdev)
 	u32 rptr;
 	u32 src_id, src_data;
 	u32 ring_index;
-	unsigned long flags;
 	bool queue_hotplug = false;
 	bool queue_hdmi = false;
 
@@ -3320,24 +3824,21 @@ int r600_irq_process(struct radeon_device *rdev)
 		RREG32(IH_RB_WPTR);
 
 	wptr = r600_get_ih_wptr(rdev);
+
+restart_ih:
+	/* is somebody else already processing irqs? */
+	if (atomic_xchg(&rdev->ih.lock, 1))
+		return IRQ_NONE;
+
 	rptr = rdev->ih.rptr;
 	DRM_DEBUG("r600_irq_process start: rptr %d, wptr %d\n", rptr, wptr);
 
-	spin_lock_irqsave(&rdev->ih.lock, flags);
-
-	if (rptr == wptr) {
-		spin_unlock_irqrestore(&rdev->ih.lock, flags);
-		return IRQ_NONE;
-	}
-
-restart_ih:
 	/* Order reading of wptr vs. reading of IH ring data */
 	rmb();
 
 	/* display interrupts */
 	r600_irq_ack(rdev);
 
-	rdev->ih.wptr = wptr;
 	while (rptr != wptr) {
 		/* wptr/rptr are in bytes! */
 		ring_index = rptr / 4;
@@ -3354,7 +3855,7 @@ restart_ih:
 						rdev->pm.vblank_sync = true;
 						wake_up(&rdev->irq.vblank_queue);
 					}
-					if (rdev->irq.pflip[0])
+					if (atomic_read(&rdev->irq.pflip[0]))
 						radeon_crtc_handle_flip(rdev, 0);
 					rdev->irq.stat_regs.r600.disp_int &= ~LB_D1_VBLANK_INTERRUPT;
 					DRM_DEBUG("IH: D1 vblank\n");
@@ -3380,7 +3881,7 @@ restart_ih:
 						rdev->pm.vblank_sync = true;
 						wake_up(&rdev->irq.vblank_queue);
 					}
-					if (rdev->irq.pflip[1])
+					if (atomic_read(&rdev->irq.pflip[1]))
 						radeon_crtc_handle_flip(rdev, 1);
 					rdev->irq.stat_regs.r600.disp_int &= ~LB_D2_VBLANK_INTERRUPT;
 					DRM_DEBUG("IH: D2 vblank\n");
@@ -3477,10 +3978,12 @@ restart_ih:
 			DRM_DEBUG("IH: CP EOP\n");
 			radeon_fence_process(rdev, RADEON_RING_TYPE_GFX_INDEX);
 			break;
+		case 224: /* DMA trap event */
+			DRM_DEBUG("IH: DMA trap\n");
+			radeon_fence_process(rdev, R600_RING_TYPE_DMA_INDEX);
+			break;
 		case 233: /* GUI IDLE */
 			DRM_DEBUG("IH: GUI idle\n");
-			rdev->pm.gui_idle = true;
-			wake_up(&rdev->irq.idle_queue);
 			break;
 		default:
 			DRM_DEBUG("Unhandled interrupt: %d %d\n", src_id, src_data);
@@ -3491,17 +3994,19 @@ restart_ih:
 		rptr += 16;
 		rptr &= rdev->ih.ptr_mask;
 	}
-	/* make sure wptr hasn't changed while processing */
-	wptr = r600_get_ih_wptr(rdev);
-	if (wptr != rdev->ih.wptr)
-		goto restart_ih;
 	if (queue_hotplug)
 		schedule_work(&rdev->hotplug_work);
 	if (queue_hdmi)
 		schedule_work(&rdev->audio_work);
 	rdev->ih.rptr = rptr;
 	WREG32(IH_RB_RPTR, rdev->ih.rptr);
-	spin_unlock_irqrestore(&rdev->ih.lock, flags);
+	atomic_set(&rdev->ih.lock, 0);
+
+	/* make sure wptr hasn't changed while processing */
+	wptr = r600_get_ih_wptr(rdev);
+	if (wptr != rptr)
+		goto restart_ih;
+
 	return IRQ_HANDLED;
 }
 
@@ -3684,6 +4189,8 @@ static void r600_pcie_gen2_enable(struct radeon_device *rdev)
 {
 	u32 link_width_cntl, lanes, speed_cntl, training_cntl, tmp;
 	u16 link_cntl2;
+	u32 mask;
+	int ret;
 
 	if (radeon_pcie_gen2 == 0)
 		return;
@@ -3701,6 +4208,21 @@ static void r600_pcie_gen2_enable(struct radeon_device *rdev)
 	/* only RV6xx+ chips are supported */
 	if (rdev->family <= CHIP_R600)
 		return;
+
+	ret = drm_pcie_get_speed_cap_mask(rdev->ddev, &mask);
+	if (ret != 0)
+		return;
+
+	if (!(mask & DRM_PCIE_SPEED_50))
+		return;
+
+	speed_cntl = RREG32_PCIE_P(PCIE_LC_SPEED_CNTL);
+	if (speed_cntl & LC_CURRENT_DATA_RATE) {
+		DRM_INFO("PCIE gen 2 link speeds already enabled\n");
+		return;
+	}
+
+	DRM_INFO("enabling PCIE gen 2 link speeds, disable with radeon.pcie_gen2=0\n");
 
 	/* 55 nm r6xx asics */
 	if ((rdev->family == CHIP_RV670) ||
@@ -3780,4 +4302,24 @@ static void r600_pcie_gen2_enable(struct radeon_device *rdev)
 			link_width_cntl &= ~LC_UPCONFIGURE_DIS;
 		WREG32_PCIE_P(PCIE_LC_LINK_WIDTH_CNTL, link_width_cntl);
 	}
+}
+
+/**
+ * r600_get_gpu_clock - return GPU clock counter snapshot
+ *
+ * @rdev: radeon_device pointer
+ *
+ * Fetches a GPU clock counter snapshot (R6xx-cayman).
+ * Returns the 64 bit clock counter snapshot.
+ */
+uint64_t r600_get_gpu_clock(struct radeon_device *rdev)
+{
+	uint64_t clock;
+
+	mutex_lock(&rdev->gpu_clock_mutex);
+	WREG32(RLC_CAPTURE_GPU_CLOCK_COUNT, 1);
+	clock = (uint64_t)RREG32(RLC_GPU_CLOCK_COUNT_LSB) |
+	        ((uint64_t)RREG32(RLC_GPU_CLOCK_COUNT_MSB) << 32ULL);
+	mutex_unlock(&rdev->gpu_clock_mutex);
+	return clock;
 }

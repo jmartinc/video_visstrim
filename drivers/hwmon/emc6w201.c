@@ -18,7 +18,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
@@ -188,7 +187,7 @@ static struct emc6w201_data *emc6w201_update_device(struct device *dev)
  * Sysfs callback functions
  */
 
-static const u16 nominal_mv[6] = { 2500, 1500, 3300, 5000, 1500, 1500 };
+static const s16 nominal_mv[6] = { 2500, 1500, 3300, 5000, 1500, 1500 };
 
 static ssize_t show_in(struct device *dev, struct device_attribute *devattr,
 	char *buf)
@@ -492,11 +491,10 @@ static int emc6w201_probe(struct i2c_client *client,
 	struct emc6w201_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct emc6w201_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&client->dev, sizeof(struct emc6w201_data),
+			    GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	i2c_set_clientdata(client, data);
 	mutex_init(&data->update_lock);
@@ -504,7 +502,7 @@ static int emc6w201_probe(struct i2c_client *client,
 	/* Create sysfs attribute */
 	err = sysfs_create_group(&client->dev.kobj, &emc6w201_group);
 	if (err)
-		goto exit_free;
+		return err;
 
 	/* Expose as a hwmon device */
 	data->hwmon_dev = hwmon_device_register(&client->dev);
@@ -517,9 +515,6 @@ static int emc6w201_probe(struct i2c_client *client,
 
  exit_remove:
 	sysfs_remove_group(&client->dev.kobj, &emc6w201_group);
- exit_free:
-	kfree(data);
- exit:
 	return err;
 }
 
@@ -529,7 +524,6 @@ static int emc6w201_remove(struct i2c_client *client)
 
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &emc6w201_group);
-	kfree(data);
 
 	return 0;
 }

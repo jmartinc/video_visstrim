@@ -20,13 +20,13 @@
 #include <linux/clkdev.h>
 #include <linux/io.h>
 #include <linux/err.h>
-
-#include <mach/hardware.h>
-#include <mach/mx31.h>
-#include <mach/common.h>
+#include <linux/of.h>
 
 #include "clk.h"
+#include "common.h"
 #include "crmregs-imx3.h"
+#include "hardware.h"
+#include "mx31.h"
 
 static const char *mcu_main_sel[] = { "spll", "mpll", };
 static const char *per_sel[] = { "per_div", "ipg", };
@@ -123,13 +123,13 @@ int __init mx31_clocks_init(unsigned long fref)
 	clk_register_clkdev(clk[cspi3_gate], NULL, "imx31-cspi.2");
 	clk_register_clkdev(clk[pwm_gate], "pwm", NULL);
 	clk_register_clkdev(clk[wdog_gate], NULL, "imx2-wdt.0");
-	clk_register_clkdev(clk[rtc_gate], "rtc", NULL);
+	clk_register_clkdev(clk[rtc_gate], NULL, "imx21-rtc");
 	clk_register_clkdev(clk[epit1_gate], "epit", NULL);
 	clk_register_clkdev(clk[epit2_gate], "epit", NULL);
-	clk_register_clkdev(clk[nfc], NULL, "mxc_nand.0");
+	clk_register_clkdev(clk[nfc], NULL, "imx27-nand.0");
 	clk_register_clkdev(clk[ipu_gate], NULL, "ipu-core");
 	clk_register_clkdev(clk[ipu_gate], NULL, "mx3_sdc_fb");
-	clk_register_clkdev(clk[kpp_gate], "kpp", NULL);
+	clk_register_clkdev(clk[kpp_gate], NULL, "imx-keypad");
 	clk_register_clkdev(clk[usb_div_post], "per", "mxc-ehci.0");
 	clk_register_clkdev(clk[usb_gate], "ahb", "mxc-ehci.0");
 	clk_register_clkdev(clk[ipg], "ipg", "mxc-ehci.0");
@@ -154,18 +154,18 @@ int __init mx31_clocks_init(unsigned long fref)
 	clk_register_clkdev(clk[ipg], "ipg", "imx21-uart.3");
 	clk_register_clkdev(clk[uart5_gate], "per", "imx21-uart.4");
 	clk_register_clkdev(clk[ipg], "ipg", "imx21-uart.4");
-	clk_register_clkdev(clk[i2c1_gate], NULL, "imx-i2c.0");
-	clk_register_clkdev(clk[i2c2_gate], NULL, "imx-i2c.1");
-	clk_register_clkdev(clk[i2c3_gate], NULL, "imx-i2c.2");
+	clk_register_clkdev(clk[i2c1_gate], NULL, "imx21-i2c.0");
+	clk_register_clkdev(clk[i2c2_gate], NULL, "imx21-i2c.1");
+	clk_register_clkdev(clk[i2c3_gate], NULL, "imx21-i2c.2");
 	clk_register_clkdev(clk[owire_gate], NULL, "mxc_w1.0");
-	clk_register_clkdev(clk[sdhc1_gate], NULL, "mxc-mmc.0");
-	clk_register_clkdev(clk[sdhc2_gate], NULL, "mxc-mmc.1");
+	clk_register_clkdev(clk[sdhc1_gate], NULL, "imx31-mmc.0");
+	clk_register_clkdev(clk[sdhc2_gate], NULL, "imx31-mmc.1");
 	clk_register_clkdev(clk[ssi1_gate], NULL, "imx-ssi.0");
 	clk_register_clkdev(clk[ssi2_gate], NULL, "imx-ssi.1");
 	clk_register_clkdev(clk[firi_gate], "firi", NULL);
 	clk_register_clkdev(clk[ata_gate], NULL, "pata_imx");
 	clk_register_clkdev(clk[rtic_gate], "rtic", NULL);
-	clk_register_clkdev(clk[rng_gate], "rng", NULL);
+	clk_register_clkdev(clk[rng_gate], NULL, "mxc_rnga");
 	clk_register_clkdev(clk[sdma_gate], NULL, "imx31-sdma");
 	clk_register_clkdev(clk[iim_gate], "iim", NULL);
 
@@ -175,8 +175,25 @@ int __init mx31_clocks_init(unsigned long fref)
 	mx31_revision();
 	clk_disable_unprepare(clk[iim_gate]);
 
-	mxc_timer_init(NULL, MX31_IO_ADDRESS(MX31_GPT1_BASE_ADDR),
-			MX31_INT_GPT);
+	mxc_timer_init(MX31_IO_ADDRESS(MX31_GPT1_BASE_ADDR), MX31_INT_GPT);
 
 	return 0;
 }
+
+#ifdef CONFIG_OF
+int __init mx31_clocks_init_dt(void)
+{
+	struct device_node *np;
+	u32 fref = 26000000; /* default */
+
+	for_each_compatible_node(np, NULL, "fixed-clock") {
+		if (!of_device_is_compatible(np, "fsl,imx-osc26m"))
+			continue;
+
+		if (!of_property_read_u32(np, "clock-frequency", &fref))
+			break;
+	}
+
+	return mx31_clocks_init(fref);
+}
+#endif

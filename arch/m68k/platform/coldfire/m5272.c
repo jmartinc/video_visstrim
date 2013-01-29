@@ -19,7 +19,7 @@
 #include <asm/coldfire.h>
 #include <asm/mcfsim.h>
 #include <asm/mcfuart.h>
-#include <asm/mcfgpio.h>
+#include <asm/mcfclk.h>
 
 /***************************************************************************/
 
@@ -31,13 +31,28 @@ unsigned char ledbank = 0xff;
 
 /***************************************************************************/
 
-struct mcf_gpio_chip mcf_gpio_chips[] = {
-	MCFGPS(PA,  0, 16, MCFSIM_PADDR, MCFSIM_PADAT, MCFSIM_PADAT),
-	MCFGPS(PB, 16, 16, MCFSIM_PBDDR, MCFSIM_PBDAT, MCFSIM_PBDAT),
-	MCFGPS(Pc, 32, 16, MCFSIM_PCDDR, MCFSIM_PCDAT, MCFSIM_PCDAT),
-};
+DEFINE_CLK(pll, "pll.0", MCF_CLK);
+DEFINE_CLK(sys, "sys.0", MCF_BUSCLK);
+DEFINE_CLK(mcftmr0, "mcftmr.0", MCF_BUSCLK);
+DEFINE_CLK(mcftmr1, "mcftmr.1", MCF_BUSCLK);
+DEFINE_CLK(mcftmr2, "mcftmr.2", MCF_BUSCLK);
+DEFINE_CLK(mcftmr3, "mcftmr.3", MCF_BUSCLK);
+DEFINE_CLK(mcfuart0, "mcfuart.0", MCF_BUSCLK);
+DEFINE_CLK(mcfuart1, "mcfuart.1", MCF_BUSCLK);
+DEFINE_CLK(fec0, "fec.0", MCF_BUSCLK);
 
-unsigned int mcf_gpio_chips_size = ARRAY_SIZE(mcf_gpio_chips);
+struct clk *mcf_clks[] = {
+	&clk_pll,
+	&clk_sys,
+	&clk_mcftmr0,
+	&clk_mcftmr1,
+	&clk_mcftmr2,
+	&clk_mcftmr3,
+	&clk_mcfuart0,
+	&clk_mcfuart1,
+	&clk_fec0,
+	NULL
+};
 
 /***************************************************************************/
 
@@ -46,13 +61,13 @@ static void __init m5272_uarts_init(void)
 	u32 v;
 
 	/* Enable the output lines for the serial ports */
-	v = readl(MCF_MBAR + MCFSIM_PBCNT);
+	v = readl(MCFSIM_PBCNT);
 	v = (v & ~0x000000ff) | 0x00000055;
-	writel(v, MCF_MBAR + MCFSIM_PBCNT);
+	writel(v, MCFSIM_PBCNT);
 
-	v = readl(MCF_MBAR + MCFSIM_PDCNT);
+	v = readl(MCFSIM_PDCNT);
 	v = (v & ~0x000003fc) | 0x000002a8;
-	writel(v, MCF_MBAR + MCFSIM_PDCNT);
+	writel(v, MCFSIM_PDCNT);
 }
 
 /***************************************************************************/
@@ -61,9 +76,9 @@ static void m5272_cpu_reset(void)
 {
 	local_irq_disable();
 	/* Set watchdog to reset, and enabled */
-	__raw_writew(0, MCF_MBAR + MCFSIM_WIRR);
-	__raw_writew(1, MCF_MBAR + MCFSIM_WRRR);
-	__raw_writew(0, MCF_MBAR + MCFSIM_WCR);
+	__raw_writew(0, MCFSIM_WIRR);
+	__raw_writew(1, MCFSIM_WRRR);
+	__raw_writew(0, MCFSIM_WCR);
 	for (;;)
 		/* wait for watchdog to timeout */;
 }
@@ -73,11 +88,8 @@ static void m5272_cpu_reset(void)
 void __init config_BSP(char *commandp, int size)
 {
 #if defined (CONFIG_MOD5272)
-	volatile unsigned char	*pivrp;
-
 	/* Set base of device vectors to be 64 */
-	pivrp = (volatile unsigned char *) (MCF_MBAR + MCFSIM_PIVR);
-	*pivrp = 0x40;
+	writeb(0x40, MCFSIM_PIVR);
 #endif
 
 #if defined(CONFIG_NETtel) || defined(CONFIG_SCALES)

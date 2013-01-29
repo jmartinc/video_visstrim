@@ -122,13 +122,12 @@ Configuration Options:
 #define MPC624_SPEED_6_875_Hz \
 	(MPC624_OSR4 | MPC624_OSR3 | MPC624_OSR2 | MPC624_OSR1 | MPC624_OSR0)
 /* -------------------------------------------------------------------------- */
-struct skel_private {
+struct mpc624_private {
 
 	/*  set by mpc624_attach() from driver's parameters */
 	unsigned long int ulConvertionRate;
 };
 
-#define devpriv ((struct skel_private *)dev->private)
 /* -------------------------------------------------------------------------- */
 static const struct comedi_lrange range_mpc624_bipolar1 = {
 	1,
@@ -155,6 +154,7 @@ static int mpc624_ai_rinsn(struct comedi_device *dev,
 			   struct comedi_subdevice *s, struct comedi_insn *insn,
 			   unsigned int *data)
 {
+	struct mpc624_private *devpriv = dev->private;
 	int n, i;
 	unsigned long int data_in, data_out;
 	unsigned char ucPort;
@@ -283,8 +283,10 @@ static int mpc624_ai_rinsn(struct comedi_device *dev,
 
 static int mpc624_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 {
+	struct mpc624_private *devpriv;
 	struct comedi_subdevice *s;
 	unsigned long iobase;
+	int ret;
 
 	iobase = it->options[0];
 	printk(KERN_INFO "comedi%d: mpc624 [0x%04lx, ", dev->minor, iobase);
@@ -296,9 +298,10 @@ static int mpc624_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	dev->iobase = iobase;
 	dev->board_name = "mpc624";
 
-	/*  Private structure initialization */
-	if (alloc_private(dev, sizeof(struct skel_private)) < 0)
+	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	if (!devpriv)
 		return -ENOMEM;
+	dev->private = devpriv;
 
 	switch (it->options[1]) {
 	case 0:
@@ -348,11 +351,11 @@ static int mpc624_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		devpriv->ulConvertionRate = MPC624_SPEED_3_52_kHz;
 	}
 
-	/*  Subdevices structures */
-	if (alloc_subdevices(dev, 1) < 0)
-		return -ENOMEM;
+	ret = comedi_alloc_subdevices(dev, 1);
+	if (ret)
+		return ret;
 
-	s = dev->subdevices + 0;
+	s = &dev->subdevices[0];
 	s->type = COMEDI_SUBD_AI;
 	s->subdev_flags = SDF_READABLE | SDF_DIFF;
 	s->n_chan = 8;

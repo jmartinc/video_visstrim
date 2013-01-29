@@ -296,7 +296,7 @@ int bnx2fc_send_session_ofld_req(struct fcoe_port *port,
 	ofld_req3.flags |= (interface->vlan_enabled <<
 			    FCOE_KWQE_CONN_OFFLOAD3_B_VLAN_FLAG_SHIFT);
 
-	/* C2_VALID and ACK flags are not set as they are not suppported */
+	/* C2_VALID and ACK flags are not set as they are not supported */
 
 
 	/* Initialize offload request 4 structure */
@@ -1244,7 +1244,9 @@ static void bnx2fc_process_conn_disable_cmpl(struct bnx2fc_hba *hba,
 	if (disable_kcqe->completion_status) {
 		printk(KERN_ERR PFX "Disable failed with cmpl status %d\n",
 			disable_kcqe->completion_status);
-		return;
+		set_bit(BNX2FC_FLAG_DISABLE_FAILED, &tgt->flags);
+		set_bit(BNX2FC_FLAG_UPLD_REQ_COMPL, &tgt->flags);
+		wake_up_interruptible(&tgt->upld_wait);
 	} else {
 		/* disable successful */
 		BNX2FC_TGT_DBG(tgt, "disable successful\n");

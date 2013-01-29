@@ -84,9 +84,11 @@ acpi_ev_update_gpe_enable_mask(struct acpi_gpe_event_info *gpe_event_info);
 
 acpi_status acpi_ev_enable_gpe(struct acpi_gpe_event_info *gpe_event_info);
 
-acpi_status acpi_ev_add_gpe_reference(struct acpi_gpe_event_info *gpe_event_info);
+acpi_status
+acpi_ev_add_gpe_reference(struct acpi_gpe_event_info *gpe_event_info);
 
-acpi_status acpi_ev_remove_gpe_reference(struct acpi_gpe_event_info *gpe_event_info);
+acpi_status
+acpi_ev_remove_gpe_reference(struct acpi_gpe_event_info *gpe_event_info);
 
 struct acpi_gpe_event_info *acpi_ev_get_gpe_event_info(acpi_handle gpe_device,
 						       u32 gpe_number);
@@ -237,7 +239,7 @@ u32 acpi_ev_install_sci_handler(void);
 
 acpi_status acpi_ev_remove_sci_handler(void);
 
-u32 acpi_ev_initialize_sCI(u32 program_sCI);
+u32 acpi_ev_initialize_SCI(u32 program_SCI);
 
 ACPI_HW_DEPENDENT_RETURN_VOID(void acpi_ev_terminate(void))
 #endif				/* __ACEVENTS_H__  */

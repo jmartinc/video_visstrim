@@ -35,6 +35,16 @@ static int hfs_readpage(struct file *file, struct page *page)
 	return block_read_full_page(page, hfs_get_block);
 }
 
+static void hfs_write_failed(struct address_space *mapping, loff_t to)
+{
+	struct inode *inode = mapping->host;
+
+	if (to > inode->i_size) {
+		truncate_pagecache(inode, to, inode->i_size);
+		hfs_file_truncate(inode);
+	}
+}
+
 static int hfs_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
@@ -45,11 +55,8 @@ static int hfs_write_begin(struct file *file, struct address_space *mapping,
 	ret = cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
 				hfs_get_block,
 				&HFS_I(mapping->host)->phys_size);
-	if (unlikely(ret)) {
-		loff_t isize = mapping->host->i_size;
-		if (pos + len > isize)
-			vmtruncate(mapping->host, isize);
-	}
+	if (unlikely(ret))
+		hfs_write_failed(mapping, pos + len);
 
 	return ret;
 }
@@ -120,6 +127,7 @@ static ssize_t hfs_direct_IO(int rw, struct kiocb *iocb,
 		const struct iovec *iov, loff_t offset, unsigned long nr_segs)
 {
 	struct file *file = iocb->ki_filp;
+	struct address_space *mapping = file->f_mapping;
 	struct inode *inode = file->f_path.dentry->d_inode->i_mapping->host;
 	ssize_t ret;
 
@@ -135,7 +143,7 @@ static ssize_t hfs_direct_IO(int rw, struct kiocb *iocb,
 		loff_t end = offset + iov_length(iov, nr_segs);
 
 		if (end > isize)
-			vmtruncate(inode, isize);
+			hfs_write_failed(mapping, end);
 	}
 
 	return ret;
@@ -220,7 +228,7 @@ struct inode *hfs_new_inode(struct inode *dir, struct qstr *name, umode_t mode)
 	insert_inode_hash(inode);
 	mark_inode_dirty(inode);
 	set_bit(HFS_FLG_MDB_DIRTY, &HFS_SB(sb)->flags);
-	sb->s_dirt = 1;
+	hfs_mark_mdb_dirty(sb);
 
 	return inode;
 }
@@ -235,7 +243,7 @@ void hfs_delete_inode(struct inode *inode)
 		if (HFS_I(inode)->cat_key.ParID == cpu_to_be32(HFS_ROOT_CNID))
 			HFS_SB(sb)->root_dirs--;
 		set_bit(HFS_FLG_MDB_DIRTY, &HFS_SB(sb)->flags);
-		sb->s_dirt = 1;
+		hfs_mark_mdb_dirty(sb);
 		return;
 	}
 	HFS_SB(sb)->file_count--;
@@ -248,7 +256,7 @@ void hfs_delete_inode(struct inode *inode)
 		}
 	}
 	set_bit(HFS_FLG_MDB_DIRTY, &HFS_SB(sb)->flags);
-	sb->s_dirt = 1;
+	hfs_mark_mdb_dirty(sb);
 }
 
 void hfs_inode_read_fork(struct inode *inode, struct hfs_extent *ext,
@@ -489,7 +497,7 @@ out:
 }
 
 static struct dentry *hfs_file_lookup(struct inode *dir, struct dentry *dentry,
-				      struct nameidata *nd)
+				      unsigned int flags)
 {
 	struct inode *inode = NULL;
 	hfs_cat_rec rec;
@@ -594,9 +602,9 @@ int hfs_inode_setattr(struct dentry *dentry, struct iattr * attr)
 
 	/* no uig/gid changes and limit which mode bits can be set */
 	if (((attr->ia_valid & ATTR_UID) &&
-	     (attr->ia_uid != hsb->s_uid)) ||
+	     (!uid_eq(attr->ia_uid, hsb->s_uid))) ||
 	    ((attr->ia_valid & ATTR_GID) &&
-	     (attr->ia_gid != hsb->s_gid)) ||
+	     (!gid_eq(attr->ia_gid, hsb->s_gid))) ||
 	    ((attr->ia_valid & ATTR_MODE) &&
 	     ((S_ISDIR(inode->i_mode) &&
 	       (attr->ia_mode != inode->i_mode)) ||
@@ -617,9 +625,12 @@ int hfs_inode_setattr(struct dentry *dentry, struct iattr * attr)
 	    attr->ia_size != i_size_read(inode)) {
 		inode_dio_wait(inode);
 
-		error = vmtruncate(inode, attr->ia_size);
+		error = inode_newsize_ok(inode, attr->ia_size);
 		if (error)
 			return error;
+
+		truncate_setsize(inode, attr->ia_size);
+		hfs_file_truncate(inode);
 	}
 
 	setattr_copy(inode, attr);
@@ -644,13 +655,7 @@ static int hfs_file_fsync(struct file *filp, loff_t start, loff_t end,
 
 	/* sync the superblock to buffers */
 	sb = inode->i_sb;
-	if (sb->s_dirt) {
-		lock_super(sb);
-		sb->s_dirt = 0;
-		if (!(sb->s_flags & MS_RDONLY))
-			hfs_mdb_commit(sb);
-		unlock_super(sb);
-	}
+	flush_delayed_work(&HFS_SB(sb)->mdb_work);
 	/* .. finally sync the buffers to disk */
 	err = sync_blockdev(sb->s_bdev);
 	if (!ret)
@@ -674,7 +679,6 @@ static const struct file_operations hfs_file_operations = {
 
 static const struct inode_operations hfs_file_inode_operations = {
 	.lookup		= hfs_file_lookup,
-	.truncate	= hfs_file_truncate,
 	.setattr	= hfs_inode_setattr,
 	.setxattr	= hfs_setxattr,
 	.getxattr	= hfs_getxattr,

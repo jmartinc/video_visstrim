@@ -59,8 +59,6 @@ int r8180_wx_set_key(struct net_device *dev, struct iw_request_info *info,
 	if (priv->ieee80211->bHwRadioOff)
 		return 0;
 
-	if (erq->flags & IW_ENCODE_DISABLED)
-
 	if (erq->length > 0) {
 		u32* tkey = (u32*) key;
 		priv->key0[0] = tkey[0];
@@ -615,10 +613,10 @@ static int r8180_wx_get_retry(struct net_device *dev,
 		return -EINVAL;
 
 	if (wrqu->retry.flags & IW_RETRY_MAX) {
-		wrqu->retry.flags = IW_RETRY_LIMIT & IW_RETRY_MAX;
+		wrqu->retry.flags = IW_RETRY_LIMIT | IW_RETRY_MAX;
 		wrqu->retry.value = priv->retry_rts;
 	} else {
-		wrqu->retry.flags = IW_RETRY_LIMIT & IW_RETRY_MIN;
+		wrqu->retry.flags = IW_RETRY_LIMIT | IW_RETRY_MIN;
 		wrqu->retry.value = priv->retry_data;
 	}
 

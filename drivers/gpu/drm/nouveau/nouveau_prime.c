@@ -1,12 +1,33 @@
-
-#include "drmP.h"
-#include "drm.h"
-
-#include "nouveau_drv.h"
-#include "nouveau_drm.h"
-#include "nouveau_dma.h"
+/*
+ * Copyright 2011 Red Hat Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * Authors: Dave Airlie
+ */
 
 #include <linux/dma-buf.h>
+
+#include <drm/drmP.h>
+
+#include "nouveau_drm.h"
+#include "nouveau_gem.h"
 
 static struct sg_table *nouveau_gem_map_dma_buf(struct dma_buf_attachment *attachment,
 					  enum dma_data_direction dir)
@@ -134,10 +155,6 @@ nouveau_prime_new(struct drm_device *dev,
 		return ret;
 	nvbo = *pnvbo;
 
-	/* we restrict allowed domains on nv50+ to only the types
-	 * that were requested at creation time.  not possibly on
-	 * earlier chips without busting the ABI.
-	 */
 	nvbo->valid_domains = NOUVEAU_GEM_DOMAIN_GART;
 	nvbo->gem = drm_gem_object_alloc(dev, nvbo->bo.mem.size);
 	if (!nvbo->gem) {
@@ -176,6 +193,7 @@ struct drm_gem_object *nouveau_gem_prime_import(struct drm_device *dev,
 		if (nvbo->gem) {
 			if (nvbo->gem->dev == dev) {
 				drm_gem_object_reference(nvbo->gem);
+				dma_buf_put(dma_buf);
 				return nvbo->gem;
 			}
 		}

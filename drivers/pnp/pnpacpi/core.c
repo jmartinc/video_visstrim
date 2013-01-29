@@ -58,7 +58,7 @@ static inline int __init is_exclusive_device(struct acpi_device *dev)
 	if (!(('0' <= (c) && (c) <= '9') || ('A' <= (c) && (c) <= 'F'))) \
 		return 0
 #define TEST_ALPHA(c) \
-	if (!('@' <= (c) || (c) <= 'Z')) \
+	if (!('A' <= (c) && (c) <= 'Z')) \
 		return 0
 static int __init ispnpidacpi(const char *id)
 {
@@ -94,6 +94,9 @@ static int pnpacpi_set_resources(struct pnp_dev *dev)
 		dev_dbg(&dev->dev, "ACPI device not found in %s!\n", __func__);
 		return -ENODEV;
 	}
+
+	if (WARN_ON_ONCE(acpi_dev != dev->data))
+		dev->data = acpi_dev;
 
 	ret = pnpacpi_build_resource_template(dev, &buffer);
 	if (ret)
@@ -170,8 +173,8 @@ static int pnpacpi_suspend(struct pnp_dev *dev, pm_message_t state)
 	}
 
 	if (acpi_bus_power_manageable(handle)) {
-		int power_state = acpi_pm_device_sleep_state(&dev->dev, NULL);
-
+		int power_state = acpi_pm_device_sleep_state(&dev->dev, NULL,
+							     ACPI_STATE_D3);
 		if (power_state < 0)
 			power_state = (state.event == PM_EVENT_ON) ?
 					ACPI_STATE_D0 : ACPI_STATE_D3;
@@ -241,6 +244,10 @@ static int __init pnpacpi_add_device(struct acpi_device *device)
 	struct pnp_dev *dev;
 	char *pnpid;
 	struct acpi_hardware_id *id;
+
+	/* Skip devices that are already bound */
+	if (device->physical_node_count)
+		return 0;
 
 	/*
 	 * If a PnPacpi device is not present , the device
@@ -321,14 +328,9 @@ static int __init acpi_pnp_match(struct device *dev, void *_pnp)
 {
 	struct acpi_device *acpi = to_acpi_device(dev);
 	struct pnp_dev *pnp = _pnp;
-	struct device *physical_device;
-
-	physical_device = acpi_get_physical_device(acpi->handle);
-	if (physical_device)
-		put_device(physical_device);
 
 	/* true means it matched */
-	return !physical_device
+	return !acpi->physical_node_count
 	    && compare_pnp_id(pnp->id, acpi_device_hid(acpi));
 }
 

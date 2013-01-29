@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Module Name: hwacpi - ACPI Hardware Initialization/Mode Interface
@@ -53,7 +52,7 @@ ACPI_MODULE_NAME("hwacpi")
  *
  * FUNCTION:    acpi_hw_set_mode
  *
- * PARAMETERS:  Mode            - SYS_MODE_ACPI or SYS_MODE_LEGACY
+ * PARAMETERS:  mode            - SYS_MODE_ACPI or SYS_MODE_LEGACY
  *
  * RETURN:      Status
  *
@@ -136,7 +135,7 @@ acpi_status acpi_hw_set_mode(u32 mode)
  *
  * RETURN:      SYS_MODE_ACPI or SYS_MODE_LEGACY
  *
- * DESCRIPTION: Return current operating state of system.  Determined by
+ * DESCRIPTION: Return current operating state of system. Determined by
  *              querying the SCI_EN bit.
  *
  ******************************************************************************/

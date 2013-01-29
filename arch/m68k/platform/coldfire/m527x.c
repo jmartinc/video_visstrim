@@ -20,49 +20,36 @@
 #include <asm/coldfire.h>
 #include <asm/mcfsim.h>
 #include <asm/mcfuart.h>
-#include <asm/mcfgpio.h>
+#include <asm/mcfclk.h>
 
 /***************************************************************************/
 
-struct mcf_gpio_chip mcf_gpio_chips[] = {
-#if defined(CONFIG_M5271)
-	MCFGPS(PIRQ, 1, 7, MCFEPORT_EPDDR, MCFEPORT_EPDR, MCFEPORT_EPPDR),
-	MCFGPF(ADDR, 13, 3),
-	MCFGPF(DATAH, 16, 8),
-	MCFGPF(DATAL, 24, 8),
-	MCFGPF(BUSCTL, 32, 8),
-	MCFGPF(BS, 40, 4),
-	MCFGPF(CS, 49, 7),
-	MCFGPF(SDRAM, 56, 6),
-	MCFGPF(FECI2C, 64, 4),
-	MCFGPF(UARTH, 72, 2),
-	MCFGPF(UARTL, 80, 8),
-	MCFGPF(QSPI, 88, 5),
-	MCFGPF(TIMER, 96, 8),
-#elif defined(CONFIG_M5275)
-	MCFGPS(PIRQ, 1, 7, MCFEPORT_EPDDR, MCFEPORT_EPDR, MCFEPORT_EPPDR),
-	MCFGPF(BUSCTL, 8, 8),
-	MCFGPF(ADDR, 21, 3),
-	MCFGPF(CS, 25, 7),
-	MCFGPF(FEC0H, 32, 8),
-	MCFGPF(FEC0L, 40, 8),
-	MCFGPF(FECI2C, 48, 6),
-	MCFGPF(QSPI, 56, 7),
-	MCFGPF(SDRAM, 64, 8),
-	MCFGPF(TIMERH, 72, 4),
-	MCFGPF(TIMERL, 80, 4),
-	MCFGPF(UARTL, 88, 8),
-	MCFGPF(FEC1H, 96, 8),
-	MCFGPF(FEC1L, 104, 8),
-	MCFGPF(BS, 114, 2),
-	MCFGPF(IRQ, 121, 7),
-	MCFGPF(USBH, 128, 1),
-	MCFGPF(USBL, 136, 8),
-	MCFGPF(UARTH, 144, 4),
-#endif
-};
+DEFINE_CLK(pll, "pll.0", MCF_CLK);
+DEFINE_CLK(sys, "sys.0", MCF_BUSCLK);
+DEFINE_CLK(mcfpit0, "mcfpit.0", MCF_CLK);
+DEFINE_CLK(mcfpit1, "mcfpit.1", MCF_CLK);
+DEFINE_CLK(mcfpit2, "mcfpit.2", MCF_CLK);
+DEFINE_CLK(mcfpit3, "mcfpit.3", MCF_CLK);
+DEFINE_CLK(mcfuart0, "mcfuart.0", MCF_BUSCLK);
+DEFINE_CLK(mcfuart1, "mcfuart.1", MCF_BUSCLK);
+DEFINE_CLK(mcfuart2, "mcfuart.2", MCF_BUSCLK);
+DEFINE_CLK(fec0, "fec.0", MCF_BUSCLK);
+DEFINE_CLK(fec1, "fec.1", MCF_BUSCLK);
 
-unsigned int mcf_gpio_chips_size = ARRAY_SIZE(mcf_gpio_chips);
+struct clk *mcf_clks[] = {
+	&clk_pll,
+	&clk_sys,
+	&clk_mcfpit0,
+	&clk_mcfpit1,
+	&clk_mcfpit2,
+	&clk_mcfpit3,
+	&clk_mcfuart0,
+	&clk_mcfuart1,
+	&clk_mcfuart2,
+	&clk_fec0,
+	&clk_fec1,
+	NULL
+};
 
 /***************************************************************************/
 
@@ -96,9 +83,9 @@ static void __init m527x_uarts_init(void)
 	/*
 	 * External Pin Mask Setting & Enable External Pin for Interface
 	 */
-	sepmask = readw(MCF_IPSBAR + MCF_GPIO_PAR_UART);
+	sepmask = readw(MCFGPIO_PAR_UART);
 	sepmask |= UART0_ENABLE_MASK | UART1_ENABLE_MASK | UART2_ENABLE_MASK;
-	writew(sepmask, MCF_IPSBAR + MCF_GPIO_PAR_UART);
+	writew(sepmask, MCFGPIO_PAR_UART);
 }
 
 /***************************************************************************/
@@ -110,19 +97,19 @@ static void __init m527x_fec_init(void)
 
 	/* Set multi-function pins to ethernet mode for fec0 */
 #if defined(CONFIG_M5271)
-	v = readb(MCF_IPSBAR + 0x100047);
-	writeb(v | 0xf0, MCF_IPSBAR + 0x100047);
+	v = readb(MCFGPIO_PAR_FECI2C);
+	writeb(v | 0xf0, MCFGPIO_PAR_FECI2C);
 #else
-	par = readw(MCF_IPSBAR + 0x100082);
-	writew(par | 0xf00, MCF_IPSBAR + 0x100082);
-	v = readb(MCF_IPSBAR + 0x100078);
-	writeb(v | 0xc0, MCF_IPSBAR + 0x100078);
+	par = readw(MCFGPIO_PAR_FECI2C);
+	writew(par | 0xf00, MCFGPIO_PAR_FECI2C);
+	v = readb(MCFGPIO_PAR_FEC0HL);
+	writeb(v | 0xc0, MCFGPIO_PAR_FEC0HL);
 
 	/* Set multi-function pins to ethernet mode for fec1 */
-	par = readw(MCF_IPSBAR + 0x100082);
-	writew(par | 0xa0, MCF_IPSBAR + 0x100082);
-	v = readb(MCF_IPSBAR + 0x100079);
-	writeb(v | 0xc0, MCF_IPSBAR + 0x100079);
+	par = readw(MCFGPIO_PAR_FECI2C);
+	writew(par | 0xa0, MCFGPIO_PAR_FECI2C);
+	v = readb(MCFGPIO_PAR_FEC1HL);
+	writeb(v | 0xc0, MCFGPIO_PAR_FEC1HL);
 #endif
 }
 

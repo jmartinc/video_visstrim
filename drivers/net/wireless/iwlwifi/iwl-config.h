@@ -113,7 +113,7 @@ enum iwl_led_mode {
 #define IWL_MAX_PLCP_ERR_THRESHOLD_DISABLE	0
 
 /* TX queue watchdog timeouts in mSecs */
-#define IWL_WATCHHDOG_DISABLED	0
+#define IWL_WATCHDOG_DISABLED	0
 #define IWL_DEF_WD_TIMEOUT	2000
 #define IWL_LONG_WD_TIMEOUT	10000
 #define IWL_MAX_WD_TIMEOUT	120000
@@ -143,14 +143,14 @@ enum iwl_led_mode {
  * @chain_noise_scale: default chain noise scale used for gain computation
  * @wd_timeout: TX queues watchdog timeout
  * @max_event_log_size: size of event log buffer size for ucode event logging
- * @shadow_reg_enable: HW shadhow register bit
+ * @shadow_reg_enable: HW shadow register support
  * @hd_v2: v2 of enhanced sensitivity value, used for 2000 series and up
  * @no_idle_support: do not support idle mode
  */
 struct iwl_base_params {
 	int eeprom_size;
 	int num_of_queues;	/* def: HW dependent */
-	/* for iwl_apm_init() */
+	/* for iwl_pcie_apm_init() */
 	u32 pll_cfg_val;
 
 	const u16 max_ll_items;
@@ -177,18 +177,39 @@ struct iwl_base_params {
 struct iwl_bt_params {
 	bool advanced_bt_coexist;
 	u8 bt_init_traffic_load;
-	u8 bt_prio_boost;
+	u32 bt_prio_boost;
 	u16 agg_time_limit;
 	bool bt_sco_disable;
 	bool bt_session_2;
 };
+
 /*
  * @use_rts_for_aggregation: use rts/cts protection for HT traffic
+ * @ht40_bands: bitmap of bands (using %IEEE80211_BAND_*) that support HT40
  */
 struct iwl_ht_params {
+	enum ieee80211_smps_mode smps_mode;
 	const bool ht_greenfield_support; /* if used set to true */
 	bool use_rts_for_aggregation;
-	enum ieee80211_smps_mode smps_mode;
+	u8 ht40_bands;
+};
+
+/*
+ * information on how to parse the EEPROM
+ */
+#define EEPROM_REG_BAND_1_CHANNELS		0x08
+#define EEPROM_REG_BAND_2_CHANNELS		0x26
+#define EEPROM_REG_BAND_3_CHANNELS		0x42
+#define EEPROM_REG_BAND_4_CHANNELS		0x5C
+#define EEPROM_REG_BAND_5_CHANNELS		0x74
+#define EEPROM_REG_BAND_24_HT40_CHANNELS	0x82
+#define EEPROM_REG_BAND_52_HT40_CHANNELS	0x92
+#define EEPROM_6000_REG_BAND_24_HT40_CHANNELS	0x80
+#define EEPROM_REGULATORY_BAND_NO_HT40		0
+
+struct iwl_eeprom_params {
+	const u8 regulatory_bands[7];
+	bool enhanced_txpower;
 };
 
 /**
@@ -205,8 +226,8 @@ struct iwl_ht_params {
  * @max_data_size: The maximal length of the fw data section
  * @valid_tx_ant: valid transmit antenna
  * @valid_rx_ant: valid receive antenna
- * @eeprom_ver: EEPROM version
- * @eeprom_calib_ver: EEPROM calibration version
+ * @nvm_ver: NVM version
+ * @nvm_calib_ver: NVM calibration version
  * @lib: pointer to the lib ops
  * @base_params: pointer to basic parameters
  * @ht_params: point to ht patameters
@@ -236,13 +257,14 @@ struct iwl_cfg {
 	const u32 max_inst_size;
 	u8   valid_tx_ant;
 	u8   valid_rx_ant;
-	u16  eeprom_ver;
-	u16  eeprom_calib_ver;
+	u16  nvm_ver;
+	u16  nvm_calib_ver;
 	/* params not likely to change within a device family */
 	const struct iwl_base_params *base_params;
 	/* params likely to change within a device family */
 	const struct iwl_ht_params *ht_params;
 	const struct iwl_bt_params *bt_params;
+	const struct iwl_eeprom_params *eeprom_params;
 	const bool need_temp_offset_calib; /* if used set to true */
 	const bool no_xtal_calib;
 	enum iwl_led_mode led_mode;

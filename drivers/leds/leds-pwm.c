@@ -26,7 +26,7 @@
 struct led_pwm_data {
 	struct led_classdev	cdev;
 	struct pwm_device	*pwm;
-	unsigned int 		active_low;
+	unsigned int		active_low;
 	unsigned int		period;
 };
 
@@ -57,7 +57,8 @@ static int led_pwm_probe(struct platform_device *pdev)
 	if (!pdata)
 		return -EBUSY;
 
-	leds_data = kzalloc(sizeof(struct led_pwm_data) * pdata->num_leds,
+	leds_data = devm_kzalloc(&pdev->dev,
+			sizeof(struct led_pwm_data) * pdata->num_leds,
 				GFP_KERNEL);
 	if (!leds_data)
 		return -ENOMEM;
@@ -103,12 +104,10 @@ err:
 		}
 	}
 
-	kfree(leds_data);
-
 	return ret;
 }
 
-static int __devexit led_pwm_remove(struct platform_device *pdev)
+static int led_pwm_remove(struct platform_device *pdev)
 {
 	int i;
 	struct led_pwm_platform_data *pdata = pdev->dev.platform_data;
@@ -121,14 +120,12 @@ static int __devexit led_pwm_remove(struct platform_device *pdev)
 		pwm_free(leds_data[i].pwm);
 	}
 
-	kfree(leds_data);
-
 	return 0;
 }
 
 static struct platform_driver led_pwm_driver = {
 	.probe		= led_pwm_probe,
-	.remove		= __devexit_p(led_pwm_remove),
+	.remove		= led_pwm_remove,
 	.driver		= {
 		.name	= "leds_pwm",
 		.owner	= THIS_MODULE,

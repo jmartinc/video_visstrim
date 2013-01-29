@@ -785,6 +785,9 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 	if (error)
 		goto out_rlist;
 
+	if (gfs2_rs_active(ip->i_res)) /* needs to be done with the rgrp glock held */
+		gfs2_rs_deltree(ip, ip->i_res);
+
 	error = gfs2_trans_begin(sdp, rg_blocks + RES_DINODE +
 				 RES_INDIRECT + RES_STATFS + RES_QUOTA,
 				 revokes);
@@ -988,6 +991,41 @@ unlock:
 	return err;
 }
 
+/**
+ * gfs2_journaled_truncate - Wrapper for truncate_pagecache for jdata files
+ * @inode: The inode being truncated
+ * @oldsize: The original (larger) size
+ * @newsize: The new smaller size
+ *
+ * With jdata files, we have to journal a revoke for each block which is
+ * truncated. As a result, we need to split this into separate transactions
+ * if the number of pages being truncated gets too large.
+ */
+
+#define GFS2_JTRUNC_REVOKES 8192
+
+static int gfs2_journaled_truncate(struct inode *inode, u64 oldsize, u64 newsize)
+{
+	struct gfs2_sbd *sdp = GFS2_SB(inode);
+	u64 max_chunk = GFS2_JTRUNC_REVOKES * sdp->sd_vfs->s_blocksize;
+	u64 chunk;
+	int error;
+
+	while (oldsize != newsize) {
+		chunk = oldsize - newsize;
+		if (chunk > max_chunk)
+			chunk = max_chunk;
+		truncate_pagecache(inode, oldsize, oldsize - chunk);
+		oldsize -= chunk;
+		gfs2_trans_end(sdp);
+		error = gfs2_trans_begin(sdp, RES_DINODE, GFS2_JTRUNC_REVOKES);
+		if (error)
+			return error;
+	}
+
+	return 0;
+}
+
 static int trunc_start(struct inode *inode, u64 oldsize, u64 newsize)
 {
 	struct gfs2_inode *ip = GFS2_I(inode);
@@ -997,8 +1035,10 @@ static int trunc_start(struct inode *inode, u64 oldsize, u64 newsize)
 	int journaled = gfs2_is_jdata(ip);
 	int error;
 
-	error = gfs2_trans_begin(sdp,
-				 RES_DINODE + (journaled ? RES_JDATA : 0), 0);
+	if (journaled)
+		error = gfs2_trans_begin(sdp, RES_DINODE + RES_JDATA, GFS2_JTRUNC_REVOKES);
+	else
+		error = gfs2_trans_begin(sdp, RES_DINODE, 0);
 	if (error)
 		return error;
 
@@ -1023,7 +1063,16 @@ static int trunc_start(struct inode *inode, u64 oldsize, u64 newsize)
 	ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
 	gfs2_dinode_out(ip, dibh->b_data);
 
-	truncate_pagecache(inode, oldsize, newsize);
+	if (journaled)
+		error = gfs2_journaled_truncate(inode, oldsize, newsize);
+	else
+		truncate_pagecache(inode, oldsize, newsize);
+
+	if (error) {
+		brelse(dibh);
+		return error;
+	}
+
 out_brelse:
 	brelse(dibh);
 out:
@@ -1045,12 +1094,13 @@ static int trunc_dealloc(struct gfs2_inode *ip, u64 size)
 		lblock = (size - 1) >> sdp->sd_sb.sb_bsize_shift;
 
 	find_metapath(sdp, lblock, &mp, ip->i_height);
-	if (!gfs2_qadata_get(ip))
-		return -ENOMEM;
+	error = gfs2_rindex_update(sdp);
+	if (error)
+		return error;
 
 	error = gfs2_quota_hold(ip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
 	if (error)
-		goto out;
+		return error;
 
 	while (height--) {
 		struct strip_mine sm;
@@ -1064,8 +1114,6 @@ static int trunc_dealloc(struct gfs2_inode *ip, u64 size)
 
 	gfs2_quota_unhold(ip);
 
-out:
-	gfs2_qadata_put(ip);
 	return error;
 }
 
@@ -1167,21 +1215,16 @@ static int do_grow(struct inode *inode, u64 size)
 	struct gfs2_inode *ip = GFS2_I(inode);
 	struct gfs2_sbd *sdp = GFS2_SB(inode);
 	struct buffer_head *dibh;
-	struct gfs2_qadata *qa = NULL;
 	int error;
 	int unstuff = 0;
 
 	if (gfs2_is_stuffed(ip) &&
 	    (size > (sdp->sd_sb.sb_bsize - sizeof(struct gfs2_dinode)))) {
-		qa = gfs2_qadata_get(ip);
-		if (qa == NULL)
-			return -ENOMEM;
-
 		error = gfs2_quota_lock_check(ip);
 		if (error)
-			goto do_grow_alloc_put;
+			return error;
 
-		error = gfs2_inplace_reserve(ip, 1);
+		error = gfs2_inplace_reserve(ip, 1, 0);
 		if (error)
 			goto do_grow_qunlock;
 		unstuff = 1;
@@ -1214,8 +1257,6 @@ do_grow_release:
 		gfs2_inplace_release(ip);
 do_grow_qunlock:
 		gfs2_quota_unlock(ip);
-do_grow_alloc_put:
-		gfs2_qadata_put(ip);
 	}
 	return error;
 }

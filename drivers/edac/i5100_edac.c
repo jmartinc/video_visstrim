@@ -431,10 +431,10 @@ static void i5100_handle_ce(struct mem_ctl_info *mci,
 		 "bank %u, cas %u, ras %u\n",
 		 bank, cas, ras);
 
-	edac_mc_handle_error(HW_EVENT_ERR_CORRECTED, mci,
+	edac_mc_handle_error(HW_EVENT_ERR_CORRECTED, mci, 1,
 			     0, 0, syndrome,
 			     chan, rank, -1,
-			     msg, detail, NULL);
+			     msg, detail);
 }
 
 static void i5100_handle_ue(struct mem_ctl_info *mci,
@@ -453,10 +453,10 @@ static void i5100_handle_ue(struct mem_ctl_info *mci,
 		 "bank %u, cas %u, ras %u\n",
 		 bank, cas, ras);
 
-	edac_mc_handle_error(HW_EVENT_ERR_UNCORRECTED, mci,
+	edac_mc_handle_error(HW_EVENT_ERR_UNCORRECTED, mci, 1,
 			     0, 0, syndrome,
 			     chan, rank, -1,
-			     msg, detail, NULL);
+			     msg, detail);
 }
 
 static void i5100_read_log(struct mem_ctl_info *mci, int chan,
@@ -638,8 +638,7 @@ static struct pci_dev *pci_get_device_func(unsigned vendor,
 	return ret;
 }
 
-static unsigned long __devinit i5100_npages(struct mem_ctl_info *mci,
-					    int csrow)
+static unsigned long i5100_npages(struct mem_ctl_info *mci, int csrow)
 {
 	struct i5100_priv *priv = mci->pvt_info;
 	const unsigned chan_rank = i5100_csrow_to_rank(mci, csrow);
@@ -660,7 +659,7 @@ static unsigned long __devinit i5100_npages(struct mem_ctl_info *mci,
 		((unsigned long long) (1ULL << addr_lines) / PAGE_SIZE);
 }
 
-static void __devinit i5100_init_mtr(struct mem_ctl_info *mci)
+static void i5100_init_mtr(struct mem_ctl_info *mci)
 {
 	struct i5100_priv *priv = mci->pvt_info;
 	struct pci_dev *mms[2] = { priv->ch0mm, priv->ch1mm };
@@ -732,7 +731,7 @@ static int i5100_read_spd_byte(const struct mem_ctl_info *mci,
  *   o not the only way to may chip selects to dimm slots
  *   o investigate if there is some way to obtain this map from the bios
  */
-static void __devinit i5100_init_dimm_csmap(struct mem_ctl_info *mci)
+static void i5100_init_dimm_csmap(struct mem_ctl_info *mci)
 {
 	struct i5100_priv *priv = mci->pvt_info;
 	int i;
@@ -762,8 +761,8 @@ static void __devinit i5100_init_dimm_csmap(struct mem_ctl_info *mci)
 	}
 }
 
-static void __devinit i5100_init_dimm_layout(struct pci_dev *pdev,
-					     struct mem_ctl_info *mci)
+static void i5100_init_dimm_layout(struct pci_dev *pdev,
+				   struct mem_ctl_info *mci)
 {
 	struct i5100_priv *priv = mci->pvt_info;
 	int i;
@@ -784,8 +783,8 @@ static void __devinit i5100_init_dimm_layout(struct pci_dev *pdev,
 	i5100_init_dimm_csmap(mci);
 }
 
-static void __devinit i5100_init_interleaving(struct pci_dev *pdev,
-					      struct mem_ctl_info *mci)
+static void i5100_init_interleaving(struct pci_dev *pdev,
+				    struct mem_ctl_info *mci)
 {
 	u16 w;
 	u32 dw;
@@ -830,7 +829,7 @@ static void __devinit i5100_init_interleaving(struct pci_dev *pdev,
 	i5100_init_mtr(mci);
 }
 
-static void __devinit i5100_init_csrows(struct mem_ctl_info *mci)
+static void i5100_init_csrows(struct mem_ctl_info *mci)
 {
 	int i;
 	struct i5100_priv *priv = mci->pvt_info;
@@ -859,13 +858,12 @@ static void __devinit i5100_init_csrows(struct mem_ctl_info *mci)
 				i5100_rank_to_slot(mci, chan, rank));
 		}
 
-		debugf2("dimm channel %d, rank %d, size %ld\n",
-			chan, rank, (long)PAGES_TO_MiB(npages));
+		edac_dbg(2, "dimm channel %d, rank %d, size %ld\n",
+			 chan, rank, (long)PAGES_TO_MiB(npages));
 	}
 }
 
-static int __devinit i5100_init_one(struct pci_dev *pdev,
-				    const struct pci_device_id *id)
+static int i5100_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	int rc;
 	struct mem_ctl_info *mci;
@@ -943,7 +941,7 @@ static int __devinit i5100_init_one(struct pci_dev *pdev,
 		goto bail_disable_ch1;
 	}
 
-	mci->dev = &pdev->dev;
+	mci->pdev = &pdev->dev;
 
 	priv = mci->pvt_info;
 	priv->ranksperchan = ranksperch;
@@ -1020,7 +1018,7 @@ bail:
 	return ret;
 }
 
-static void __devexit i5100_remove_one(struct pci_dev *pdev)
+static void i5100_remove_one(struct pci_dev *pdev)
 {
 	struct mem_ctl_info *mci;
 	struct i5100_priv *priv;
@@ -1054,7 +1052,7 @@ MODULE_DEVICE_TABLE(pci, i5100_pci_tbl);
 static struct pci_driver i5100_driver = {
 	.name = KBUILD_BASENAME,
 	.probe = i5100_init_one,
-	.remove = __devexit_p(i5100_remove_one),
+	.remove = i5100_remove_one,
 	.id_table = i5100_pci_tbl,
 };
 

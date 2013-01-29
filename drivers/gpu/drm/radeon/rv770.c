@@ -28,10 +28,10 @@
 #include <linux/firmware.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
-#include "drmP.h"
+#include <drm/drmP.h>
 #include "radeon.h"
 #include "radeon_asic.h"
-#include "radeon_drm.h"
+#include <drm/radeon_drm.h>
 #include "rv770d.h"
 #include "atom.h"
 #include "avivod.h"
@@ -124,7 +124,7 @@ void rv770_pm_misc(struct radeon_device *rdev)
 /*
  * GART
  */
-int rv770_pcie_gart_enable(struct radeon_device *rdev)
+static int rv770_pcie_gart_enable(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int r, i;
@@ -175,7 +175,7 @@ int rv770_pcie_gart_enable(struct radeon_device *rdev)
 	return 0;
 }
 
-void rv770_pcie_gart_disable(struct radeon_device *rdev)
+static void rv770_pcie_gart_disable(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int i;
@@ -201,7 +201,7 @@ void rv770_pcie_gart_disable(struct radeon_device *rdev)
 	radeon_gart_table_vram_unpin(rdev);
 }
 
-void rv770_pcie_gart_fini(struct radeon_device *rdev)
+static void rv770_pcie_gart_fini(struct radeon_device *rdev)
 {
 	radeon_gart_fini(rdev);
 	rv770_pcie_gart_disable(rdev);
@@ -209,7 +209,7 @@ void rv770_pcie_gart_fini(struct radeon_device *rdev)
 }
 
 
-void rv770_agp_enable(struct radeon_device *rdev)
+static void rv770_agp_enable(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int i;
@@ -316,6 +316,7 @@ void r700_cp_stop(struct radeon_device *rdev)
 	radeon_ttm_set_active_vram_size(rdev, rdev->mc.visible_vram_size);
 	WREG32(CP_ME_CNTL, (CP_ME_HALT | CP_PFP_HALT));
 	WREG32(SCRATCH_UMSK, 0);
+	rdev->ring[RADEON_RING_TYPE_GFX_INDEX].ready = false;
 }
 
 static int rv770_cp_load_microcode(struct radeon_device *rdev)
@@ -358,8 +359,10 @@ static int rv770_cp_load_microcode(struct radeon_device *rdev)
 
 void r700_cp_fini(struct radeon_device *rdev)
 {
+	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	r700_cp_stop(rdev);
-	radeon_ring_fini(rdev, &rdev->ring[RADEON_RING_TYPE_GFX_INDEX]);
+	radeon_ring_fini(rdev, ring);
+	radeon_scratch_free(rdev, ring->rptr_save_reg);
 }
 
 /*
@@ -581,6 +584,8 @@ static void rv770_gpu_init(struct radeon_device *rdev)
 	WREG32(GB_TILING_CONFIG, gb_tiling_config);
 	WREG32(DCP_TILING_CONFIG, (gb_tiling_config & 0xffff));
 	WREG32(HDP_TILING_CONFIG, (gb_tiling_config & 0xffff));
+	WREG32(DMA_TILING_CONFIG, (gb_tiling_config & 0xffff));
+	WREG32(DMA_TILING_CONFIG2, (gb_tiling_config & 0xffff));
 
 	WREG32(CGTS_SYS_TCC_DISABLE, 0);
 	WREG32(CGTS_TCC_DISABLE, 0);
@@ -615,6 +620,9 @@ static void rv770_gpu_init(struct radeon_device *rdev)
 				       GS_FLUSH_CTL(4) |
 				       ACK_FLUSH_CTL(3) |
 				       SYNC_FLUSH_CTL));
+
+	if (rdev->family != CHIP_RV770)
+		WREG32(SMX_SAR_CTL0, 0x00003f3f);
 
 	db_debug3 = RREG32(DB_DEBUG3);
 	db_debug3 &= ~DB_CLK_OFF_DELAY(0x1f);
@@ -792,7 +800,7 @@ static void rv770_gpu_init(struct radeon_device *rdev)
 
 	WREG32(PA_CL_ENHANCE, (CLIP_VTX_REORDER_ENA |
 					  NUM_CLIP_SEQ(3)));
-
+	WREG32(VC_ENHANCE, 0);
 }
 
 void r700_vram_gtt_location(struct radeon_device *rdev, struct radeon_mc *mc)
@@ -834,7 +842,7 @@ void r700_vram_gtt_location(struct radeon_device *rdev, struct radeon_mc *mc)
 	}
 }
 
-int rv770_mc_init(struct radeon_device *rdev)
+static int rv770_mc_init(struct radeon_device *rdev)
 {
 	u32 tmp;
 	int chansize, numchan;
@@ -879,9 +887,83 @@ int rv770_mc_init(struct radeon_device *rdev)
 	return 0;
 }
 
+/**
+ * rv770_copy_dma - copy pages using the DMA engine
+ *
+ * @rdev: radeon_device pointer
+ * @src_offset: src GPU address
+ * @dst_offset: dst GPU address
+ * @num_gpu_pages: number of GPU pages to xfer
+ * @fence: radeon fence object
+ *
+ * Copy GPU paging using the DMA engine (r7xx).
+ * Used by the radeon ttm implementation to move pages if
+ * registered as the asic copy callback.
+ */
+int rv770_copy_dma(struct radeon_device *rdev,
+		  uint64_t src_offset, uint64_t dst_offset,
+		  unsigned num_gpu_pages,
+		  struct radeon_fence **fence)
+{
+	struct radeon_semaphore *sem = NULL;
+	int ring_index = rdev->asic->copy.dma_ring_index;
+	struct radeon_ring *ring = &rdev->ring[ring_index];
+	u32 size_in_dw, cur_size_in_dw;
+	int i, num_loops;
+	int r = 0;
+
+	r = radeon_semaphore_create(rdev, &sem);
+	if (r) {
+		DRM_ERROR("radeon: moving bo (%d).\n", r);
+		return r;
+	}
+
+	size_in_dw = (num_gpu_pages << RADEON_GPU_PAGE_SHIFT) / 4;
+	num_loops = DIV_ROUND_UP(size_in_dw, 0xFFFF);
+	r = radeon_ring_lock(rdev, ring, num_loops * 5 + 8);
+	if (r) {
+		DRM_ERROR("radeon: moving bo (%d).\n", r);
+		radeon_semaphore_free(rdev, &sem, NULL);
+		return r;
+	}
+
+	if (radeon_fence_need_sync(*fence, ring->idx)) {
+		radeon_semaphore_sync_rings(rdev, sem, (*fence)->ring,
+					    ring->idx);
+		radeon_fence_note_sync(*fence, ring->idx);
+	} else {
+		radeon_semaphore_free(rdev, &sem, NULL);
+	}
+
+	for (i = 0; i < num_loops; i++) {
+		cur_size_in_dw = size_in_dw;
+		if (cur_size_in_dw > 0xFFFF)
+			cur_size_in_dw = 0xFFFF;
+		size_in_dw -= cur_size_in_dw;
+		radeon_ring_write(ring, DMA_PACKET(DMA_PACKET_COPY, 0, 0, cur_size_in_dw));
+		radeon_ring_write(ring, dst_offset & 0xfffffffc);
+		radeon_ring_write(ring, src_offset & 0xfffffffc);
+		radeon_ring_write(ring, upper_32_bits(dst_offset) & 0xff);
+		radeon_ring_write(ring, upper_32_bits(src_offset) & 0xff);
+		src_offset += cur_size_in_dw * 4;
+		dst_offset += cur_size_in_dw * 4;
+	}
+
+	r = radeon_fence_emit(rdev, fence, ring->idx);
+	if (r) {
+		radeon_ring_unlock_undo(rdev, ring);
+		return r;
+	}
+
+	radeon_ring_unlock_commit(rdev, ring);
+	radeon_semaphore_free(rdev, &sem, *fence);
+
+	return r;
+}
+
 static int rv770_startup(struct radeon_device *rdev)
 {
-	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
+	struct radeon_ring *ring;
 	int r;
 
 	/* enable pcie gen2 link */
@@ -927,6 +1009,12 @@ static int rv770_startup(struct radeon_device *rdev)
 		return r;
 	}
 
+	r = radeon_fence_driver_start_ring(rdev, R600_RING_TYPE_DMA_INDEX);
+	if (r) {
+		dev_err(rdev->dev, "failed initializing DMA fences (%d).\n", r);
+		return r;
+	}
+
 	/* Enable IRQ */
 	r = r600_irq_init(rdev);
 	if (r) {
@@ -936,11 +1024,20 @@ static int rv770_startup(struct radeon_device *rdev)
 	}
 	r600_irq_set(rdev);
 
+	ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	r = radeon_ring_init(rdev, ring, ring->ring_size, RADEON_WB_CP_RPTR_OFFSET,
 			     R600_CP_RB_RPTR, R600_CP_RB_WPTR,
 			     0, 0xfffff, RADEON_CP_PACKET2);
 	if (r)
 		return r;
+
+	ring = &rdev->ring[R600_RING_TYPE_DMA_INDEX];
+	r = radeon_ring_init(rdev, ring, ring->ring_size, R600_WB_DMA_RPTR_OFFSET,
+			     DMA_RB_RPTR, DMA_RB_WPTR,
+			     2, 0x3fffc, DMA_PACKET(DMA_PACKET_NOP, 0, 0, 0));
+	if (r)
+		return r;
+
 	r = rv770_cp_load_microcode(rdev);
 	if (r)
 		return r;
@@ -948,13 +1045,15 @@ static int rv770_startup(struct radeon_device *rdev)
 	if (r)
 		return r;
 
-	r = radeon_ib_pool_start(rdev);
+	r = r600_dma_resume(rdev);
 	if (r)
 		return r;
 
-	r = radeon_ib_ring_tests(rdev);
-	if (r)
+	r = radeon_ib_pool_init(rdev);
+	if (r) {
+		dev_err(rdev->dev, "IB initialization failed (%d).\n", r);
 		return r;
+	}
 
 	r = r600_audio_init(rdev);
 	if (r) {
@@ -991,11 +1090,8 @@ int rv770_resume(struct radeon_device *rdev)
 int rv770_suspend(struct radeon_device *rdev)
 {
 	r600_audio_fini(rdev);
-	radeon_ib_pool_suspend(rdev);
-	r600_blit_suspend(rdev);
-	/* FIXME: we should wait for ring to be empty */
 	r700_cp_stop(rdev);
-	rdev->ring[RADEON_RING_TYPE_GFX_INDEX].ready = false;
+	r600_dma_stop(rdev);
 	r600_irq_suspend(rdev);
 	radeon_wb_disable(rdev);
 	rv770_pcie_gart_disable(rdev);
@@ -1066,6 +1162,9 @@ int rv770_init(struct radeon_device *rdev)
 	rdev->ring[RADEON_RING_TYPE_GFX_INDEX].ring_obj = NULL;
 	r600_ring_init(rdev, &rdev->ring[RADEON_RING_TYPE_GFX_INDEX], 1024 * 1024);
 
+	rdev->ring[R600_RING_TYPE_DMA_INDEX].ring_obj = NULL;
+	r600_ring_init(rdev, &rdev->ring[R600_RING_TYPE_DMA_INDEX], 64 * 1024);
+
 	rdev->ih.ring_obj = NULL;
 	r600_ih_ring_init(rdev, 64 * 1024);
 
@@ -1073,20 +1172,15 @@ int rv770_init(struct radeon_device *rdev)
 	if (r)
 		return r;
 
-	r = radeon_ib_pool_init(rdev);
 	rdev->accel_working = true;
-	if (r) {
-		dev_err(rdev->dev, "IB initialization failed (%d).\n", r);
-		rdev->accel_working = false;
-	}
-
 	r = rv770_startup(rdev);
 	if (r) {
 		dev_err(rdev->dev, "disabling GPU acceleration\n");
 		r700_cp_fini(rdev);
+		r600_dma_fini(rdev);
 		r600_irq_fini(rdev);
 		radeon_wb_fini(rdev);
-		r100_ib_fini(rdev);
+		radeon_ib_pool_fini(rdev);
 		radeon_irq_kms_fini(rdev);
 		rv770_pcie_gart_fini(rdev);
 		rdev->accel_working = false;
@@ -1099,9 +1193,10 @@ void rv770_fini(struct radeon_device *rdev)
 {
 	r600_blit_fini(rdev);
 	r700_cp_fini(rdev);
+	r600_dma_fini(rdev);
 	r600_irq_fini(rdev);
 	radeon_wb_fini(rdev);
-	r100_ib_fini(rdev);
+	radeon_ib_pool_fini(rdev);
 	radeon_irq_kms_fini(rdev);
 	rv770_pcie_gart_fini(rdev);
 	r600_vram_scratch_fini(rdev);
@@ -1118,6 +1213,8 @@ static void rv770_pcie_gen2_enable(struct radeon_device *rdev)
 {
 	u32 link_width_cntl, lanes, speed_cntl, tmp;
 	u16 link_cntl2;
+	u32 mask;
+	int ret;
 
 	if (radeon_pcie_gen2 == 0)
 		return;
@@ -1131,6 +1228,15 @@ static void rv770_pcie_gen2_enable(struct radeon_device *rdev)
 	/* x2 cards have a special sequence */
 	if (ASIC_IS_X2(rdev))
 		return;
+
+	ret = drm_pcie_get_speed_cap_mask(rdev->ddev, &mask);
+	if (ret != 0)
+		return;
+
+	if (!(mask & DRM_PCIE_SPEED_50))
+		return;
+
+	DRM_INFO("enabling PCIE gen 2 link speeds, disable with radeon.pcie_gen2=0\n");
 
 	/* advertise upconfig capability */
 	link_width_cntl = RREG32_PCIE_P(PCIE_LC_LINK_WIDTH_CNTL);

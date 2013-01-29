@@ -157,6 +157,10 @@ static int hdmi_pll_init(struct hdmi_ip_data *ip_data)
 /* PHY_PWR_CMD */
 static int hdmi_set_phy_pwr(struct hdmi_ip_data *ip_data, enum hdmi_phy_pwr val)
 {
+	/* Return if already the state */
+	if (REG_GET(hdmi_wp_base(ip_data), HDMI_WP_PWR_CTRL, 5, 4) == val)
+		return 0;
+
 	/* Command for power control of HDMI PHY */
 	REG_FLD_MOD(hdmi_wp_base(ip_data), HDMI_WP_PWR_CTRL, val, 7, 6);
 
@@ -231,20 +235,12 @@ void ti_hdmi_4xxx_pll_disable(struct hdmi_ip_data *ip_data)
 
 static int hdmi_check_hpd_state(struct hdmi_ip_data *ip_data)
 {
-	unsigned long flags;
 	bool hpd;
 	int r;
-	/* this should be in ti_hdmi_4xxx_ip private data */
-	static DEFINE_SPINLOCK(phy_tx_lock);
 
-	spin_lock_irqsave(&phy_tx_lock, flags);
+	mutex_lock(&ip_data->lock);
 
 	hpd = gpio_get_value(ip_data->hpd_gpio);
-
-	if (hpd == ip_data->phy_tx_enabled) {
-		spin_unlock_irqrestore(&phy_tx_lock, flags);
-		return 0;
-	}
 
 	if (hpd)
 		r = hdmi_set_phy_pwr(ip_data, HDMI_PHYPWRCMD_TXON);
@@ -257,9 +253,8 @@ static int hdmi_check_hpd_state(struct hdmi_ip_data *ip_data)
 		goto err;
 	}
 
-	ip_data->phy_tx_enabled = hpd;
 err:
-	spin_unlock_irqrestore(&phy_tx_lock, flags);
+	mutex_unlock(&ip_data->lock);
 	return r;
 }
 
@@ -327,7 +322,6 @@ void ti_hdmi_4xxx_phy_disable(struct hdmi_ip_data *ip_data)
 	free_irq(gpio_to_irq(ip_data->hpd_gpio), ip_data);
 
 	hdmi_set_phy_pwr(ip_data, HDMI_PHYPWRCMD_OFF);
-	ip_data->phy_tx_enabled = false;
 }
 
 static int hdmi_core_ddc_init(struct hdmi_ip_data *ip_data)
@@ -747,11 +741,15 @@ static void hdmi_wp_video_config_format(struct hdmi_ip_data *ip_data,
 static void hdmi_wp_video_config_interface(struct hdmi_ip_data *ip_data)
 {
 	u32 r;
+	bool vsync_pol, hsync_pol;
 	pr_debug("Enter hdmi_wp_video_config_interface\n");
 
+	vsync_pol = ip_data->cfg.timings.vsync_level == OMAPDSS_SIG_ACTIVE_HIGH;
+	hsync_pol = ip_data->cfg.timings.hsync_level == OMAPDSS_SIG_ACTIVE_HIGH;
+
 	r = hdmi_read_reg(hdmi_wp_base(ip_data), HDMI_WP_VIDEO_CFG);
-	r = FLD_MOD(r, ip_data->cfg.timings.vsync_pol, 7, 7);
-	r = FLD_MOD(r, ip_data->cfg.timings.hsync_pol, 6, 6);
+	r = FLD_MOD(r, vsync_pol, 7, 7);
+	r = FLD_MOD(r, hsync_pol, 6, 6);
 	r = FLD_MOD(r, ip_data->cfg.timings.interlace, 3, 3);
 	r = FLD_MOD(r, 1, 1, 0); /* HDMI_TIMING_MASTER_24BIT */
 	hdmi_write_reg(hdmi_wp_base(ip_data), HDMI_WP_VIDEO_CFG, r);
@@ -901,7 +899,7 @@ void ti_hdmi_4xxx_core_dump(struct hdmi_ip_data *ip_data, struct seq_file *s)
 #define DUMPCOREAV(r) seq_printf(s, "%-35s %08x\n", #r,\
 		hdmi_read_reg(hdmi_av_base(ip_data), r))
 #define DUMPCOREAV2(i, r) seq_printf(s, "%s[%d]%*s %08x\n", #r, i, \
-		(i < 10) ? 32 - strlen(#r) : 31 - strlen(#r), " ", \
+		(i < 10) ? 32 - (int)strlen(#r) : 31 - (int)strlen(#r), " ", \
 		hdmi_read_reg(hdmi_av_base(ip_data), CORE_REG(i, r)))
 
 	DUMPCORE(HDMI_CORE_SYS_VND_IDL);
@@ -1419,5 +1417,14 @@ void ti_hdmi_4xxx_audio_stop(struct hdmi_ip_data *ip_data)
 		    HDMI_CORE_AV_AUD_MODE, false, 0, 0);
 	REG_FLD_MOD(hdmi_wp_base(ip_data),
 		    HDMI_WP_AUDIO_CTRL, false, 30, 30);
+}
+
+int ti_hdmi_4xxx_audio_get_dma_port(u32 *offset, u32 *size)
+{
+	if (!offset || !size)
+		return -EINVAL;
+	*offset = HDMI_WP_AUDIO_DATA;
+	*size = 4;
+	return 0;
 }
 #endif

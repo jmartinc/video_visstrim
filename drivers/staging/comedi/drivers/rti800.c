@@ -138,8 +138,6 @@ struct rti800_board {
 	int has_ao;
 };
 
-#define this_board ((const struct rti800_board *)dev->board_ptr)
-
 static irqreturn_t rti800_interrupt(int irq, void *dev);
 
 struct rti800_private {
@@ -163,8 +161,6 @@ struct rti800_private {
 	int muxgain_bits;
 };
 
-#define devpriv ((struct rti800_private *)dev->private)
-
 #define RTI800_TIMEOUT 100
 
 static irqreturn_t rti800_interrupt(int irq, void *dev)
@@ -179,6 +175,7 @@ static int rti800_ai_insn_read(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
 			       struct comedi_insn *insn, unsigned int *data)
 {
+	struct rti800_private *devpriv = dev->private;
 	int i, t;
 	int status;
 	int chan = CR_CHAN(insn->chanspec);
@@ -231,6 +228,7 @@ static int rti800_ao_insn_read(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
 			       struct comedi_insn *insn, unsigned int *data)
 {
+	struct rti800_private *devpriv = dev->private;
 	int i;
 	int chan = CR_CHAN(insn->chanspec);
 
@@ -244,6 +242,7 @@ static int rti800_ao_insn_write(struct comedi_device *dev,
 				struct comedi_subdevice *s,
 				struct comedi_insn *insn, unsigned int *data)
 {
+	struct rti800_private *devpriv = dev->private;
 	int chan = CR_CHAN(insn->chanspec);
 	int d;
 	int i;
@@ -265,19 +264,14 @@ static int rti800_di_insn_bits(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
 			       struct comedi_insn *insn, unsigned int *data)
 {
-	if (insn->n != 2)
-		return -EINVAL;
 	data[1] = inb(dev->iobase + RTI800_DI);
-	return 2;
+	return insn->n;
 }
 
 static int rti800_do_insn_bits(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
 			       struct comedi_insn *insn, unsigned int *data)
 {
-	if (insn->n != 2)
-		return -EINVAL;
-
 	if (data[0]) {
 		s->state &= ~data[0];
 		s->state |= data[0] & data[1];
@@ -287,7 +281,7 @@ static int rti800_do_insn_bits(struct comedi_device *dev,
 
 	data[1] = s->state;
 
-	return 2;
+	return insn->n;
 }
 
 /*
@@ -309,6 +303,8 @@ static int rti800_do_insn_bits(struct comedi_device *dev,
 
 static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 {
+	const struct rti800_board *board = comedi_board(dev);
+	struct rti800_private *devpriv;
 	unsigned int irq;
 	unsigned long iobase;
 	int ret;
@@ -347,15 +343,16 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		printk(KERN_INFO "( no irq )\n");
 	}
 
-	dev->board_name = this_board->name;
+	dev->board_name = board->name;
 
-	ret = alloc_subdevices(dev, 4);
-	if (ret < 0)
+	ret = comedi_alloc_subdevices(dev, 4);
+	if (ret)
 		return ret;
 
-	ret = alloc_private(dev, sizeof(struct rti800_private));
-	if (ret < 0)
-		return ret;
+	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	if (!devpriv)
+		return -ENOMEM;
+	dev->private = devpriv;
 
 	devpriv->adc_mux = it->options[2];
 	devpriv->adc_range = it->options[3];
@@ -366,7 +363,7 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	devpriv->dac1_coding = it->options[8];
 	devpriv->muxgain_bits = -1;
 
-	s = dev->subdevices + 0;
+	s = &dev->subdevices[0];
 	/* ai subdevice */
 	s->type = COMEDI_SUBD_AI;
 	s->subdev_flags = SDF_READABLE | SDF_GROUND;
@@ -385,8 +382,8 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		break;
 	}
 
-	s++;
-	if (this_board->has_ao) {
+	s = &dev->subdevices[1];
+	if (board->has_ao) {
 		/* ao subdevice (only on rti815) */
 		s->type = COMEDI_SUBD_AO;
 		s->subdev_flags = SDF_WRITABLE;
@@ -415,7 +412,7 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		s->type = COMEDI_SUBD_UNUSED;
 	}
 
-	s++;
+	s = &dev->subdevices[2];
 	/* di */
 	s->type = COMEDI_SUBD_DI;
 	s->subdev_flags = SDF_READABLE;
@@ -424,7 +421,7 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	s->maxdata = 1;
 	s->range_table = &range_digital;
 
-	s++;
+	s = &dev->subdevices[3];
 	/* do */
 	s->type = COMEDI_SUBD_DO;
 	s->subdev_flags = SDF_WRITABLE;
@@ -435,7 +432,7 @@ static int rti800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 /* don't yet know how to deal with counter/timers */
 #if 0
-	s++;
+	s = &dev->subdevices[4];
 	/* do */
 	s->type = COMEDI_SUBD_TIMER;
 #endif

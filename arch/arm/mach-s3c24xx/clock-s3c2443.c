@@ -158,12 +158,6 @@ static struct clk init_clocks_off[] = {
 		.devname	= "s3c2410-spi.0",
 		.parent		= &clk_p,
 		.enable		= s3c2443_clkcon_enable_p,
-		.ctrlbit	= S3C2443_PCLKCON_SPI0,
-	}, {
-		.name		= "spi",
-		.devname	= "s3c2410-spi.1",
-		.parent		= &clk_p,
-		.enable		= s3c2443_clkcon_enable_p,
 		.ctrlbit	= S3C2443_PCLKCON_SPI1,
 	}
 };
@@ -181,7 +175,7 @@ static struct clk *clks[] __initdata = {
 
 static struct clk_lookup s3c2443_clk_lookup[] = {
 	CLKDEV_INIT("s3c-sdhci.1", "mmc_busclk.2", &clk_hsmmc),
-	CLKDEV_INIT("s3c64xx-spi.0", "spi_busclk2", &clk_hsspi.clk),
+	CLKDEV_INIT("s3c2443-spi.0", "spi_busclk2", &clk_hsspi.clk),
 };
 
 void __init s3c2443_init_clocks(int xtal)

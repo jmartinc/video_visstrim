@@ -1,7 +1,7 @@
 /*
  * extcon-max8997.c - MAX8997 extcon driver to support MAX8997 MUIC
  *
- *  Copyright (C) 2012 Samsung Electrnoics
+ *  Copyright (C) 2012 Samsung Electronics
  *  Donggeun Kim <dg77.kim@samsung.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -26,6 +26,7 @@
 #include <linux/mfd/max8997.h>
 #include <linux/mfd/max8997-private.h>
 #include <linux/extcon.h>
+#include <linux/irqdomain.h>
 
 #define	DEV_NAME			"max8997-muic"
 
@@ -77,6 +78,7 @@
 struct max8997_muic_irq {
 	unsigned int irq;
 	const char *name;
+	unsigned int virq;
 };
 
 static struct max8997_muic_irq muic_irqs[] = {
@@ -116,8 +118,8 @@ const char *max8997_extcon_cable[] = {
 	[5] = "Charge-downstream",
 	[6] = "MHL",
 	[7] = "Dock-desk",
-	[7] = "Dock-card",
-	[8] = "JIG",
+	[8] = "Dock-card",
+	[9] = "JIG",
 
 	NULL,
 };
@@ -269,8 +271,6 @@ out:
 static int max8997_muic_handle_charger_type_detach(
 				struct max8997_muic_info *info)
 {
-	int ret = 0;
-
 	switch (info->pre_charger_type) {
 	case MAX8997_CHARGER_TYPE_USB:
 		extcon_set_cable_state(info->edev, "USB", false);
@@ -288,11 +288,11 @@ static int max8997_muic_handle_charger_type_detach(
 		extcon_set_cable_state(info->edev, "Fast-charger", false);
 		break;
 	default:
-		ret = -EINVAL;
+		return -EINVAL;
 		break;
 	}
 
-	return ret;
+	return 0;
 }
 
 static int max8997_muic_handle_charger_type(struct max8997_muic_info *info,
@@ -343,12 +343,10 @@ static void max8997_muic_irq_work(struct work_struct *work)
 {
 	struct max8997_muic_info *info = container_of(work,
 			struct max8997_muic_info, irq_work);
-	struct max8997_dev *max8997 = i2c_get_clientdata(info->muic);
 	u8 status[2];
 	u8 adc, chg_type;
-
-	int irq_type = info->irq - max8997->irq_base;
-	int ret;
+	int irq_type = 0;
+	int i, ret;
 
 	mutex_lock(&info->mutex);
 
@@ -362,6 +360,10 @@ static void max8997_muic_irq_work(struct work_struct *work)
 
 	dev_dbg(info->dev, "%s: STATUS1:0x%x, 2:0x%x\n", __func__,
 			status[0], status[1]);
+
+	for (i = 0 ; i < ARRAY_SIZE(muic_irqs) ; i++)
+		if (info->irq == muic_irqs[i].virq)
+			irq_type = muic_irqs[i].irq;
 
 	switch (irq_type) {
 	case MAX8997_MUICIRQ_ADC:
@@ -424,18 +426,18 @@ static void max8997_muic_detect_dev(struct max8997_muic_info *info)
 	max8997_muic_handle_charger_type(info, chg_type);
 }
 
-static int __devinit max8997_muic_probe(struct platform_device *pdev)
+static int max8997_muic_probe(struct platform_device *pdev)
 {
 	struct max8997_dev *max8997 = dev_get_drvdata(pdev->dev.parent);
 	struct max8997_platform_data *pdata = dev_get_platdata(max8997->dev);
 	struct max8997_muic_info *info;
 	int ret, i;
 
-	info = kzalloc(sizeof(struct max8997_muic_info), GFP_KERNEL);
+	info = devm_kzalloc(&pdev->dev, sizeof(struct max8997_muic_info),
+			    GFP_KERNEL);
 	if (!info) {
 		dev_err(&pdev->dev, "failed to allocate memory\n");
-		ret = -ENOMEM;
-		goto err_kfree;
+		return -ENOMEM;
 	}
 
 	info->dev = &pdev->dev;
@@ -448,11 +450,17 @@ static int __devinit max8997_muic_probe(struct platform_device *pdev)
 
 	for (i = 0; i < ARRAY_SIZE(muic_irqs); i++) {
 		struct max8997_muic_irq *muic_irq = &muic_irqs[i];
+		unsigned int virq = 0;
 
-		ret = request_threaded_irq(pdata->irq_base + muic_irq->irq,
-				NULL, max8997_muic_irq_handler,
-				0, muic_irq->name,
-				info);
+		virq = irq_create_mapping(max8997->irq_domain, muic_irq->irq);
+		if (!virq) {
+			ret = -EINVAL;
+			goto err_irq;
+		}
+		muic_irq->virq = virq;
+
+		ret = request_threaded_irq(virq, NULL, max8997_muic_irq_handler,
+				0, muic_irq->name, info);
 		if (ret) {
 			dev_err(&pdev->dev,
 				"failed: irq request (IRQ: %d,"
@@ -463,7 +471,8 @@ static int __devinit max8997_muic_probe(struct platform_device *pdev)
 	}
 
 	/* External connector */
-	info->edev = kzalloc(sizeof(struct extcon_dev), GFP_KERNEL);
+	info->edev = devm_kzalloc(&pdev->dev, sizeof(struct extcon_dev),
+				  GFP_KERNEL);
 	if (!info->edev) {
 		dev_err(&pdev->dev, "failed to allocate memory for extcon\n");
 		ret = -ENOMEM;
@@ -474,7 +483,7 @@ static int __devinit max8997_muic_probe(struct platform_device *pdev)
 	ret = extcon_dev_register(info->edev, NULL);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to register extcon device\n");
-		goto err_extcon;
+		goto err_irq;
 	}
 
 	/* Initialize registers according to platform data */
@@ -492,29 +501,22 @@ static int __devinit max8997_muic_probe(struct platform_device *pdev)
 
 	return ret;
 
-err_extcon:
-	kfree(info->edev);
 err_irq:
 	while (--i >= 0)
-		free_irq(pdata->irq_base + muic_irqs[i].irq, info);
-	kfree(info);
-err_kfree:
+		free_irq(muic_irqs[i].virq, info);
 	return ret;
 }
 
-static int __devexit max8997_muic_remove(struct platform_device *pdev)
+static int max8997_muic_remove(struct platform_device *pdev)
 {
 	struct max8997_muic_info *info = platform_get_drvdata(pdev);
-	struct max8997_dev *max8997 = i2c_get_clientdata(info->muic);
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(muic_irqs); i++)
-		free_irq(max8997->irq_base + muic_irqs[i].irq, info);
+		free_irq(muic_irqs[i].virq, info);
 	cancel_work_sync(&info->irq_work);
 
 	extcon_dev_unregister(info->edev);
-
-	kfree(info);
 
 	return 0;
 }
@@ -525,7 +527,7 @@ static struct platform_driver max8997_muic_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= max8997_muic_probe,
-	.remove		= __devexit_p(max8997_muic_remove),
+	.remove		= max8997_muic_remove,
 };
 
 module_platform_driver(max8997_muic_driver);

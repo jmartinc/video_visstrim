@@ -15,8 +15,10 @@
 #include <linux/compiler.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
+#include <linux/irqflags.h>
 
 #include <asm/addrspace.h>
+#include <asm/bug.h>
 #include <asm/byteorder.h>
 #include <asm/cpu.h>
 #include <asm/cpu-features.h>

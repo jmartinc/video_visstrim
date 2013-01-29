@@ -61,7 +61,7 @@ acpi_ds_create_method_mutex(union acpi_operand_object *method_desc);
  *
  * FUNCTION:    acpi_ds_method_error
  *
- * PARAMETERS:  Status          - Execution status
+ * PARAMETERS:  status          - Execution status
  *              walk_state      - Current state
  *
  * RETURN:      Status
@@ -170,7 +170,7 @@ acpi_ds_create_method_mutex(union acpi_operand_object *method_desc)
  *
  * RETURN:      Status
  *
- * DESCRIPTION: Prepare a method for execution.  Parses the method if necessary,
+ * DESCRIPTION: Prepare a method for execution. Parses the method if necessary,
  *              increments the thread count, and waits at the method semaphore
  *              for clearance to execute.
  *
@@ -306,9 +306,9 @@ acpi_ds_begin_method_execution(struct acpi_namespace_node *method_node,
  *
  * FUNCTION:    acpi_ds_call_control_method
  *
- * PARAMETERS:  Thread              - Info for this thread
+ * PARAMETERS:  thread              - Info for this thread
  *              this_walk_state     - Current walk state
- *              Op                  - Current Op to be walked
+ *              op                  - Current Op to be walked
  *
  * RETURN:      Status
  *
@@ -444,7 +444,7 @@ acpi_ds_call_control_method(struct acpi_thread_state *thread,
  * RETURN:      Status
  *
  * DESCRIPTION: Restart a method that was preempted by another (nested) method
- *              invocation.  Handle the return value (if any) from the callee.
+ *              invocation. Handle the return value (if any) from the callee.
  *
  ******************************************************************************/
 
@@ -530,7 +530,7 @@ acpi_ds_restart_control_method(struct acpi_walk_state *walk_state,
  *
  * RETURN:      None
  *
- * DESCRIPTION: Terminate a control method.  Delete everything that the method
+ * DESCRIPTION: Terminate a control method. Delete everything that the method
  *              created, delete all locals and arguments, and delete the parse
  *              tree if requested.
  *

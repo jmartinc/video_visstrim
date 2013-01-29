@@ -3,8 +3,7 @@
  *
  * This file contains SPC-3 task management infrastructure
  *
- * Copyright (c) 2009,2010 Rising Tide Systems
- * Copyright (c) 2009,2010 Linux-iSCSI.org
+ * (c) Copyright 2009-2012 RisingTide Systems LLC.
  *
  * Nicholas A. Bellinger <nab@kernel.org>
  *
@@ -140,15 +139,15 @@ void core_tmr_abort_task(
 		printk("ABORT_TASK: Found referenced %s task_tag: %u\n",
 			se_cmd->se_tfo->get_fabric_name(), ref_tag);
 
-		spin_lock_irq(&se_cmd->t_state_lock);
+		spin_lock(&se_cmd->t_state_lock);
 		if (se_cmd->transport_state & CMD_T_COMPLETE) {
 			printk("ABORT_TASK: ref_tag: %u already complete, skipping\n", ref_tag);
-			spin_unlock_irq(&se_cmd->t_state_lock);
+			spin_unlock(&se_cmd->t_state_lock);
 			spin_unlock_irqrestore(&se_sess->sess_cmd_lock, flags);
 			goto out;
 		}
 		se_cmd->transport_state |= CMD_T_ABORTED;
-		spin_unlock_irq(&se_cmd->t_state_lock);
+		spin_unlock(&se_cmd->t_state_lock);
 
 		list_del_init(&se_cmd->se_cmd_list);
 		kref_get(&se_cmd->cmd_kref);
@@ -295,9 +294,6 @@ static void core_tmr_drain_state_list(
 
 		list_move_tail(&cmd->state_list, &drain_task_list);
 		cmd->state_active = false;
-
-		if (!list_empty(&cmd->execute_list))
-			__target_remove_from_execute_list(cmd);
 	}
 	spin_unlock_irqrestore(&dev->execute_task_lock, flags);
 
@@ -354,57 +350,6 @@ static void core_tmr_drain_state_list(
 	}
 }
 
-static void core_tmr_drain_cmd_list(
-	struct se_device *dev,
-	struct se_cmd *prout_cmd,
-	struct se_node_acl *tmr_nacl,
-	int tas,
-	struct list_head *preempt_and_abort_list)
-{
-	LIST_HEAD(drain_cmd_list);
-	struct se_queue_obj *qobj = &dev->dev_queue_obj;
-	struct se_cmd *cmd, *tcmd;
-	unsigned long flags;
-
-	/*
-	 * Release all commands remaining in the per-device command queue.
-	 *
-	 * This follows the same logic as above for the state list.
-	 */
-	spin_lock_irqsave(&qobj->cmd_queue_lock, flags);
-	list_for_each_entry_safe(cmd, tcmd, &qobj->qobj_list, se_queue_node) {
-		/*
-		 * For PREEMPT_AND_ABORT usage, only process commands
-		 * with a matching reservation key.
-		 */
-		if (target_check_cdb_and_preempt(preempt_and_abort_list, cmd))
-			continue;
-		/*
-		 * Not aborting PROUT PREEMPT_AND_ABORT CDB..
-		 */
-		if (prout_cmd == cmd)
-			continue;
-
-		cmd->transport_state &= ~CMD_T_QUEUED;
-		atomic_dec(&qobj->queue_cnt);
-		list_move_tail(&cmd->se_queue_node, &drain_cmd_list);
-	}
-	spin_unlock_irqrestore(&qobj->cmd_queue_lock, flags);
-
-	while (!list_empty(&drain_cmd_list)) {
-		cmd = list_entry(drain_cmd_list.next, struct se_cmd, se_queue_node);
-		list_del_init(&cmd->se_queue_node);
-
-		pr_debug("LUN_RESET: %s from Device Queue: cmd: %p t_state:"
-			" %d t_fe_count: %d\n", (preempt_and_abort_list) ?
-			"Preempt" : "", cmd, cmd->t_state,
-			atomic_read(&cmd->t_fe_count));
-
-		core_tmr_handle_tas_abort(tmr_nacl, cmd, tas,
-				atomic_read(&cmd->t_fe_count));
-	}
-}
-
 int core_tmr_lun_reset(
         struct se_device *dev,
         struct se_tmr_req *tmr,
@@ -425,7 +370,7 @@ int core_tmr_lun_reset(
 	 * which the command was received shall be completed with TASK ABORTED
 	 * status (see SAM-4).
 	 */
-	tas = dev->se_sub_dev->se_dev_attrib.emulate_tas;
+	tas = dev->dev_attrib.emulate_tas;
 	/*
 	 * Determine if this se_tmr is coming from a $FABRIC_MOD
 	 * or struct se_device passthrough..
@@ -447,17 +392,16 @@ int core_tmr_lun_reset(
 	core_tmr_drain_tmr_list(dev, tmr, preempt_and_abort_list);
 	core_tmr_drain_state_list(dev, prout_cmd, tmr_nacl, tas,
 				preempt_and_abort_list);
-	core_tmr_drain_cmd_list(dev, prout_cmd, tmr_nacl, tas,
-				preempt_and_abort_list);
+
 	/*
 	 * Clear any legacy SPC-2 reservation when called during
 	 * LOGICAL UNIT RESET
 	 */
 	if (!preempt_and_abort_list &&
-	     (dev->dev_flags & DF_SPC2_RESERVATIONS)) {
+	     (dev->dev_reservation_flags & DRF_SPC2_RESERVATIONS)) {
 		spin_lock(&dev->dev_reservation_lock);
 		dev->dev_reserved_node_acl = NULL;
-		dev->dev_flags &= ~DF_SPC2_RESERVATIONS;
+		dev->dev_reservation_flags &= ~DRF_SPC2_RESERVATIONS;
 		spin_unlock(&dev->dev_reservation_lock);
 		pr_debug("LUN_RESET: SCSI-2 Released reservation\n");
 	}

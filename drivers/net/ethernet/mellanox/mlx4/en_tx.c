@@ -143,7 +143,6 @@ void mlx4_en_destroy_tx_ring(struct mlx4_en_priv *priv,
 		mlx4_bf_free(mdev->dev, &ring->bf);
 	mlx4_qp_remove(mdev->dev, &ring->qp);
 	mlx4_qp_free(mdev->dev, &ring->qp);
-	mlx4_qp_release_range(mdev->dev, ring->qpn, 1);
 	mlx4_en_unmap_buffer(&ring->wqres.buf);
 	mlx4_free_hwq_res(mdev->dev, &ring->wqres, ring->buf_size);
 	kfree(ring->bounce_buf);
@@ -164,7 +163,6 @@ int mlx4_en_activate_tx_ring(struct mlx4_en_priv *priv,
 	ring->cons = 0xffffffff;
 	ring->last_nr_txbb = 1;
 	ring->poll_cnt = 0;
-	ring->blocked = 0;
 	memset(ring->tx_info, 0, ring->size * sizeof(struct mlx4_en_tx_info));
 	memset(ring->buf, 0, ring->buf_size);
 
@@ -317,12 +315,13 @@ static void mlx4_en_process_tx_cq(struct net_device *dev, struct mlx4_en_cq *cq)
 	struct mlx4_cqe *buf = cq->buf;
 	u32 packets = 0;
 	u32 bytes = 0;
+	int factor = priv->cqe_factor;
 
 	if (!priv->port_up)
 		return;
 
 	index = cons_index & size_mask;
-	cqe = &buf[index];
+	cqe = &buf[(index << factor) + factor];
 	ring_index = ring->cons & size_mask;
 
 	/* Process all completed CQEs */
@@ -351,7 +350,7 @@ static void mlx4_en_process_tx_cq(struct net_device *dev, struct mlx4_en_cq *cq)
 
 		++cons_index;
 		index = cons_index & size_mask;
-		cqe = &buf[index];
+		cqe = &buf[(index << factor) + factor];
 	}
 
 
@@ -365,14 +364,13 @@ static void mlx4_en_process_tx_cq(struct net_device *dev, struct mlx4_en_cq *cq)
 	ring->cons += txbbs_skipped;
 	netdev_tx_completed_queue(ring->tx_queue, packets, bytes);
 
-	/* Wakeup Tx queue if this ring stopped it */
-	if (unlikely(ring->blocked)) {
-		if ((u32) (ring->prod - ring->cons) <=
-		     ring->size - HEADROOM - MAX_DESC_TXBBS) {
-			ring->blocked = 0;
-			netif_tx_wake_queue(ring->tx_queue);
-			priv->port_stats.wake_queue++;
-		}
+	/*
+	 * Wakeup Tx queue if this stopped, and at least 1 packet
+	 * was completed
+	 */
+	if (netif_tx_queue_stopped(ring->tx_queue) && txbbs_skipped > 0) {
+		netif_tx_wake_queue(ring->tx_queue);
+		priv->port_stats.wake_queue++;
 	}
 }
 
@@ -526,7 +524,7 @@ static void build_inline_wqe(struct mlx4_en_tx_desc *tx_desc, struct sk_buff *sk
 u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb)
 {
 	struct mlx4_en_priv *priv = netdev_priv(dev);
-	u16 rings_p_up = priv->mdev->profile.num_tx_rings_p_up;
+	u16 rings_p_up = priv->num_tx_rings_p_up;
 	u8 up = 0;
 
 	if (dev->num_tc)
@@ -592,7 +590,6 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 		     ring->size - HEADROOM - MAX_DESC_TXBBS)) {
 		/* every full Tx ring stops queue */
 		netif_tx_stop_queue(ring->tx_queue);
-		ring->blocked = 1;
 		priv->port_stats.queue_stopped++;
 
 		return NETDEV_TX_BUSY;
@@ -715,11 +712,7 @@ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (bounce)
 		tx_desc = mlx4_en_bounce_to_desc(priv, ring, index, desc_size);
 
-	/* Run destructor before passing skb to HW */
-	if (likely(!skb_shared(skb)))
-		skb_orphan(skb);
-
-	if (ring->bf_enabled && desc_size <= MAX_BF && !bounce && !vlan_tag) {
+	if (ring->bf_enabled && desc_size <= MAX_BF && !bounce && !vlan_tx_tag_present(skb)) {
 		*(__be32 *) (&tx_desc->ctrl.vlan_tag) |= cpu_to_be32(ring->doorbell_qpn);
 		op_own |= htonl((bf_index & 0xffff) << 8);
 		/* Ensure new descirptor hits memory

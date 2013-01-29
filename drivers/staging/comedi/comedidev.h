@@ -40,12 +40,14 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/timer.h>
+#include <linux/pci.h>
+#include <linux/usb.h>
 
 #include "comedi.h"
 
 #define DPRINTK(format, args...)	do {		\
 	if (comedi_debug)				\
-		printk(KERN_DEBUG "comedi: " format , ## args);	\
+		pr_debug("comedi: " format, ## args);	\
 } while (0)
 
 #define COMEDI_VERSION(a, b, c) (((a) << 16) + ((b) << 8) + (c))
@@ -53,9 +55,21 @@
 	COMEDI_MINORVERSION, COMEDI_MICROVERSION)
 #define COMEDI_RELEASE VERSION
 
-#define PCI_VENDOR_ID_ADLINK		0x144a
+/*
+ * PCI Vendor IDs not in <linux/pci_ids.h>
+ */
+#define PCI_VENDOR_ID_KOLTER		0x1001
 #define PCI_VENDOR_ID_ICP		0x104c
+#define PCI_VENDOR_ID_AMCC		0x10e8
+#define PCI_VENDOR_ID_DT		0x1116
+#define PCI_VENDOR_ID_IOTECH		0x1616
 #define PCI_VENDOR_ID_CONTEC		0x1221
+#define PCI_VENDOR_ID_CB		0x1307	/* Measurement Computing */
+#define PCI_VENDOR_ID_ADVANTECH		0x13fe
+#define PCI_VENDOR_ID_MEILHAUS		0x1402
+#define PCI_VENDOR_ID_RTD		0x1435
+#define PCI_VENDOR_ID_ADLINK		0x144a
+#define PCI_VENDOR_ID_AMPLICON		0x14dc
 
 #define COMEDI_NUM_MINORS 0x100
 #define COMEDI_NUM_BOARD_MINORS 0x30
@@ -77,7 +91,7 @@ struct comedi_subdevice {
 	unsigned runflags;
 	spinlock_t spin_lock;
 
-	int io_bits;
+	unsigned int io_bits;
 
 	unsigned int maxdata;	/* if maxdata==0, use list */
 	const unsigned int *maxdata_list;	/* list is channel specific */
@@ -180,9 +194,6 @@ struct comedi_async {
 			unsigned int x);
 };
 
-struct pci_dev;
-struct usb_interface;
-
 struct comedi_driver {
 	struct comedi_driver *next;
 
@@ -190,8 +201,7 @@ struct comedi_driver {
 	struct module *module;
 	int (*attach) (struct comedi_device *, struct comedi_devconfig *);
 	void (*detach) (struct comedi_device *);
-	int (*attach_pci) (struct comedi_device *, struct pci_dev *);
-	int (*attach_usb) (struct comedi_device *, struct usb_interface *);
+	int (*auto_attach) (struct comedi_device *, unsigned long);
 
 	/* number of elements in board_name and board_id arrays */
 	unsigned int num_names;
@@ -235,7 +245,7 @@ struct comedi_device {
 	void (*close) (struct comedi_device *dev);
 };
 
-static inline const void *comedi_board(struct comedi_device *dev)
+static inline const void *comedi_board(const struct comedi_device *dev)
 {
 	return dev->board_ptr;
 }
@@ -292,6 +302,8 @@ static inline struct comedi_subdevice *comedi_get_write_subdevice(
 	return info->device->write_subdev;
 }
 
+int comedi_alloc_subdevices(struct comedi_device *, int);
+
 void comedi_device_detach(struct comedi_device *dev);
 int comedi_device_attach(struct comedi_device *dev,
 			 struct comedi_devconfig *it);
@@ -310,7 +322,8 @@ int comedi_driver_unregister(struct comedi_driver *);
 	module_driver(__comedi_driver, comedi_driver_register, \
 			comedi_driver_unregister)
 
-struct pci_driver;
+int comedi_pci_enable(struct pci_dev *, const char *);
+void comedi_pci_disable(struct pci_dev *);
 
 int comedi_pci_driver_register(struct comedi_driver *, struct pci_driver *);
 void comedi_pci_driver_unregister(struct comedi_driver *, struct pci_driver *);
@@ -412,34 +425,6 @@ struct comedi_lrange {
 
 /* some silly little inline functions */
 
-static inline int alloc_subdevices(struct comedi_device *dev,
-				   unsigned int num_subdevices)
-{
-	unsigned i;
-
-	dev->n_subdevices = num_subdevices;
-	dev->subdevices =
-	    kcalloc(num_subdevices, sizeof(struct comedi_subdevice),
-		    GFP_KERNEL);
-	if (!dev->subdevices)
-		return -ENOMEM;
-	for (i = 0; i < num_subdevices; ++i) {
-		dev->subdevices[i].device = dev;
-		dev->subdevices[i].async_dma_dir = DMA_NONE;
-		spin_lock_init(&dev->subdevices[i].spin_lock);
-		dev->subdevices[i].minor = -1;
-	}
-	return 0;
-}
-
-static inline int alloc_private(struct comedi_device *dev, int size)
-{
-	dev->private = kzalloc(size, GFP_KERNEL);
-	if (!dev->private)
-		return -ENOMEM;
-	return 0;
-}
-
 static inline unsigned int bytes_per_sample(const struct comedi_subdevice *subd)
 {
 	if (subd->subdev_flags & SDF_LSAMPL)
@@ -453,14 +438,26 @@ into comedi's buffer */
 static inline void comedi_set_hw_dev(struct comedi_device *dev,
 				     struct device *hw_dev)
 {
+	if (dev->hw_dev == hw_dev)
+		return;
 	if (dev->hw_dev)
 		put_device(dev->hw_dev);
-
 	dev->hw_dev = hw_dev;
 	if (dev->hw_dev) {
 		dev->hw_dev = get_device(dev->hw_dev);
 		BUG_ON(dev->hw_dev == NULL);
 	}
+}
+
+static inline struct pci_dev *comedi_to_pci_dev(struct comedi_device *dev)
+{
+	return dev->hw_dev ? to_pci_dev(dev->hw_dev) : NULL;
+}
+
+static inline struct usb_interface *
+comedi_to_usb_interface(struct comedi_device *dev)
+{
+	return dev->hw_dev ? to_usb_interface(dev->hw_dev) : NULL;
 }
 
 int comedi_buf_put(struct comedi_async *async, short x);
@@ -517,24 +514,30 @@ static inline void *comedi_aux_data(int options[], int n)
 int comedi_alloc_subdevice_minor(struct comedi_device *dev,
 				 struct comedi_subdevice *s);
 void comedi_free_subdevice_minor(struct comedi_subdevice *s);
-int comedi_pci_auto_config(struct pci_dev *pcidev,
-			   struct comedi_driver *driver);
-void comedi_pci_auto_unconfig(struct pci_dev *pcidev);
-int comedi_usb_auto_config(struct usb_interface *intf,
-			   struct comedi_driver *driver);
-void comedi_usb_auto_unconfig(struct usb_interface *intf);
+int comedi_auto_config(struct device *hardware_device,
+		       struct comedi_driver *driver, unsigned long context);
+void comedi_auto_unconfig(struct device *hardware_device);
 
-#ifdef CONFIG_COMEDI_PCI_DRIVERS
-#define CONFIG_COMEDI_PCI
-#endif
-#ifdef CONFIG_COMEDI_PCI_DRIVERS_MODULE
-#define CONFIG_COMEDI_PCI
-#endif
-#ifdef CONFIG_COMEDI_PCMCIA_DRIVERS
-#define CONFIG_COMEDI_PCMCIA
-#endif
-#ifdef CONFIG_COMEDI_PCMCIA_DRIVERS_MODULE
-#define CONFIG_COMEDI_PCMCIA
-#endif
+static inline int comedi_pci_auto_config(struct pci_dev *pcidev,
+					 struct comedi_driver *driver)
+{
+	return comedi_auto_config(&pcidev->dev, driver, 0);
+}
+
+static inline void comedi_pci_auto_unconfig(struct pci_dev *pcidev)
+{
+	comedi_auto_unconfig(&pcidev->dev);
+}
+
+static inline int comedi_usb_auto_config(struct usb_interface *intf,
+					 struct comedi_driver *driver)
+{
+	return comedi_auto_config(&intf->dev, driver, 0);
+}
+
+static inline void comedi_usb_auto_unconfig(struct usb_interface *intf)
+{
+	comedi_auto_unconfig(&intf->dev);
+}
 
 #endif /* _COMEDIDEV_H */

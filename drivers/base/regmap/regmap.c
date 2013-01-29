@@ -15,11 +15,54 @@
 #include <linux/export.h>
 #include <linux/mutex.h>
 #include <linux/err.h>
+#include <linux/rbtree.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/regmap.h>
 
 #include "internal.h"
+
+/*
+ * Sometimes for failures during very early init the trace
+ * infrastructure isn't available early enough to be used.  For this
+ * sort of problem defining LOG_DEVICE will add printks for basic
+ * register I/O on a specific device.
+ */
+#undef LOG_DEVICE
+
+static int _regmap_update_bits(struct regmap *map, unsigned int reg,
+			       unsigned int mask, unsigned int val,
+			       bool *change);
+
+bool regmap_reg_in_ranges(unsigned int reg,
+			  const struct regmap_range *ranges,
+			  unsigned int nranges)
+{
+	const struct regmap_range *r;
+	int i;
+
+	for (i = 0, r = ranges; i < nranges; i++, r++)
+		if (regmap_reg_in_range(reg, r))
+			return true;
+	return false;
+}
+EXPORT_SYMBOL_GPL(regmap_reg_in_ranges);
+
+static bool _regmap_check_range_table(struct regmap *map,
+				      unsigned int reg,
+				      const struct regmap_access_table *table)
+{
+	/* Check "no ranges" first */
+	if (regmap_reg_in_ranges(reg, table->no_ranges, table->n_no_ranges))
+		return false;
+
+	/* In case zero "yes ranges" are supplied, any reg is OK */
+	if (!table->n_yes_ranges)
+		return true;
+
+	return regmap_reg_in_ranges(reg, table->yes_ranges,
+				    table->n_yes_ranges);
+}
 
 bool regmap_writeable(struct regmap *map, unsigned int reg)
 {
@@ -28,6 +71,9 @@ bool regmap_writeable(struct regmap *map, unsigned int reg)
 
 	if (map->writeable_reg)
 		return map->writeable_reg(map->dev, reg);
+
+	if (map->wr_table)
+		return _regmap_check_range_table(map, reg, map->wr_table);
 
 	return true;
 }
@@ -43,6 +89,9 @@ bool regmap_readable(struct regmap *map, unsigned int reg)
 	if (map->readable_reg)
 		return map->readable_reg(map->dev, reg);
 
+	if (map->rd_table)
+		return _regmap_check_range_table(map, reg, map->rd_table);
+
 	return true;
 }
 
@@ -53,6 +102,9 @@ bool regmap_volatile(struct regmap *map, unsigned int reg)
 
 	if (map->volatile_reg)
 		return map->volatile_reg(map->dev, reg);
+
+	if (map->volatile_table)
+		return _regmap_check_range_table(map, reg, map->volatile_table);
 
 	return true;
 }
@@ -65,11 +117,14 @@ bool regmap_precious(struct regmap *map, unsigned int reg)
 	if (map->precious_reg)
 		return map->precious_reg(map->dev, reg);
 
+	if (map->precious_table)
+		return _regmap_check_range_table(map, reg, map->precious_table);
+
 	return false;
 }
 
 static bool regmap_volatile_range(struct regmap *map, unsigned int reg,
-	unsigned int num)
+	size_t num)
 {
 	unsigned int i;
 
@@ -119,11 +174,17 @@ static void regmap_format_8(void *buf, unsigned int val, unsigned int shift)
 	b[0] = val << shift;
 }
 
-static void regmap_format_16(void *buf, unsigned int val, unsigned int shift)
+static void regmap_format_16_be(void *buf, unsigned int val, unsigned int shift)
 {
 	__be16 *b = buf;
 
 	b[0] = cpu_to_be16(val << shift);
+}
+
+static void regmap_format_16_native(void *buf, unsigned int val,
+				    unsigned int shift)
+{
+	*(u16 *)buf = val << shift;
 }
 
 static void regmap_format_24(void *buf, unsigned int val, unsigned int shift)
@@ -137,11 +198,17 @@ static void regmap_format_24(void *buf, unsigned int val, unsigned int shift)
 	b[2] = val;
 }
 
-static void regmap_format_32(void *buf, unsigned int val, unsigned int shift)
+static void regmap_format_32_be(void *buf, unsigned int val, unsigned int shift)
 {
 	__be32 *b = buf;
 
 	b[0] = cpu_to_be32(val << shift);
+}
+
+static void regmap_format_32_native(void *buf, unsigned int val,
+				    unsigned int shift)
+{
+	*(u32 *)buf = val << shift;
 }
 
 static unsigned int regmap_parse_8(void *buf)
@@ -151,13 +218,18 @@ static unsigned int regmap_parse_8(void *buf)
 	return b[0];
 }
 
-static unsigned int regmap_parse_16(void *buf)
+static unsigned int regmap_parse_16_be(void *buf)
 {
 	__be16 *b = buf;
 
 	b[0] = be16_to_cpu(b[0]);
 
 	return b[0];
+}
+
+static unsigned int regmap_parse_16_native(void *buf)
+{
+	return *(u16 *)buf;
 }
 
 static unsigned int regmap_parse_24(void *buf)
@@ -170,7 +242,7 @@ static unsigned int regmap_parse_24(void *buf)
 	return ret;
 }
 
-static unsigned int regmap_parse_32(void *buf)
+static unsigned int regmap_parse_32_be(void *buf)
 {
 	__be32 *b = buf;
 
@@ -179,23 +251,32 @@ static unsigned int regmap_parse_32(void *buf)
 	return b[0];
 }
 
-static void regmap_lock_mutex(struct regmap *map)
+static unsigned int regmap_parse_32_native(void *buf)
 {
+	return *(u32 *)buf;
+}
+
+static void regmap_lock_mutex(void *__map)
+{
+	struct regmap *map = __map;
 	mutex_lock(&map->mutex);
 }
 
-static void regmap_unlock_mutex(struct regmap *map)
+static void regmap_unlock_mutex(void *__map)
 {
+	struct regmap *map = __map;
 	mutex_unlock(&map->mutex);
 }
 
-static void regmap_lock_spinlock(struct regmap *map)
+static void regmap_lock_spinlock(void *__map)
 {
+	struct regmap *map = __map;
 	spin_lock(&map->spinlock);
 }
 
-static void regmap_unlock_spinlock(struct regmap *map)
+static void regmap_unlock_spinlock(void *__map)
 {
+	struct regmap *map = __map;
 	spin_unlock(&map->spinlock);
 }
 
@@ -206,6 +287,67 @@ static void dev_get_regmap_release(struct device *dev, void *res)
 	 * is not to manage the regmap but to provide a simple way to
 	 * get the regmap back given a struct device.
 	 */
+}
+
+static bool _regmap_range_add(struct regmap *map,
+			      struct regmap_range_node *data)
+{
+	struct rb_root *root = &map->range_tree;
+	struct rb_node **new = &(root->rb_node), *parent = NULL;
+
+	while (*new) {
+		struct regmap_range_node *this =
+			container_of(*new, struct regmap_range_node, node);
+
+		parent = *new;
+		if (data->range_max < this->range_min)
+			new = &((*new)->rb_left);
+		else if (data->range_min > this->range_max)
+			new = &((*new)->rb_right);
+		else
+			return false;
+	}
+
+	rb_link_node(&data->node, parent, new);
+	rb_insert_color(&data->node, root);
+
+	return true;
+}
+
+static struct regmap_range_node *_regmap_range_lookup(struct regmap *map,
+						      unsigned int reg)
+{
+	struct rb_node *node = map->range_tree.rb_node;
+
+	while (node) {
+		struct regmap_range_node *this =
+			container_of(node, struct regmap_range_node, node);
+
+		if (reg < this->range_min)
+			node = node->rb_left;
+		else if (reg > this->range_max)
+			node = node->rb_right;
+		else
+			return this;
+	}
+
+	return NULL;
+}
+
+static void regmap_range_exit(struct regmap *map)
+{
+	struct rb_node *next;
+	struct regmap_range_node *range_node;
+
+	next = rb_first(&map->range_tree);
+	while (next) {
+		range_node = rb_entry(next, struct regmap_range_node, node);
+		next = rb_next(&range_node->node);
+		rb_erase(&range_node->node, &map->range_tree);
+		kfree(range_node);
+	}
+
+	kfree(map->selector_work_buf);
 }
 
 /**
@@ -227,6 +369,8 @@ struct regmap *regmap_init(struct device *dev,
 {
 	struct regmap *map, **m;
 	int ret = -EINVAL;
+	enum regmap_endian reg_endian, val_endian;
+	int i, j;
 
 	if (!bus || !config)
 		goto err;
@@ -237,14 +381,21 @@ struct regmap *regmap_init(struct device *dev,
 		goto err;
 	}
 
-	if (bus->fast_io) {
-		spin_lock_init(&map->spinlock);
-		map->lock = regmap_lock_spinlock;
-		map->unlock = regmap_unlock_spinlock;
+	if (config->lock && config->unlock) {
+		map->lock = config->lock;
+		map->unlock = config->unlock;
+		map->lock_arg = config->lock_arg;
 	} else {
-		mutex_init(&map->mutex);
-		map->lock = regmap_lock_mutex;
-		map->unlock = regmap_unlock_mutex;
+		if (bus->fast_io) {
+			spin_lock_init(&map->spinlock);
+			map->lock = regmap_lock_spinlock;
+			map->unlock = regmap_unlock_spinlock;
+		} else {
+			mutex_init(&map->mutex);
+			map->lock = regmap_lock_mutex;
+			map->unlock = regmap_unlock_mutex;
+		}
+		map->lock_arg = map;
 	}
 	map->format.reg_bytes = DIV_ROUND_UP(config->reg_bits, 8);
 	map->format.pad_bytes = config->pad_bits / 8;
@@ -261,6 +412,10 @@ struct regmap *regmap_init(struct device *dev,
 	map->bus = bus;
 	map->bus_context = bus_context;
 	map->max_register = config->max_register;
+	map->wr_table = config->wr_table;
+	map->rd_table = config->rd_table;
+	map->volatile_table = config->volatile_table;
+	map->precious_table = config->precious_table;
 	map->writeable_reg = config->writeable_reg;
 	map->readable_reg = config->readable_reg;
 	map->volatile_reg = config->volatile_reg;
@@ -274,6 +429,18 @@ struct regmap *regmap_init(struct device *dev,
 	} else {
 		map->read_flag_mask = bus->read_flag_mask;
 	}
+
+	reg_endian = config->reg_format_endian;
+	if (reg_endian == REGMAP_ENDIAN_DEFAULT)
+		reg_endian = bus->reg_format_endian_default;
+	if (reg_endian == REGMAP_ENDIAN_DEFAULT)
+		reg_endian = REGMAP_ENDIAN_BIG;
+
+	val_endian = config->val_format_endian;
+	if (val_endian == REGMAP_ENDIAN_DEFAULT)
+		val_endian = bus->val_format_endian_default;
+	if (val_endian == REGMAP_ENDIAN_DEFAULT)
+		val_endian = REGMAP_ENDIAN_BIG;
 
 	switch (config->reg_bits + map->reg_shift) {
 	case 2:
@@ -321,11 +488,29 @@ struct regmap *regmap_init(struct device *dev,
 		break;
 
 	case 16:
-		map->format.format_reg = regmap_format_16;
+		switch (reg_endian) {
+		case REGMAP_ENDIAN_BIG:
+			map->format.format_reg = regmap_format_16_be;
+			break;
+		case REGMAP_ENDIAN_NATIVE:
+			map->format.format_reg = regmap_format_16_native;
+			break;
+		default:
+			goto err_map;
+		}
 		break;
 
 	case 32:
-		map->format.format_reg = regmap_format_32;
+		switch (reg_endian) {
+		case REGMAP_ENDIAN_BIG:
+			map->format.format_reg = regmap_format_32_be;
+			break;
+		case REGMAP_ENDIAN_NATIVE:
+			map->format.format_reg = regmap_format_32_native;
+			break;
+		default:
+			goto err_map;
+		}
 		break;
 
 	default:
@@ -338,21 +523,47 @@ struct regmap *regmap_init(struct device *dev,
 		map->format.parse_val = regmap_parse_8;
 		break;
 	case 16:
-		map->format.format_val = regmap_format_16;
-		map->format.parse_val = regmap_parse_16;
+		switch (val_endian) {
+		case REGMAP_ENDIAN_BIG:
+			map->format.format_val = regmap_format_16_be;
+			map->format.parse_val = regmap_parse_16_be;
+			break;
+		case REGMAP_ENDIAN_NATIVE:
+			map->format.format_val = regmap_format_16_native;
+			map->format.parse_val = regmap_parse_16_native;
+			break;
+		default:
+			goto err_map;
+		}
 		break;
 	case 24:
+		if (val_endian != REGMAP_ENDIAN_BIG)
+			goto err_map;
 		map->format.format_val = regmap_format_24;
 		map->format.parse_val = regmap_parse_24;
 		break;
 	case 32:
-		map->format.format_val = regmap_format_32;
-		map->format.parse_val = regmap_parse_32;
+		switch (val_endian) {
+		case REGMAP_ENDIAN_BIG:
+			map->format.format_val = regmap_format_32_be;
+			map->format.parse_val = regmap_parse_32_be;
+			break;
+		case REGMAP_ENDIAN_NATIVE:
+			map->format.format_val = regmap_format_32_native;
+			map->format.parse_val = regmap_parse_32_native;
+			break;
+		default:
+			goto err_map;
+		}
 		break;
 	}
 
-	if (map->format.format_write)
+	if (map->format.format_write) {
+		if ((reg_endian != REGMAP_ENDIAN_BIG) ||
+		    (val_endian != REGMAP_ENDIAN_BIG))
+			goto err_map;
 		map->use_single_rw = true;
+	}
 
 	if (!map->format.format_write &&
 	    !(map->format.format_reg && map->format.format_val))
@@ -364,27 +575,115 @@ struct regmap *regmap_init(struct device *dev,
 		goto err_map;
 	}
 
-	regmap_debugfs_init(map, config->name);
+	map->range_tree = RB_ROOT;
+	for (i = 0; i < config->num_ranges; i++) {
+		const struct regmap_range_cfg *range_cfg = &config->ranges[i];
+		struct regmap_range_node *new;
+
+		/* Sanity check */
+		if (range_cfg->range_max < range_cfg->range_min) {
+			dev_err(map->dev, "Invalid range %d: %d < %d\n", i,
+				range_cfg->range_max, range_cfg->range_min);
+			goto err_range;
+		}
+
+		if (range_cfg->range_max > map->max_register) {
+			dev_err(map->dev, "Invalid range %d: %d > %d\n", i,
+				range_cfg->range_max, map->max_register);
+			goto err_range;
+		}
+
+		if (range_cfg->selector_reg > map->max_register) {
+			dev_err(map->dev,
+				"Invalid range %d: selector out of map\n", i);
+			goto err_range;
+		}
+
+		if (range_cfg->window_len == 0) {
+			dev_err(map->dev, "Invalid range %d: window_len 0\n",
+				i);
+			goto err_range;
+		}
+
+		/* Make sure, that this register range has no selector
+		   or data window within its boundary */
+		for (j = 0; j < config->num_ranges; j++) {
+			unsigned sel_reg = config->ranges[j].selector_reg;
+			unsigned win_min = config->ranges[j].window_start;
+			unsigned win_max = win_min +
+					   config->ranges[j].window_len - 1;
+
+			if (range_cfg->range_min <= sel_reg &&
+			    sel_reg <= range_cfg->range_max) {
+				dev_err(map->dev,
+					"Range %d: selector for %d in window\n",
+					i, j);
+				goto err_range;
+			}
+
+			if (!(win_max < range_cfg->range_min ||
+			      win_min > range_cfg->range_max)) {
+				dev_err(map->dev,
+					"Range %d: window for %d in window\n",
+					i, j);
+				goto err_range;
+			}
+		}
+
+		new = kzalloc(sizeof(*new), GFP_KERNEL);
+		if (new == NULL) {
+			ret = -ENOMEM;
+			goto err_range;
+		}
+
+		new->map = map;
+		new->name = range_cfg->name;
+		new->range_min = range_cfg->range_min;
+		new->range_max = range_cfg->range_max;
+		new->selector_reg = range_cfg->selector_reg;
+		new->selector_mask = range_cfg->selector_mask;
+		new->selector_shift = range_cfg->selector_shift;
+		new->window_start = range_cfg->window_start;
+		new->window_len = range_cfg->window_len;
+
+		if (_regmap_range_add(map, new) == false) {
+			dev_err(map->dev, "Failed to add range %d\n", i);
+			kfree(new);
+			goto err_range;
+		}
+
+		if (map->selector_work_buf == NULL) {
+			map->selector_work_buf =
+				kzalloc(map->format.buf_size, GFP_KERNEL);
+			if (map->selector_work_buf == NULL) {
+				ret = -ENOMEM;
+				goto err_range;
+			}
+		}
+	}
 
 	ret = regcache_init(map, config);
-	if (ret < 0)
-		goto err_debugfs;
+	if (ret != 0)
+		goto err_range;
+
+	regmap_debugfs_init(map, config->name);
 
 	/* Add a devres resource for dev_get_regmap() */
 	m = devres_alloc(dev_get_regmap_release, sizeof(*m), GFP_KERNEL);
 	if (!m) {
 		ret = -ENOMEM;
-		goto err_cache;
+		goto err_debugfs;
 	}
 	*m = map;
 	devres_add(dev, m);
 
 	return map;
 
-err_cache:
-	regcache_exit(map);
 err_debugfs:
 	regmap_debugfs_exit(map);
+	regcache_exit(map);
+err_range:
+	regmap_range_exit(map);
 	kfree(map->work_buf);
 err_map:
 	kfree(map);
@@ -444,13 +743,12 @@ EXPORT_SYMBOL_GPL(devm_regmap_init);
  * new cache.  This can be used to restore the cache to defaults or to
  * update the cache configuration to reflect runtime discovery of the
  * hardware.
+ *
+ * No explicit locking is done here, the user needs to ensure that
+ * this function will not race with other calls to regmap.
  */
 int regmap_reinit_cache(struct regmap *map, const struct regmap_config *config)
 {
-	int ret;
-
-	map->lock(map);
-
 	regcache_exit(map);
 	regmap_debugfs_exit(map);
 
@@ -466,11 +764,7 @@ int regmap_reinit_cache(struct regmap *map, const struct regmap_config *config)
 	map->cache_bypass = false;
 	map->cache_only = false;
 
-	ret = regcache_init(map, config);
-
-	map->unlock(map);
-
-	return ret;
+	return regcache_init(map, config);
 }
 EXPORT_SYMBOL_GPL(regmap_reinit_cache);
 
@@ -481,6 +775,7 @@ void regmap_exit(struct regmap *map)
 {
 	regcache_exit(map);
 	regmap_debugfs_exit(map);
+	regmap_range_exit(map);
 	if (map->bus->free_context)
 		map->bus->free_context(map->bus_context);
 	kfree(map->work_buf);
@@ -526,9 +821,58 @@ struct regmap *dev_get_regmap(struct device *dev, const char *name)
 }
 EXPORT_SYMBOL_GPL(dev_get_regmap);
 
+static int _regmap_select_page(struct regmap *map, unsigned int *reg,
+			       struct regmap_range_node *range,
+			       unsigned int val_num)
+{
+	void *orig_work_buf;
+	unsigned int win_offset;
+	unsigned int win_page;
+	bool page_chg;
+	int ret;
+
+	win_offset = (*reg - range->range_min) % range->window_len;
+	win_page = (*reg - range->range_min) / range->window_len;
+
+	if (val_num > 1) {
+		/* Bulk write shouldn't cross range boundary */
+		if (*reg + val_num - 1 > range->range_max)
+			return -EINVAL;
+
+		/* ... or single page boundary */
+		if (val_num > range->window_len - win_offset)
+			return -EINVAL;
+	}
+
+	/* It is possible to have selector register inside data window.
+	   In that case, selector register is located on every page and
+	   it needs no page switching, when accessed alone. */
+	if (val_num > 1 ||
+	    range->window_start + win_offset != range->selector_reg) {
+		/* Use separate work_buf during page switching */
+		orig_work_buf = map->work_buf;
+		map->work_buf = map->selector_work_buf;
+
+		ret = _regmap_update_bits(map, range->selector_reg,
+					  range->selector_mask,
+					  win_page << range->selector_shift,
+					  &page_chg);
+
+		map->work_buf = orig_work_buf;
+
+		if (ret != 0)
+			return ret;
+	}
+
+	*reg = range->window_start + win_offset;
+
+	return 0;
+}
+
 static int _regmap_raw_write(struct regmap *map, unsigned int reg,
 			     const void *val, size_t val_len)
 {
+	struct regmap_range_node *range;
 	u8 *u8 = map->work_buf;
 	void *buf;
 	int ret = -ENOTSUPP;
@@ -552,7 +896,7 @@ static int _regmap_raw_write(struct regmap *map, unsigned int reg,
 					     ival);
 			if (ret) {
 				dev_err(map->dev,
-				   "Error in caching of register: %u ret: %d\n",
+					"Error in caching of register: %x ret: %d\n",
 					reg + i, ret);
 				return ret;
 			}
@@ -561,6 +905,36 @@ static int _regmap_raw_write(struct regmap *map, unsigned int reg,
 			map->cache_dirty = true;
 			return 0;
 		}
+	}
+
+	range = _regmap_range_lookup(map, reg);
+	if (range) {
+		int val_num = val_len / map->format.val_bytes;
+		int win_offset = (reg - range->range_min) % range->window_len;
+		int win_residue = range->window_len - win_offset;
+
+		/* If the write goes beyond the end of the window split it */
+		while (val_num > win_residue) {
+			dev_dbg(map->dev, "Writing window %d/%zu\n",
+				win_residue, val_len / map->format.val_bytes);
+			ret = _regmap_raw_write(map, reg, val, win_residue *
+						map->format.val_bytes);
+			if (ret != 0)
+				return ret;
+
+			reg += win_residue;
+			val_num -= win_residue;
+			val += win_residue * map->format.val_bytes;
+			val_len -= win_residue * map->format.val_bytes;
+
+			win_offset = (reg - range->range_min) %
+				range->window_len;
+			win_residue = range->window_len - win_offset;
+		}
+
+		ret = _regmap_select_page(map, &reg, range, val_num);
+		if (ret != 0)
+			return ret;
 	}
 
 	map->format.format_reg(map->work_buf, reg, map->reg_shift);
@@ -610,6 +984,7 @@ static int _regmap_raw_write(struct regmap *map, unsigned int reg,
 int _regmap_write(struct regmap *map, unsigned int reg,
 		  unsigned int val)
 {
+	struct regmap_range_node *range;
 	int ret;
 	BUG_ON(!map->format.format_write && !map->format.format_val);
 
@@ -623,9 +998,21 @@ int _regmap_write(struct regmap *map, unsigned int reg,
 		}
 	}
 
+#ifdef LOG_DEVICE
+	if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
+		dev_info(map->dev, "%x <= %x\n", reg, val);
+#endif
+
 	trace_regmap_reg_write(map->dev, reg, val);
 
 	if (map->format.format_write) {
+		range = _regmap_range_lookup(map, reg);
+		if (range) {
+			ret = _regmap_select_page(map, &reg, range, 1);
+			if (ret != 0)
+				return ret;
+		}
+
 		map->format.format_write(map, reg, val);
 
 		trace_regmap_hw_write_start(map->dev, reg, 1);
@@ -664,11 +1051,11 @@ int regmap_write(struct regmap *map, unsigned int reg, unsigned int val)
 	if (reg % map->reg_stride)
 		return -EINVAL;
 
-	map->lock(map);
+	map->lock(map->lock_arg);
 
 	ret = _regmap_write(map, reg, val);
 
-	map->unlock(map);
+	map->unlock(map->lock_arg);
 
 	return ret;
 }
@@ -700,11 +1087,11 @@ int regmap_raw_write(struct regmap *map, unsigned int reg,
 	if (reg % map->reg_stride)
 		return -EINVAL;
 
-	map->lock(map);
+	map->lock(map->lock_arg);
 
 	ret = _regmap_raw_write(map, reg, val, val_len);
 
-	map->unlock(map);
+	map->unlock(map->lock_arg);
 
 	return ret;
 }
@@ -736,7 +1123,7 @@ int regmap_bulk_write(struct regmap *map, unsigned int reg, const void *val,
 	if (reg % map->reg_stride)
 		return -EINVAL;
 
-	map->lock(map);
+	map->lock(map->lock_arg);
 
 	/* No formatting is require if val_byte is 1 */
 	if (val_bytes == 1) {
@@ -772,7 +1159,7 @@ int regmap_bulk_write(struct regmap *map, unsigned int reg, const void *val,
 		kfree(wval);
 
 out:
-	map->unlock(map);
+	map->unlock(map->lock_arg);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(regmap_bulk_write);
@@ -780,8 +1167,17 @@ EXPORT_SYMBOL_GPL(regmap_bulk_write);
 static int _regmap_raw_read(struct regmap *map, unsigned int reg, void *val,
 			    unsigned int val_len)
 {
+	struct regmap_range_node *range;
 	u8 *u8 = map->work_buf;
 	int ret;
+
+	range = _regmap_range_lookup(map, reg);
+	if (range) {
+		ret = _regmap_select_page(map, &reg, range,
+					  val_len / map->format.val_bytes);
+		if (ret != 0)
+			return ret;
+	}
 
 	map->format.format_reg(map->work_buf, reg, map->reg_shift);
 
@@ -826,6 +1222,12 @@ static int _regmap_read(struct regmap *map, unsigned int reg,
 	ret = _regmap_raw_read(map, reg, map->work_buf, map->format.val_bytes);
 	if (ret == 0) {
 		*val = map->format.parse_val(map->work_buf);
+
+#ifdef LOG_DEVICE
+		if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
+			dev_info(map->dev, "%x => %x\n", reg, *val);
+#endif
+
 		trace_regmap_reg_read(map->dev, reg, *val);
 	}
 
@@ -852,11 +1254,11 @@ int regmap_read(struct regmap *map, unsigned int reg, unsigned int *val)
 	if (reg % map->reg_stride)
 		return -EINVAL;
 
-	map->lock(map);
+	map->lock(map->lock_arg);
 
 	ret = _regmap_read(map, reg, val);
 
-	map->unlock(map);
+	map->unlock(map->lock_arg);
 
 	return ret;
 }
@@ -886,7 +1288,7 @@ int regmap_raw_read(struct regmap *map, unsigned int reg, void *val,
 	if (reg % map->reg_stride)
 		return -EINVAL;
 
-	map->lock(map);
+	map->lock(map->lock_arg);
 
 	if (regmap_volatile_range(map, reg, val_count) || map->cache_bypass ||
 	    map->cache_type == REGCACHE_NONE) {
@@ -908,7 +1310,7 @@ int regmap_raw_read(struct regmap *map, unsigned int reg, void *val,
 	}
 
  out:
-	map->unlock(map);
+	map->unlock(map->lock_arg);
 
 	return ret;
 }
@@ -982,11 +1384,9 @@ static int _regmap_update_bits(struct regmap *map, unsigned int reg,
 	int ret;
 	unsigned int tmp, orig;
 
-	map->lock(map);
-
 	ret = _regmap_read(map, reg, &orig);
 	if (ret != 0)
-		goto out;
+		return ret;
 
 	tmp = orig & ~mask;
 	tmp |= val & mask;
@@ -997,9 +1397,6 @@ static int _regmap_update_bits(struct regmap *map, unsigned int reg,
 	} else {
 		*change = false;
 	}
-
-out:
-	map->unlock(map);
 
 	return ret;
 }
@@ -1018,7 +1415,13 @@ int regmap_update_bits(struct regmap *map, unsigned int reg,
 		       unsigned int mask, unsigned int val)
 {
 	bool change;
-	return _regmap_update_bits(map, reg, mask, val, &change);
+	int ret;
+
+	map->lock(map->lock_arg);
+	ret = _regmap_update_bits(map, reg, mask, val, &change);
+	map->unlock(map->lock_arg);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(regmap_update_bits);
 
@@ -1038,7 +1441,12 @@ int regmap_update_bits_check(struct regmap *map, unsigned int reg,
 			     unsigned int mask, unsigned int val,
 			     bool *change)
 {
-	return _regmap_update_bits(map, reg, mask, val, change);
+	int ret;
+
+	map->lock(map->lock_arg);
+	ret = _regmap_update_bits(map, reg, mask, val, change);
+	map->unlock(map->lock_arg);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(regmap_update_bits_check);
 
@@ -1066,7 +1474,7 @@ int regmap_register_patch(struct regmap *map, const struct reg_default *regs,
 	if (map->patch)
 		return -EBUSY;
 
-	map->lock(map);
+	map->lock(map->lock_arg);
 
 	bypass = map->cache_bypass;
 
@@ -1094,7 +1502,7 @@ int regmap_register_patch(struct regmap *map, const struct reg_default *regs,
 out:
 	map->cache_bypass = bypass;
 
-	map->unlock(map);
+	map->unlock(map->lock_arg);
 
 	return ret;
 }

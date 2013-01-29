@@ -239,13 +239,13 @@ static ssize_t iio_ev_value_store(struct device *dev,
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
-	unsigned long val;
+	int val;
 	int ret;
 
 	if (!indio_dev->info->write_event_value)
 		return -EINVAL;
 
-	ret = strict_strtoul(buf, 10, &val);
+	ret = kstrtoint(buf, 10, &val);
 	if (ret)
 		return ret;
 
@@ -345,21 +345,15 @@ static inline int __iio_add_event_config_attrs(struct iio_dev *indio_dev)
 {
 	int j, ret, attrcount = 0;
 
-	INIT_LIST_HEAD(&indio_dev->event_interface->dev_attr_list);
 	/* Dynically created from the channels array */
 	for (j = 0; j < indio_dev->num_channels; j++) {
 		ret = iio_device_add_event_sysfs(indio_dev,
 						 &indio_dev->channels[j]);
 		if (ret < 0)
-			goto error_clear_attrs;
+			return ret;
 		attrcount += ret;
 	}
 	return attrcount;
-
-error_clear_attrs:
-	__iio_remove_event_config_attrs(indio_dev);
-
-	return ret;
 }
 
 static bool iio_check_for_dynamic_events(struct iio_dev *indio_dev)
@@ -395,6 +389,8 @@ int iio_device_register_eventset(struct iio_dev *indio_dev)
 		ret = -ENOMEM;
 		goto error_ret;
 	}
+
+	INIT_LIST_HEAD(&indio_dev->event_interface->dev_attr_list);
 
 	iio_setup_ev_int(indio_dev->event_interface);
 	if (indio_dev->info->event_attrs != NULL) {

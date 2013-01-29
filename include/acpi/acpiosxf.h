@@ -1,14 +1,13 @@
-
 /******************************************************************************
  *
- * Name: acpiosxf.h - All interfaces to the OS Services Layer (OSL).  These
+ * Name: acpiosxf.h - All interfaces to the OS Services Layer (OSL). These
  *                    interfaces must be implemented by OSL to interface the
  *                    ACPI components to the host operating system.
  *
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2012, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -47,8 +46,8 @@
 #ifndef __ACPIOSXF_H__
 #define __ACPIOSXF_H__
 
-#include "platform/acenv.h"
-#include "actypes.h"
+#include <acpi/platform/acenv.h>
+#include <acpi/actypes.h>
 
 /* Types for acpi_os_execute */
 
@@ -205,7 +204,7 @@ acpi_os_execute(acpi_execute_type type,
 acpi_status
 acpi_os_hotplug_execute(acpi_osd_exec_callback function, void *context);
 
-void acpi_os_wait_events_complete(void *context);
+void acpi_os_wait_events_complete(void);
 
 void acpi_os_sleep(u64 milliseconds);
 

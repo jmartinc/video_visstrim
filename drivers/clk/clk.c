@@ -16,6 +16,8 @@
 #include <linux/err.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/of.h>
+#include <linux/device.h>
 
 static DEFINE_SPINLOCK(enable_lock);
 static DEFINE_MUTEX(prepare_lock);
@@ -217,8 +219,17 @@ static void clk_disable_unused_subtree(struct clk *clk)
 	if (clk->flags & CLK_IGNORE_UNUSED)
 		goto unlock_out;
 
-	if (__clk_is_enabled(clk) && clk->ops->disable)
-		clk->ops->disable(clk->hw);
+	/*
+	 * some gate clocks have special needs during the disable-unused
+	 * sequence.  call .disable_unused if available, otherwise fall
+	 * back to .disable
+	 */
+	if (__clk_is_enabled(clk)) {
+		if (clk->ops->disable_unused)
+			clk->ops->disable_unused(clk->hw);
+		else if (clk->ops->disable)
+			clk->ops->disable(clk->hw);
+	}
 
 unlock_out:
 	spin_unlock_irqrestore(&enable_lock, flags);
@@ -260,7 +271,7 @@ inline struct clk_hw *__clk_get_hw(struct clk *clk)
 
 inline u8 __clk_get_num_parents(struct clk *clk)
 {
-	return !clk ? -EINVAL : clk->num_parents;
+	return !clk ? 0 : clk->num_parents;
 }
 
 inline struct clk *__clk_get_parent(struct clk *clk)
@@ -268,14 +279,14 @@ inline struct clk *__clk_get_parent(struct clk *clk)
 	return !clk ? NULL : clk->parent;
 }
 
-inline int __clk_get_enable_count(struct clk *clk)
+inline unsigned int __clk_get_enable_count(struct clk *clk)
 {
-	return !clk ? -EINVAL : clk->enable_count;
+	return !clk ? 0 : clk->enable_count;
 }
 
-inline int __clk_get_prepare_count(struct clk *clk)
+inline unsigned int __clk_get_prepare_count(struct clk *clk)
 {
-	return !clk ? -EINVAL : clk->prepare_count;
+	return !clk ? 0 : clk->prepare_count;
 }
 
 unsigned long __clk_get_rate(struct clk *clk)
@@ -301,15 +312,15 @@ out:
 
 inline unsigned long __clk_get_flags(struct clk *clk)
 {
-	return !clk ? -EINVAL : clk->flags;
+	return !clk ? 0 : clk->flags;
 }
 
-int __clk_is_enabled(struct clk *clk)
+bool __clk_is_enabled(struct clk *clk)
 {
 	int ret;
 
 	if (!clk)
-		return -EINVAL;
+		return false;
 
 	/*
 	 * .is_enabled is only mandatory for clocks that gate
@@ -322,7 +333,7 @@ int __clk_is_enabled(struct clk *clk)
 
 	ret = clk->ops->is_enabled(clk->hw);
 out:
-	return ret;
+	return !!ret;
 }
 
 static struct clk *__clk_lookup_subtree(const char *name, struct clk *clk)
@@ -464,6 +475,9 @@ static void __clk_disable(struct clk *clk)
 	if (!clk)
 		return;
 
+	if (WARN_ON(IS_ERR(clk)))
+		return;
+
 	if (WARN_ON(clk->enable_count == 0))
 		return;
 
@@ -554,25 +568,6 @@ int clk_enable(struct clk *clk)
 EXPORT_SYMBOL_GPL(clk_enable);
 
 /**
- * clk_get_rate - return the rate of clk
- * @clk: the clk whose rate is being returned
- *
- * Simply returns the cached rate of the clk.  Does not query the hardware.  If
- * clk is NULL then returns 0.
- */
-unsigned long clk_get_rate(struct clk *clk)
-{
-	unsigned long rate;
-
-	mutex_lock(&prepare_lock);
-	rate = __clk_get_rate(clk);
-	mutex_unlock(&prepare_lock);
-
-	return rate;
-}
-EXPORT_SYMBOL_GPL(clk_get_rate);
-
-/**
  * __clk_round_rate - round the given rate for a clk
  * @clk: round the rate of this clock
  *
@@ -583,7 +578,7 @@ unsigned long __clk_round_rate(struct clk *clk, unsigned long rate)
 	unsigned long parent_rate = 0;
 
 	if (!clk)
-		return -EINVAL;
+		return 0;
 
 	if (!clk->ops->round_rate) {
 		if (clk->flags & CLK_SET_RATE_PARENT)
@@ -696,6 +691,30 @@ static void __clk_recalc_rates(struct clk *clk, unsigned long msg)
 	hlist_for_each_entry(child, tmp, &clk->children, child_node)
 		__clk_recalc_rates(child, msg);
 }
+
+/**
+ * clk_get_rate - return the rate of clk
+ * @clk: the clk whose rate is being returned
+ *
+ * Simply returns the cached rate of the clk, unless CLK_GET_RATE_NOCACHE flag
+ * is set, which means a recalc_rate will be issued.
+ * If clk is NULL then returns 0.
+ */
+unsigned long clk_get_rate(struct clk *clk)
+{
+	unsigned long rate;
+
+	mutex_lock(&prepare_lock);
+
+	if (clk && (clk->flags & CLK_GET_RATE_NOCACHE))
+		__clk_recalc_rates(clk, 0);
+
+	rate = __clk_get_rate(clk);
+	mutex_unlock(&prepare_lock);
+
+	return rate;
+}
+EXPORT_SYMBOL_GPL(clk_get_rate);
 
 /**
  * __clk_speculate_rates
@@ -850,18 +869,21 @@ static void clk_change_rate(struct clk *clk)
 {
 	struct clk *child;
 	unsigned long old_rate;
+	unsigned long best_parent_rate = 0;
 	struct hlist_node *tmp;
 
 	old_rate = clk->rate;
 
+	if (clk->parent)
+		best_parent_rate = clk->parent->rate;
+
 	if (clk->ops->set_rate)
-		clk->ops->set_rate(clk->hw, clk->new_rate, clk->parent->rate);
+		clk->ops->set_rate(clk->hw, clk->new_rate, best_parent_rate);
 
 	if (clk->ops->recalc_rate)
-		clk->rate = clk->ops->recalc_rate(clk->hw,
-				clk->parent->rate);
+		clk->rate = clk->ops->recalc_rate(clk->hw, best_parent_rate);
 	else
-		clk->rate = clk->parent->rate;
+		clk->rate = best_parent_rate;
 
 	if (clk->notifier_count && old_rate != clk->rate)
 		__clk_notify(clk, POST_RATE_CHANGE, old_rate, clk->rate);
@@ -999,7 +1021,7 @@ static struct clk *__clk_init_parent(struct clk *clk)
 
 	if (!clk->parents)
 		clk->parents =
-			kmalloc((sizeof(struct clk*) * clk->num_parents),
+			kzalloc((sizeof(struct clk*) * clk->num_parents),
 					GFP_KERNEL);
 
 	if (!clk->parents)
@@ -1064,21 +1086,24 @@ static int __clk_set_parent(struct clk *clk, struct clk *parent)
 
 	old_parent = clk->parent;
 
-	/* find index of new parent clock using cached parent ptrs */
-	for (i = 0; i < clk->num_parents; i++)
-		if (clk->parents[i] == parent)
-			break;
+	if (!clk->parents)
+		clk->parents = kzalloc((sizeof(struct clk*) * clk->num_parents),
+								GFP_KERNEL);
 
 	/*
-	 * find index of new parent clock using string name comparison
-	 * also try to cache the parent to avoid future calls to __clk_lookup
+	 * find index of new parent clock using cached parent ptrs,
+	 * or if not yet cached, use string name comparison and cache
+	 * them now to avoid future calls to __clk_lookup.
 	 */
-	if (i == clk->num_parents)
-		for (i = 0; i < clk->num_parents; i++)
-			if (!strcmp(clk->parent_names[i], parent->name)) {
+	for (i = 0; i < clk->num_parents; i++) {
+		if (clk->parents && clk->parents[i] == parent)
+			break;
+		else if (!strcmp(clk->parent_names[i], parent->name)) {
+			if (clk->parents)
 				clk->parents[i] = __clk_lookup(parent->name);
-				break;
-			}
+			break;
+		}
+	}
 
 	if (i == clk->num_parents) {
 		pr_debug("%s: clock %s is not a possible parent of clock %s\n",
@@ -1229,8 +1254,8 @@ int __clk_init(struct device *dev, struct clk *clk)
 	 * If clk->parents is not NULL we skip this entire block.  This allows
 	 * for clock drivers to statically initialize clk->parents.
 	 */
-	if (clk->num_parents && !clk->parents) {
-		clk->parents = kmalloc((sizeof(struct clk*) * clk->num_parents),
+	if (clk->num_parents > 1 && !clk->parents) {
+		clk->parents = kzalloc((sizeof(struct clk*) * clk->num_parents),
 				GFP_KERNEL);
 		/*
 		 * __clk_lookup returns NULL for parents that have not been
@@ -1282,12 +1307,20 @@ int __clk_init(struct device *dev, struct clk *clk)
 	 * walk the list of orphan clocks and reparent any that are children of
 	 * this clock
 	 */
-	hlist_for_each_entry_safe(orphan, tmp, tmp2, &clk_orphan_list, child_node)
+	hlist_for_each_entry_safe(orphan, tmp, tmp2, &clk_orphan_list, child_node) {
+		if (orphan->ops->get_parent) {
+			i = orphan->ops->get_parent(orphan->hw);
+			if (!strcmp(clk->name, orphan->parent_names[i]))
+				__clk_reparent(orphan, clk);
+			continue;
+		}
+
 		for (i = 0; i < orphan->num_parents; i++)
 			if (!strcmp(clk->name, orphan->parent_names[i])) {
 				__clk_reparent(orphan, clk);
 				break;
 			}
+	 }
 
 	/*
 	 * optional platform-specific magic
@@ -1346,28 +1379,9 @@ struct clk *__clk_register(struct device *dev, struct clk_hw *hw)
 }
 EXPORT_SYMBOL_GPL(__clk_register);
 
-/**
- * clk_register - allocate a new clock, register it and return an opaque cookie
- * @dev: device that is registering this clock
- * @hw: link to hardware-specific clock data
- *
- * clk_register is the primary interface for populating the clock tree with new
- * clock nodes.  It returns a pointer to the newly allocated struct clk which
- * cannot be dereferenced by driver code but may be used in conjuction with the
- * rest of the clock API.  In the event of an error clk_register will return an
- * error code; drivers must test for an error code after calling clk_register.
- */
-struct clk *clk_register(struct device *dev, struct clk_hw *hw)
+static int _clk_register(struct device *dev, struct clk_hw *hw, struct clk *clk)
 {
 	int i, ret;
-	struct clk *clk;
-
-	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
-	if (!clk) {
-		pr_err("%s: could not allocate clk\n", __func__);
-		ret = -ENOMEM;
-		goto fail_out;
-	}
 
 	clk->name = kstrdup(hw->init->name, GFP_KERNEL);
 	if (!clk->name) {
@@ -1405,7 +1419,7 @@ struct clk *clk_register(struct device *dev, struct clk_hw *hw)
 
 	ret = __clk_init(dev, clk);
 	if (!ret)
-		return clk;
+		return 0;
 
 fail_parent_names_copy:
 	while (--i >= 0)
@@ -1414,6 +1428,36 @@ fail_parent_names_copy:
 fail_parent_names:
 	kfree(clk->name);
 fail_name:
+	return ret;
+}
+
+/**
+ * clk_register - allocate a new clock, register it and return an opaque cookie
+ * @dev: device that is registering this clock
+ * @hw: link to hardware-specific clock data
+ *
+ * clk_register is the primary interface for populating the clock tree with new
+ * clock nodes.  It returns a pointer to the newly allocated struct clk which
+ * cannot be dereferenced by driver code but may be used in conjuction with the
+ * rest of the clock API.  In the event of an error clk_register will return an
+ * error code; drivers must test for an error code after calling clk_register.
+ */
+struct clk *clk_register(struct device *dev, struct clk_hw *hw)
+{
+	int ret;
+	struct clk *clk;
+
+	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
+	if (!clk) {
+		pr_err("%s: could not allocate clk\n", __func__);
+		ret = -ENOMEM;
+		goto fail_out;
+	}
+
+	ret = _clk_register(dev, hw, clk);
+	if (!ret)
+		return clk;
+
 	kfree(clk);
 fail_out:
 	return ERR_PTR(ret);
@@ -1428,6 +1472,63 @@ EXPORT_SYMBOL_GPL(clk_register);
  */
 void clk_unregister(struct clk *clk) {}
 EXPORT_SYMBOL_GPL(clk_unregister);
+
+static void devm_clk_release(struct device *dev, void *res)
+{
+	clk_unregister(res);
+}
+
+/**
+ * devm_clk_register - resource managed clk_register()
+ * @dev: device that is registering this clock
+ * @hw: link to hardware-specific clock data
+ *
+ * Managed clk_register(). Clocks returned from this function are
+ * automatically clk_unregister()ed on driver detach. See clk_register() for
+ * more information.
+ */
+struct clk *devm_clk_register(struct device *dev, struct clk_hw *hw)
+{
+	struct clk *clk;
+	int ret;
+
+	clk = devres_alloc(devm_clk_release, sizeof(*clk), GFP_KERNEL);
+	if (!clk)
+		return ERR_PTR(-ENOMEM);
+
+	ret = _clk_register(dev, hw, clk);
+	if (!ret) {
+		devres_add(dev, clk);
+	} else {
+		devres_free(clk);
+		clk = ERR_PTR(ret);
+	}
+
+	return clk;
+}
+EXPORT_SYMBOL_GPL(devm_clk_register);
+
+static int devm_clk_match(struct device *dev, void *res, void *data)
+{
+	struct clk *c = res;
+	if (WARN_ON(!c))
+		return 0;
+	return c == data;
+}
+
+/**
+ * devm_clk_unregister - resource managed clk_unregister()
+ * @clk: clock to unregister
+ *
+ * Deallocate a clock allocated with devm_clk_register(). Normally
+ * this function will not need to be called and the resource management
+ * code will ensure that the resource is freed.
+ */
+void devm_clk_unregister(struct device *dev, struct clk *clk)
+{
+	WARN_ON(devres_release(dev, devm_clk_release, devm_clk_match, clk));
+}
+EXPORT_SYMBOL_GPL(devm_clk_unregister);
 
 /***        clk rate change notifiers        ***/
 
@@ -1544,3 +1645,156 @@ int clk_notifier_unregister(struct clk *clk, struct notifier_block *nb)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(clk_notifier_unregister);
+
+#ifdef CONFIG_OF
+/**
+ * struct of_clk_provider - Clock provider registration structure
+ * @link: Entry in global list of clock providers
+ * @node: Pointer to device tree node of clock provider
+ * @get: Get clock callback.  Returns NULL or a struct clk for the
+ *       given clock specifier
+ * @data: context pointer to be passed into @get callback
+ */
+struct of_clk_provider {
+	struct list_head link;
+
+	struct device_node *node;
+	struct clk *(*get)(struct of_phandle_args *clkspec, void *data);
+	void *data;
+};
+
+static LIST_HEAD(of_clk_providers);
+static DEFINE_MUTEX(of_clk_lock);
+
+struct clk *of_clk_src_simple_get(struct of_phandle_args *clkspec,
+				     void *data)
+{
+	return data;
+}
+EXPORT_SYMBOL_GPL(of_clk_src_simple_get);
+
+struct clk *of_clk_src_onecell_get(struct of_phandle_args *clkspec, void *data)
+{
+	struct clk_onecell_data *clk_data = data;
+	unsigned int idx = clkspec->args[0];
+
+	if (idx >= clk_data->clk_num) {
+		pr_err("%s: invalid clock index %d\n", __func__, idx);
+		return ERR_PTR(-EINVAL);
+	}
+
+	return clk_data->clks[idx];
+}
+EXPORT_SYMBOL_GPL(of_clk_src_onecell_get);
+
+/**
+ * of_clk_add_provider() - Register a clock provider for a node
+ * @np: Device node pointer associated with clock provider
+ * @clk_src_get: callback for decoding clock
+ * @data: context pointer for @clk_src_get callback.
+ */
+int of_clk_add_provider(struct device_node *np,
+			struct clk *(*clk_src_get)(struct of_phandle_args *clkspec,
+						   void *data),
+			void *data)
+{
+	struct of_clk_provider *cp;
+
+	cp = kzalloc(sizeof(struct of_clk_provider), GFP_KERNEL);
+	if (!cp)
+		return -ENOMEM;
+
+	cp->node = of_node_get(np);
+	cp->data = data;
+	cp->get = clk_src_get;
+
+	mutex_lock(&of_clk_lock);
+	list_add(&cp->link, &of_clk_providers);
+	mutex_unlock(&of_clk_lock);
+	pr_debug("Added clock from %s\n", np->full_name);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(of_clk_add_provider);
+
+/**
+ * of_clk_del_provider() - Remove a previously registered clock provider
+ * @np: Device node pointer associated with clock provider
+ */
+void of_clk_del_provider(struct device_node *np)
+{
+	struct of_clk_provider *cp;
+
+	mutex_lock(&of_clk_lock);
+	list_for_each_entry(cp, &of_clk_providers, link) {
+		if (cp->node == np) {
+			list_del(&cp->link);
+			of_node_put(cp->node);
+			kfree(cp);
+			break;
+		}
+	}
+	mutex_unlock(&of_clk_lock);
+}
+EXPORT_SYMBOL_GPL(of_clk_del_provider);
+
+struct clk *of_clk_get_from_provider(struct of_phandle_args *clkspec)
+{
+	struct of_clk_provider *provider;
+	struct clk *clk = ERR_PTR(-ENOENT);
+
+	/* Check if we have such a provider in our array */
+	mutex_lock(&of_clk_lock);
+	list_for_each_entry(provider, &of_clk_providers, link) {
+		if (provider->node == clkspec->np)
+			clk = provider->get(clkspec, provider->data);
+		if (!IS_ERR(clk))
+			break;
+	}
+	mutex_unlock(&of_clk_lock);
+
+	return clk;
+}
+
+const char *of_clk_get_parent_name(struct device_node *np, int index)
+{
+	struct of_phandle_args clkspec;
+	const char *clk_name;
+	int rc;
+
+	if (index < 0)
+		return NULL;
+
+	rc = of_parse_phandle_with_args(np, "clocks", "#clock-cells", index,
+					&clkspec);
+	if (rc)
+		return NULL;
+
+	if (of_property_read_string_index(clkspec.np, "clock-output-names",
+					  clkspec.args_count ? clkspec.args[0] : 0,
+					  &clk_name) < 0)
+		clk_name = clkspec.np->name;
+
+	of_node_put(clkspec.np);
+	return clk_name;
+}
+EXPORT_SYMBOL_GPL(of_clk_get_parent_name);
+
+/**
+ * of_clk_init() - Scan and init clock providers from the DT
+ * @matches: array of compatible values and init functions for providers.
+ *
+ * This function scans the device tree for matching clock providers and
+ * calls their initialization functions
+ */
+void __init of_clk_init(const struct of_device_id *matches)
+{
+	struct device_node *np;
+
+	for_each_matching_node(np, matches) {
+		const struct of_device_id *match = of_match_node(matches, np);
+		of_clk_init_cb_t clk_init_cb = match->data;
+		clk_init_cb(np);
+	}
+}
+#endif

@@ -93,6 +93,12 @@ struct usb_hcd {
 	 */
 	const struct hc_driver	*driver;	/* hw-specific hooks */
 
+	/*
+	 * OTG and some Host controllers need software interaction with phys;
+	 * other external phys should be software-transparent
+	 */
+	struct usb_phy	*phy;
+
 	/* Flags that need to be manipulated atomically because they can
 	 * change while the host controller is running.  Always use
 	 * set_bit() or clear_bit() to change their values.
@@ -126,13 +132,11 @@ struct usb_hcd {
 	unsigned		wireless:1;	/* Wireless USB HCD */
 	unsigned		authorized_default:1;
 	unsigned		has_tt:1;	/* Integrated TT in root hub */
-	unsigned		broken_pci_sleep:1;	/* Don't put the
-			controller in PCI-D3 for system sleep */
 
 	unsigned int		irq;		/* irq allocated */
 	void __iomem		*regs;		/* device memory/io */
-	u64			rsrc_start;	/* memory/io resource start */
-	u64			rsrc_len;	/* memory/io resource length */
+	resource_size_t		rsrc_start;	/* memory/io resource start */
+	resource_size_t		rsrc_len;	/* memory/io resource length */
 	unsigned		power_budget;	/* in mA, 0 = no limit */
 
 	/* bandwidth_mutex should be taken before adding or removing

@@ -109,7 +109,7 @@ acpi_rs_convert_aml_to_resources(u8 * aml,
 		ACPI_ERROR((AE_INFO,
 			    "Invalid/unsupported resource descriptor: Type 0x%2.2X",
 			    resource_index));
-		return (AE_AML_INVALID_RESOURCE_TYPE);
+		return_ACPI_STATUS(AE_AML_INVALID_RESOURCE_TYPE);
 	}
 
 	/* Convert the AML byte stream resource to a local resource struct */
@@ -139,7 +139,7 @@ acpi_rs_convert_aml_to_resources(u8 * aml,
  *
  * FUNCTION:    acpi_rs_convert_resources_to_aml
  *
- * PARAMETERS:  Resource            - Pointer to the resource linked list
+ * PARAMETERS:  resource            - Pointer to the resource linked list
  *              aml_size_needed     - Calculated size of the byte stream
  *                                    needed from calling acpi_rs_get_aml_length()
  *                                    The size of the output_buffer is
@@ -200,7 +200,7 @@ acpi_rs_convert_resources_to_aml(struct acpi_resource *resource,
 			ACPI_ERROR((AE_INFO,
 				    "Invalid/unsupported resource descriptor: Type 0x%2.2X",
 				    resource->type));
-			return (AE_AML_INVALID_RESOURCE_TYPE);
+			return_ACPI_STATUS(AE_AML_INVALID_RESOURCE_TYPE);
 		}
 
 		status = acpi_rs_convert_resource_to_aml(resource,

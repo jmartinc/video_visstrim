@@ -442,7 +442,7 @@ static int configfs_attach_attr(struct configfs_dirent * sd, struct dentry * den
 
 static struct dentry * configfs_lookup(struct inode *dir,
 				       struct dentry *dentry,
-				       struct nameidata *nd)
+				       unsigned int flags)
 {
 	struct configfs_dirent * parent_sd = dentry->d_parent->d_fsdata;
 	struct configfs_dirent * sd;
@@ -1613,12 +1613,12 @@ static int configfs_readdir(struct file * filp, void * dirent, filldir_t filldir
 	return 0;
 }
 
-static loff_t configfs_dir_lseek(struct file * file, loff_t offset, int origin)
+static loff_t configfs_dir_lseek(struct file *file, loff_t offset, int whence)
 {
 	struct dentry * dentry = file->f_path.dentry;
 
 	mutex_lock(&dentry->d_inode->i_mutex);
-	switch (origin) {
+	switch (whence) {
 		case 1:
 			offset += file->f_pos;
 		case 0:

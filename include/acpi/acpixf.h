@@ -1,4 +1,3 @@
-
 /******************************************************************************
  *
  * Name: acpixf.h - External interfaces to the ACPI subsystem
@@ -6,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2012, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -47,11 +46,12 @@
 
 /* Current ACPICA subsystem version in YYYYMMDD format */
 
-#define ACPI_CA_VERSION                 0x20120320
+#define ACPI_CA_VERSION                 0x20121018
 
-#include "acconfig.h"
-#include "actypes.h"
-#include "actbl.h"
+#include <acpi/acconfig.h>
+#include <acpi/actypes.h>
+#include <acpi/actbl.h>
+#include <acpi/acbuffer.h>
 
 extern u8 acpi_gbl_permanent_mmap;
 
@@ -144,6 +144,10 @@ acpi_check_address_range(acpi_adr_space_type space_id,
 			 acpi_physical_address address,
 			 acpi_size length, u8 warn);
 
+acpi_status
+acpi_decode_pld_buffer(u8 *in_buffer,
+		       acpi_size length, struct acpi_pld_info **return_buffer);
+
 /*
  * ACPI Memory management
  */
@@ -154,22 +158,26 @@ void *acpi_callocate(u32 size);
 void acpi_free(void *address);
 
 /*
+ * ACPI table load/unload interfaces
+ */
+acpi_status acpi_load_table(struct acpi_table_header *table);
+
+acpi_status acpi_unload_parent_table(acpi_handle object);
+
+acpi_status acpi_load_tables(void);
+
+/*
  * ACPI table manipulation interfaces
  */
 acpi_status acpi_reallocate_root_table(void);
 
 acpi_status acpi_find_root_pointer(acpi_size *rsdp_address);
 
-acpi_status acpi_load_tables(void);
-
-acpi_status acpi_load_table(struct acpi_table_header *table_ptr);
-
 acpi_status acpi_unload_table_id(acpi_owner_id id);
 
 acpi_status
 acpi_get_table_header(acpi_string signature,
-		      u32 instance,
-		      struct acpi_table_header *out_table_header);
+		      u32 instance, struct acpi_table_header *out_table_header);
 
 acpi_status
 acpi_get_table_with_size(acpi_string signature,
@@ -180,8 +188,7 @@ acpi_get_table(acpi_string signature,
 	       u32 instance, struct acpi_table_header **out_table);
 
 acpi_status
-acpi_get_table_by_index(u32 table_index,
-			struct acpi_table_header **out_table);
+acpi_get_table_by_index(u32 table_index, struct acpi_table_header **out_table);
 
 acpi_status
 acpi_install_table_handler(acpi_tbl_handler handler, void *context);
@@ -264,7 +271,7 @@ acpi_install_initialization_handler(acpi_init_handler handler, u32 function);
 
 ACPI_HW_DEPENDENT_RETURN_STATUS(acpi_status
 				acpi_install_global_event_handler
-				(ACPI_GBL_EVENT_HANDLER handler, void *context))
+				(acpi_gbl_event_handler handler, void *context))
 
 ACPI_HW_DEPENDENT_RETURN_STATUS(acpi_status
 				 acpi_install_fixed_event_handler(u32
@@ -290,10 +297,9 @@ ACPI_HW_DEPENDENT_RETURN_STATUS(acpi_status
 							 u32 gpe_number,
 							 acpi_gpe_handler
 							 address))
-acpi_status
-acpi_install_notify_handler(acpi_handle device,
-			    u32 handler_type,
-			    acpi_notify_handler handler, void *context);
+acpi_status acpi_install_notify_handler(acpi_handle device, u32 handler_type,
+					acpi_notify_handler handler,
+					void *context);
 
 acpi_status
 acpi_remove_notify_handler(acpi_handle device,
@@ -486,11 +492,11 @@ acpi_get_sleep_type_data(u8 sleep_state, u8 * slp_typ_a, u8 * slp_typ_b);
 
 acpi_status acpi_enter_sleep_state_prep(u8 sleep_state);
 
-acpi_status asmlinkage acpi_enter_sleep_state(u8 sleep_state, u8 flags);
+acpi_status asmlinkage acpi_enter_sleep_state(u8 sleep_state);
 
 ACPI_HW_DEPENDENT_RETURN_STATUS(acpi_status asmlinkage acpi_enter_sleep_state_s4bios(void))
 
-acpi_status acpi_leave_sleep_state_prep(u8 sleep_state, u8 flags);
+acpi_status acpi_leave_sleep_state_prep(u8 sleep_state);
 
 acpi_status acpi_leave_sleep_state(u8 sleep_state);
 
@@ -528,6 +534,14 @@ acpi_warning(const char *module_name,
 void ACPI_INTERNAL_VAR_XFACE
 acpi_info(const char *module_name,
 	  u32 line_number, const char *format, ...) ACPI_PRINTF_LIKE(3);
+
+void ACPI_INTERNAL_VAR_XFACE
+acpi_bios_error(const char *module_name,
+		u32 line_number, const char *format, ...) ACPI_PRINTF_LIKE(3);
+
+void ACPI_INTERNAL_VAR_XFACE
+acpi_bios_warning(const char *module_name,
+		  u32 line_number, const char *format, ...) ACPI_PRINTF_LIKE(3);
 
 /*
  * Debug output

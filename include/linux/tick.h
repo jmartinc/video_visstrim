@@ -31,10 +31,10 @@ enum tick_nohz_mode {
  * struct tick_sched - sched tick emulation and no idle tick control/stats
  * @sched_timer:	hrtimer to schedule the periodic tick in high
  *			resolution mode
- * @idle_tick:		Store the last idle tick expiry time when the tick
- *			timer is modified for idle sleeps. This is necessary
+ * @last_tick:		Store the last tick expiry time when the tick
+ *			timer is modified for nohz sleeps. This is necessary
  *			to resume the tick timer operation in the timeline
- *			when the CPU returns from idle
+ *			when the CPU returns from nohz sleep.
  * @tick_stopped:	Indicator that the idle tick has been stopped
  * @idle_jiffies:	jiffies at the entry to idle for idle time accounting
  * @idle_calls:		Total number of idle calls
@@ -51,7 +51,7 @@ struct tick_sched {
 	struct hrtimer			sched_timer;
 	unsigned long			check_clocks;
 	enum tick_nohz_mode		nohz_mode;
-	ktime_t				idle_tick;
+	ktime_t				last_tick;
 	int				inidle;
 	int				tick_stopped;
 	unsigned long			idle_jiffies;
@@ -141,5 +141,11 @@ static inline ktime_t tick_nohz_get_sleep_length(void)
 static inline u64 get_cpu_idle_time_us(int cpu, u64 *unused) { return -1; }
 static inline u64 get_cpu_iowait_time_us(int cpu, u64 *unused) { return -1; }
 # endif /* !NO_HZ */
+
+# ifdef CONFIG_CPU_IDLE_GOV_MENU
+extern void menu_hrtimer_cancel(void);
+# else
+static inline void menu_hrtimer_cancel(void) {}
+# endif /* CONFIG_CPU_IDLE_GOV_MENU */
 
 #endif

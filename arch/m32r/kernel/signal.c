@@ -20,7 +20,6 @@
 #include <linux/unistd.h>
 #include <linux/stddef.h>
 #include <linux/personality.h>
-#include <linux/freezer.h>
 #include <linux/tracehook.h>
 #include <asm/cacheflush.h>
 #include <asm/ucontext.h>
@@ -286,7 +285,7 @@ handle_signal(unsigned long sig, struct k_sigaction *ka, siginfo_t *info,
 			case -ERESTARTNOINTR:
 				regs->r0 = regs->orig_r0;
 				if (prev_insn(regs) < 0)
-					return -EFAULT;
+					return;
 		}
 	}
 
@@ -366,6 +365,4 @@ void do_notify_resume(struct pt_regs *regs, __u32 thread_info_flags)
 		clear_thread_flag(TIF_NOTIFY_RESUME);
 		tracehook_notify_resume(regs);
 	}
-
-	clear_thread_flag(TIF_IRET);
 }

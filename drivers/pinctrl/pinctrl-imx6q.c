@@ -1950,6 +1950,8 @@ static struct imx_pin_reg imx6q_pin_regs[] = {
 	IMX_PIN_REG(MX6Q_PAD_SD2_DAT3, 0x0744, 0x035C, 5, 0x0000, 0), /* MX6Q_PAD_SD2_DAT3__GPIO_1_12 */
 	IMX_PIN_REG(MX6Q_PAD_SD2_DAT3, 0x0744, 0x035C, 6, 0x0000, 0), /* MX6Q_PAD_SD2_DAT3__SJC_DONE */
 	IMX_PIN_REG(MX6Q_PAD_SD2_DAT3, 0x0744, 0x035C, 7, 0x0000, 0), /* MX6Q_PAD_SD2_DAT3__ANATOP_TESTO_3 */
+	IMX_PIN_REG(MX6Q_PAD_ENET_RX_ER, 0x04EC, 0x01D8, 0, 0x0000, 0), /* MX6Q_PAD_ENET_RX_ER__ANATOP_USBOTG_ID */
+	IMX_PIN_REG(MX6Q_PAD_GPIO_1, 0x05F4, 0x0224, 3, 0x0000, 0), /* MX6Q_PAD_GPIO_1__ANATOP_USBOTG_ID */
 };
 
 /* Pad names for the pinmux subsystem */
@@ -2295,12 +2297,12 @@ static struct imx_pinctrl_soc_info imx6q_pinctrl_info = {
 	.npin_regs = ARRAY_SIZE(imx6q_pin_regs),
 };
 
-static struct of_device_id imx6q_pinctrl_of_match[] __devinitdata = {
+static struct of_device_id imx6q_pinctrl_of_match[] = {
 	{ .compatible = "fsl,imx6q-iomuxc", },
 	{ /* sentinel */ }
 };
 
-static int __devinit imx6q_pinctrl_probe(struct platform_device *pdev)
+static int imx6q_pinctrl_probe(struct platform_device *pdev)
 {
 	return imx_pinctrl_probe(pdev, &imx6q_pinctrl_info);
 }
@@ -2312,7 +2314,7 @@ static struct platform_driver imx6q_pinctrl_driver = {
 		.of_match_table = of_match_ptr(imx6q_pinctrl_of_match),
 	},
 	.probe = imx6q_pinctrl_probe,
-	.remove = __devexit_p(imx_pinctrl_remove),
+	.remove = imx_pinctrl_remove,
 };
 
 static int __init imx6q_pinctrl_init(void)

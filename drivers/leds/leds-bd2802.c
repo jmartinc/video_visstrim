@@ -26,8 +26,8 @@
 #define BD2802_LED_OFFSET		0xa
 #define BD2802_COLOR_OFFSET		0x3
 
-#define BD2802_REG_CLKSETUP 		0x00
-#define BD2802_REG_CONTROL 		0x01
+#define BD2802_REG_CLKSETUP		0x00
+#define BD2802_REG_CONTROL		0x01
 #define BD2802_REG_HOURSETUP		0x02
 #define BD2802_REG_CURRENT1SETUP	0x03
 #define BD2802_REG_CURRENT2SETUP	0x04
@@ -93,7 +93,7 @@ struct bd2802_led {
 	 * In ADF mode, user can set registers of BD2802GU directly,
 	 * therefore BD2802GU doesn't enter reset state.
 	 */
-	int 				adf_on;
+	int				adf_on;
 
 	enum led_ids			led_id;
 	enum led_colors			color;
@@ -328,7 +328,7 @@ static ssize_t bd2802_store_reg##reg_addr(struct device *dev,		\
 	int ret;							\
 	if (!count)							\
 		return -EINVAL;						\
-	ret = strict_strtoul(buf, 16, &val);				\
+	ret = kstrtoul(buf, 16, &val);					\
 	if (ret)							\
 		return ret;						\
 	down_write(&led->rwsem);					\
@@ -492,7 +492,7 @@ static ssize_t bd2802_store_##attr_name(struct device *dev,		\
 	int ret;							\
 	if (!count)							\
 		return -EINVAL;						\
-	ret = strict_strtoul(buf, 16, &val);				\
+	ret = kstrtoul(buf, 16, &val);					\
 	if (ret)							\
 		return ret;						\
 	down_write(&led->rwsem);					\
@@ -670,14 +670,14 @@ static void bd2802_unregister_led_classdev(struct bd2802_led *led)
 	led_classdev_unregister(&led->cdev_led1r);
 }
 
-static int __devinit bd2802_probe(struct i2c_client *client,
+static int bd2802_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
 	struct bd2802_led *led;
 	struct bd2802_led_platform_data *pdata;
 	int ret, i;
 
-	led = kzalloc(sizeof(struct bd2802_led), GFP_KERNEL);
+	led = devm_kzalloc(&client->dev, sizeof(struct bd2802_led), GFP_KERNEL);
 	if (!led) {
 		dev_err(&client->dev, "failed to allocate driver data\n");
 		return -ENOMEM;
@@ -697,7 +697,7 @@ static int __devinit bd2802_probe(struct i2c_client *client,
 	ret = bd2802_write_byte(client, BD2802_REG_CLKSETUP, 0x00);
 	if (ret < 0) {
 		dev_err(&client->dev, "failed to detect device\n");
-		goto failed_free;
+		return ret;
 	} else
 		dev_info(&client->dev, "return 0x%02x\n", ret);
 
@@ -729,9 +729,6 @@ static int __devinit bd2802_probe(struct i2c_client *client,
 failed_unregister_dev_file:
 	for (i--; i >= 0; i--)
 		device_remove_file(&led->client->dev, bd2802_attributes[i]);
-failed_free:
-	kfree(led);
-
 	return ret;
 }
 
@@ -746,7 +743,6 @@ static int __exit bd2802_remove(struct i2c_client *client)
 		bd2802_disable_adv_conf(led);
 	for (i = 0; i < ARRAY_SIZE(bd2802_attributes); i++)
 		device_remove_file(&led->client->dev, bd2802_attributes[i]);
-	kfree(led);
 
 	return 0;
 }

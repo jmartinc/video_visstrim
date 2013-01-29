@@ -24,7 +24,10 @@
 static const struct i2c_device_id mc13xxx_i2c_device_id[] = {
 	{
 		.name = "mc13892",
-		.driver_data = MC13XXX_ID_MC13892,
+		.driver_data = (kernel_ulong_t)&mc13xxx_variant_mc13892,
+	}, {
+		.name = "mc34708",
+		.driver_data = (kernel_ulong_t)&mc13xxx_variant_mc34708,
 	}, {
 		/* sentinel */
 	}
@@ -34,7 +37,10 @@ MODULE_DEVICE_TABLE(i2c, mc13xxx_i2c_device_id);
 static const struct of_device_id mc13xxx_dt_ids[] = {
 	{
 		.compatible = "fsl,mc13892",
-		.data = (void *) &mc13xxx_i2c_device_id[0],
+		.data = &mc13xxx_variant_mc13892,
+	}, {
+		.compatible = "fsl,mc34708",
+		.data = &mc13xxx_variant_mc34708,
 	}, {
 		/* sentinel */
 	}
@@ -53,17 +59,11 @@ static struct regmap_config mc13xxx_regmap_i2c_config = {
 static int mc13xxx_i2c_probe(struct i2c_client *client,
 		const struct i2c_device_id *id)
 {
-	const struct of_device_id *of_id;
-	struct i2c_driver *idrv = to_i2c_driver(client->dev.driver);
 	struct mc13xxx *mc13xxx;
 	struct mc13xxx_platform_data *pdata = dev_get_platdata(&client->dev);
 	int ret;
 
-	of_id = of_match_device(mc13xxx_dt_ids, &client->dev);
-	if (of_id)
-		idrv->id_table = (const struct i2c_device_id*) of_id->data;
-
-	mc13xxx = kzalloc(sizeof(*mc13xxx), GFP_KERNEL);
+	mc13xxx = devm_kzalloc(&client->dev, sizeof(*mc13xxx), GFP_KERNEL);
 	if (!mc13xxx)
 		return -ENOMEM;
 
@@ -72,26 +72,30 @@ static int mc13xxx_i2c_probe(struct i2c_client *client,
 	mc13xxx->dev = &client->dev;
 	mutex_init(&mc13xxx->lock);
 
-	mc13xxx->regmap = regmap_init_i2c(client, &mc13xxx_regmap_i2c_config);
+	mc13xxx->regmap = devm_regmap_init_i2c(client,
+					       &mc13xxx_regmap_i2c_config);
 	if (IS_ERR(mc13xxx->regmap)) {
 		ret = PTR_ERR(mc13xxx->regmap);
 		dev_err(mc13xxx->dev, "Failed to initialize register map: %d\n",
 				ret);
 		dev_set_drvdata(&client->dev, NULL);
-		kfree(mc13xxx);
 		return ret;
+	}
+
+	if (client->dev.of_node) {
+		const struct of_device_id *of_id =
+			of_match_device(mc13xxx_dt_ids, &client->dev);
+		mc13xxx->variant = of_id->data;
+	} else {
+		mc13xxx->variant = (void *)id->driver_data;
 	}
 
 	ret = mc13xxx_common_init(mc13xxx, pdata, client->irq);
 
-	if (ret == 0 && (id->driver_data != mc13xxx->ictype))
-		dev_warn(mc13xxx->dev,
-				"device id doesn't match auto detection!\n");
-
 	return ret;
 }
 
-static int __devexit mc13xxx_i2c_remove(struct i2c_client *client)
+static int mc13xxx_i2c_remove(struct i2c_client *client)
 {
 	struct mc13xxx *mc13xxx = dev_get_drvdata(&client->dev);
 
@@ -108,7 +112,7 @@ static struct i2c_driver mc13xxx_i2c_driver = {
 		.of_match_table = mc13xxx_dt_ids,
 	},
 	.probe = mc13xxx_i2c_probe,
-	.remove = __devexit_p(mc13xxx_i2c_remove),
+	.remove = mc13xxx_i2c_remove,
 };
 
 static int __init mc13xxx_i2c_init(void)

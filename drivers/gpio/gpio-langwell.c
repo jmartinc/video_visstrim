@@ -332,14 +332,14 @@ static const struct dev_pm_ops lnw_gpio_pm_ops = {
 	.runtime_idle = lnw_gpio_runtime_idle,
 };
 
-static int __devinit lnw_gpio_probe(struct pci_dev *pdev,
+static int lnw_gpio_probe(struct pci_dev *pdev,
 			const struct pci_device_id *id)
 {
 	void *base;
 	resource_size_t start, len;
 	struct lnw_gpio *lnw;
 	u32 gpio_base;
-	int retval = 0;
+	int retval;
 	int ngpio = id->driver_data;
 
 	retval = pci_enable_device(pdev);
@@ -357,6 +357,7 @@ static int __devinit lnw_gpio_probe(struct pci_dev *pdev,
 	base = ioremap_nocache(start, len);
 	if (!base) {
 		dev_err(&pdev->dev, "error mapping bar1\n");
+		retval = -EFAULT;
 		goto err3;
 	}
 	gpio_base = *((u32 *)base + 1);
@@ -381,8 +382,10 @@ static int __devinit lnw_gpio_probe(struct pci_dev *pdev,
 
 	lnw->domain = irq_domain_add_linear(pdev->dev.of_node, ngpio,
 					    &lnw_gpio_irq_ops, lnw);
-	if (!lnw->domain)
+	if (!lnw->domain) {
+		retval = -ENOMEM;
 		goto err3;
+	}
 
 	lnw->reg_base = base;
 	lnw->chip.label = dev_name(&pdev->dev);
@@ -432,7 +435,7 @@ static struct pci_driver lnw_gpio_driver = {
 };
 
 
-static int __devinit wp_gpio_probe(struct platform_device *pdev)
+static int wp_gpio_probe(struct platform_device *pdev)
 {
 	struct lnw_gpio *lnw;
 	struct gpio_chip *gc;
@@ -481,7 +484,7 @@ err_kmalloc:
 	return retval;
 }
 
-static int __devexit wp_gpio_remove(struct platform_device *pdev)
+static int wp_gpio_remove(struct platform_device *pdev)
 {
 	struct lnw_gpio *lnw = platform_get_drvdata(pdev);
 	int err;
@@ -496,7 +499,7 @@ static int __devexit wp_gpio_remove(struct platform_device *pdev)
 
 static struct platform_driver wp_gpio_driver = {
 	.probe		= wp_gpio_probe,
-	.remove		= __devexit_p(wp_gpio_remove),
+	.remove		= wp_gpio_remove,
 	.driver		= {
 		.name	= "wp_gpio",
 		.owner	= THIS_MODULE,

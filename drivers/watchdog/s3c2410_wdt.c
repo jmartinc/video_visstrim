@@ -303,7 +303,7 @@ static inline void s3c2410wdt_cpufreq_deregister(void)
 }
 #endif
 
-static int __devinit s3c2410wdt_probe(struct platform_device *pdev)
+static int s3c2410wdt_probe(struct platform_device *pdev)
 {
 	struct device *dev;
 	unsigned int wtcon;
@@ -354,7 +354,7 @@ static int __devinit s3c2410wdt_probe(struct platform_device *pdev)
 		goto err_map;
 	}
 
-	clk_enable(wdt_clock);
+	clk_prepare_enable(wdt_clock);
 
 	ret = s3c2410wdt_cpufreq_register();
 	if (ret < 0) {
@@ -421,7 +421,7 @@ static int __devinit s3c2410wdt_probe(struct platform_device *pdev)
 	s3c2410wdt_cpufreq_deregister();
 
  err_clk:
-	clk_disable(wdt_clock);
+	clk_disable_unprepare(wdt_clock);
 	clk_put(wdt_clock);
 	wdt_clock = NULL;
 
@@ -437,7 +437,7 @@ static int __devinit s3c2410wdt_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int __devexit s3c2410wdt_remove(struct platform_device *dev)
+static int s3c2410wdt_remove(struct platform_device *dev)
 {
 	watchdog_unregister_device(&s3c2410_wdd);
 
@@ -445,7 +445,7 @@ static int __devexit s3c2410wdt_remove(struct platform_device *dev)
 
 	s3c2410wdt_cpufreq_deregister();
 
-	clk_disable(wdt_clock);
+	clk_disable_unprepare(wdt_clock);
 	clk_put(wdt_clock);
 	wdt_clock = NULL;
 
@@ -508,7 +508,7 @@ MODULE_DEVICE_TABLE(of, s3c2410_wdt_match);
 
 static struct platform_driver s3c2410wdt_driver = {
 	.probe		= s3c2410wdt_probe,
-	.remove		= __devexit_p(s3c2410wdt_remove),
+	.remove		= s3c2410wdt_remove,
 	.shutdown	= s3c2410wdt_shutdown,
 	.suspend	= s3c2410wdt_suspend,
 	.resume		= s3c2410wdt_resume,
@@ -519,21 +519,7 @@ static struct platform_driver s3c2410wdt_driver = {
 	},
 };
 
-
-static int __init watchdog_init(void)
-{
-	pr_info("S3C2410 Watchdog Timer, (c) 2004 Simtec Electronics\n");
-
-	return platform_driver_register(&s3c2410wdt_driver);
-}
-
-static void __exit watchdog_exit(void)
-{
-	platform_driver_unregister(&s3c2410wdt_driver);
-}
-
-module_init(watchdog_init);
-module_exit(watchdog_exit);
+module_platform_driver(s3c2410wdt_driver);
 
 MODULE_AUTHOR("Ben Dooks <ben@simtec.co.uk>, "
 	      "Dimitry Andric <dimitry.andric@tomtom.com>");

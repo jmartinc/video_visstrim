@@ -6,14 +6,12 @@ struct ccw_driver;
 
 /**
  * struct ccwgroup_device - ccw group device
- * @creator_id: unique number of the driver
  * @state: online/offline state
  * @count: number of attached slave devices
  * @dev: embedded device structure
  * @cdev: variable number of slave devices, allocated as needed
  */
 struct ccwgroup_device {
-	unsigned long creator_id;
 	enum {
 		CCWGROUP_OFFLINE,
 		CCWGROUP_ONLINE,
@@ -60,6 +58,9 @@ extern int  ccwgroup_driver_register   (struct ccwgroup_driver *cdriver);
 extern void ccwgroup_driver_unregister (struct ccwgroup_driver *cdriver);
 int ccwgroup_create_dev(struct device *root, struct ccwgroup_driver *gdrv,
 			int num_devices, const char *buf);
+
+extern int ccwgroup_set_online(struct ccwgroup_device *gdev);
+extern int ccwgroup_set_offline(struct ccwgroup_device *gdev);
 
 extern int ccwgroup_probe_ccwdev(struct ccw_device *cdev);
 extern void ccwgroup_remove_ccwdev(struct ccw_device *cdev);

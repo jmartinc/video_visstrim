@@ -758,7 +758,7 @@ static void pch_i2c_disbl_int(struct i2c_algo_pch_data *adap)
 	iowrite32(BUFFER_MODE_INTR_DISBL, p + PCH_I2CBUFMSK);
 }
 
-static int __devinit pch_i2c_probe(struct pci_dev *pdev,
+static int pch_i2c_probe(struct pci_dev *pdev,
 				   const struct pci_device_id *id)
 {
 	void __iomem *base_addr;
@@ -851,7 +851,7 @@ err_pci_enable:
 	return ret;
 }
 
-static void __devexit pch_i2c_remove(struct pci_dev *pdev)
+static void pch_i2c_remove(struct pci_dev *pdev)
 {
 	int i;
 	struct adapter_info *adap_info = pci_get_drvdata(pdev);
@@ -948,22 +948,12 @@ static struct pci_driver pch_pcidriver = {
 	.name = KBUILD_MODNAME,
 	.id_table = pch_pcidev_id,
 	.probe = pch_i2c_probe,
-	.remove = __devexit_p(pch_i2c_remove),
+	.remove = pch_i2c_remove,
 	.suspend = pch_i2c_suspend,
 	.resume = pch_i2c_resume
 };
 
-static int __init pch_pci_init(void)
-{
-	return pci_register_driver(&pch_pcidriver);
-}
-module_init(pch_pci_init);
-
-static void __exit pch_pci_exit(void)
-{
-	pci_unregister_driver(&pch_pcidriver);
-}
-module_exit(pch_pci_exit);
+module_pci_driver(pch_pcidriver);
 
 MODULE_DESCRIPTION("Intel EG20T PCH/LAPIS Semico ML7213/ML7223/ML7831 IOH I2C");
 MODULE_LICENSE("GPL");

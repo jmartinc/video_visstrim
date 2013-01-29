@@ -58,7 +58,7 @@ err_get_value:
 	return IRQ_HANDLED;
 }
 
-static int __devinit gpio_ir_recv_probe(struct platform_device *pdev)
+static int gpio_ir_recv_probe(struct platform_device *pdev)
 {
 	struct gpio_rc_dev *gpio_dev;
 	struct rc_dev *rcdev;
@@ -82,12 +82,21 @@ static int __devinit gpio_ir_recv_probe(struct platform_device *pdev)
 		goto err_allocate_device;
 	}
 
+	rcdev->priv = gpio_dev;
 	rcdev->driver_type = RC_DRIVER_IR_RAW;
-	rcdev->allowed_protos = RC_TYPE_ALL;
 	rcdev->input_name = GPIO_IR_DEVICE_NAME;
+	rcdev->input_phys = GPIO_IR_DEVICE_NAME "/input0";
 	rcdev->input_id.bustype = BUS_HOST;
+	rcdev->input_id.vendor = 0x0001;
+	rcdev->input_id.product = 0x0001;
+	rcdev->input_id.version = 0x0100;
+	rcdev->dev.parent = &pdev->dev;
 	rcdev->driver_name = GPIO_IR_DRIVER_NAME;
-	rcdev->map_name = RC_MAP_EMPTY;
+	if (pdata->allowed_protos)
+		rcdev->allowed_protos = pdata->allowed_protos;
+	else
+		rcdev->allowed_protos = RC_BIT_ALL;
+	rcdev->map_name = pdata->map_name ?: RC_MAP_EMPTY;
 
 	gpio_dev->rcdev = rcdev;
 	gpio_dev->gpio_nr = pdata->gpio_nr;
@@ -120,18 +129,18 @@ static int __devinit gpio_ir_recv_probe(struct platform_device *pdev)
 err_request_irq:
 	platform_set_drvdata(pdev, NULL);
 	rc_unregister_device(rcdev);
+	rcdev = NULL;
 err_register_rc_device:
 err_gpio_direction_input:
 	gpio_free(pdata->gpio_nr);
 err_gpio_request:
 	rc_free_device(rcdev);
-	rcdev = NULL;
 err_allocate_device:
 	kfree(gpio_dev);
 	return rc;
 }
 
-static int __devexit gpio_ir_recv_remove(struct platform_device *pdev)
+static int gpio_ir_recv_remove(struct platform_device *pdev)
 {
 	struct gpio_rc_dev *gpio_dev = platform_get_drvdata(pdev);
 
@@ -139,7 +148,6 @@ static int __devexit gpio_ir_recv_remove(struct platform_device *pdev)
 	platform_set_drvdata(pdev, NULL);
 	rc_unregister_device(gpio_dev->rcdev);
 	gpio_free(gpio_dev->gpio_nr);
-	rc_free_device(gpio_dev->rcdev);
 	kfree(gpio_dev);
 	return 0;
 }
@@ -179,7 +187,7 @@ static const struct dev_pm_ops gpio_ir_recv_pm_ops = {
 
 static struct platform_driver gpio_ir_recv_driver = {
 	.probe  = gpio_ir_recv_probe,
-	.remove = __devexit_p(gpio_ir_recv_remove),
+	.remove = gpio_ir_recv_remove,
 	.driver = {
 		.name   = GPIO_IR_DRIVER_NAME,
 		.owner  = THIS_MODULE,
@@ -188,18 +196,7 @@ static struct platform_driver gpio_ir_recv_driver = {
 #endif
 	},
 };
-
-static int __init gpio_ir_recv_init(void)
-{
-	return platform_driver_register(&gpio_ir_recv_driver);
-}
-module_init(gpio_ir_recv_init);
-
-static void __exit gpio_ir_recv_exit(void)
-{
-	platform_driver_unregister(&gpio_ir_recv_driver);
-}
-module_exit(gpio_ir_recv_exit);
+module_platform_driver(gpio_ir_recv_driver);
 
 MODULE_DESCRIPTION("GPIO IR Receiver driver");
 MODULE_LICENSE("GPL v2");

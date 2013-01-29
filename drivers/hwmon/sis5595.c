@@ -204,7 +204,7 @@ struct sis5595_data {
 static struct pci_dev *s_bridge;	/* pointer to the (only) sis5595 */
 
 static int sis5595_probe(struct platform_device *pdev);
-static int __devexit sis5595_remove(struct platform_device *pdev);
+static int sis5595_remove(struct platform_device *pdev);
 
 static int sis5595_read_value(struct sis5595_data *data, u8 reg);
 static void sis5595_write_value(struct sis5595_data *data, u8 reg, u8 value);
@@ -217,7 +217,7 @@ static struct platform_driver sis5595_driver = {
 		.name	= "sis5595",
 	},
 	.probe		= sis5595_probe,
-	.remove		= __devexit_p(sis5595_remove),
+	.remove		= sis5595_remove,
 };
 
 /* 4 Voltages */
@@ -583,7 +583,7 @@ static const struct attribute_group sis5595_group_temp1 = {
 };
 
 /* This is called when the module is loaded */
-static int __devinit sis5595_probe(struct platform_device *pdev)
+static int sis5595_probe(struct platform_device *pdev)
 {
 	int err = 0;
 	int i;
@@ -593,17 +593,14 @@ static int __devinit sis5595_probe(struct platform_device *pdev)
 
 	/* Reserve the ISA region */
 	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
-	if (!request_region(res->start, SIS5595_EXTENT,
-			    sis5595_driver.driver.name)) {
-		err = -EBUSY;
-		goto exit;
-	}
+	if (!devm_request_region(&pdev->dev, res->start, SIS5595_EXTENT,
+				 sis5595_driver.driver.name))
+		return -EBUSY;
 
-	data = kzalloc(sizeof(struct sis5595_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit_release;
-	}
+	data = devm_kzalloc(&pdev->dev, sizeof(struct sis5595_data),
+			    GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	mutex_init(&data->lock);
 	mutex_init(&data->update_lock);
@@ -636,7 +633,7 @@ static int __devinit sis5595_probe(struct platform_device *pdev)
 	/* Register sysfs hooks */
 	err = sysfs_create_group(&pdev->dev.kobj, &sis5595_group);
 	if (err)
-		goto exit_free;
+		return err;
 	if (data->maxins == 4) {
 		err = sysfs_create_group(&pdev->dev.kobj, &sis5595_group_in4);
 		if (err)
@@ -659,15 +656,10 @@ exit_remove_files:
 	sysfs_remove_group(&pdev->dev.kobj, &sis5595_group);
 	sysfs_remove_group(&pdev->dev.kobj, &sis5595_group_in4);
 	sysfs_remove_group(&pdev->dev.kobj, &sis5595_group_temp1);
-exit_free:
-	kfree(data);
-exit_release:
-	release_region(res->start, SIS5595_EXTENT);
-exit:
 	return err;
 }
 
-static int __devexit sis5595_remove(struct platform_device *pdev)
+static int sis5595_remove(struct platform_device *pdev)
 {
 	struct sis5595_data *data = platform_get_drvdata(pdev);
 
@@ -675,10 +667,6 @@ static int __devexit sis5595_remove(struct platform_device *pdev)
 	sysfs_remove_group(&pdev->dev.kobj, &sis5595_group);
 	sysfs_remove_group(&pdev->dev.kobj, &sis5595_group_in4);
 	sysfs_remove_group(&pdev->dev.kobj, &sis5595_group_temp1);
-
-	release_region(data->addr, SIS5595_EXTENT);
-	platform_set_drvdata(pdev, NULL);
-	kfree(data);
 
 	return 0;
 }
@@ -705,7 +693,7 @@ static void sis5595_write_value(struct sis5595_data *data, u8 reg, u8 value)
 }
 
 /* Called when we have found a new SIS5595. */
-static void __devinit sis5595_init_device(struct sis5595_data *data)
+static void sis5595_init_device(struct sis5595_data *data)
 {
 	u8 config = sis5595_read_value(data, SIS5595_REG_CONFIG);
 	if (!(config & 0x01))
@@ -770,7 +758,7 @@ static DEFINE_PCI_DEVICE_TABLE(sis5595_pci_ids) = {
 
 MODULE_DEVICE_TABLE(pci, sis5595_pci_ids);
 
-static int blacklist[] __devinitdata = {
+static int blacklist[] = {
 	PCI_DEVICE_ID_SI_540,
 	PCI_DEVICE_ID_SI_550,
 	PCI_DEVICE_ID_SI_630,
@@ -786,7 +774,7 @@ static int blacklist[] __devinitdata = {
 	PCI_DEVICE_ID_SI_5598,
 	0 };
 
-static int __devinit sis5595_device_add(unsigned short address)
+static int sis5595_device_add(unsigned short address)
 {
 	struct resource res = {
 		.start	= address,
@@ -827,7 +815,7 @@ exit:
 	return err;
 }
 
-static int __devinit sis5595_pci_probe(struct pci_dev *dev,
+static int sis5595_pci_probe(struct pci_dev *dev,
 				       const struct pci_device_id *id)
 {
 	u16 address;

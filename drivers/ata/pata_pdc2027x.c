@@ -700,7 +700,8 @@ static void pdc_ata_setup_port(struct ata_ioports *port, void __iomem *base)
  * @pdev: instance of pci_dev found
  * @ent:  matching entry in the id_tbl[]
  */
-static int __devinit pdc2027x_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+static int pdc2027x_init_one(struct pci_dev *pdev,
+			     const struct pci_device_id *ent)
 {
 	static const unsigned long cmd_offset[] = { 0x17c0, 0x15c0 };
 	static const unsigned long bmdma_offset[] = { 0x1000, 0x1008 };
@@ -784,21 +785,4 @@ static int pdc2027x_reinit_one(struct pci_dev *pdev)
 }
 #endif
 
-/**
- * pdc2027x_init - Called after this module is loaded into the kernel.
- */
-static int __init pdc2027x_init(void)
-{
-	return pci_register_driver(&pdc2027x_pci_driver);
-}
-
-/**
- * pdc2027x_exit - Called before this module unloaded from the kernel
- */
-static void __exit pdc2027x_exit(void)
-{
-	pci_unregister_driver(&pdc2027x_pci_driver);
-}
-
-module_init(pdc2027x_init);
-module_exit(pdc2027x_exit);
+module_pci_driver(pdc2027x_pci_driver);

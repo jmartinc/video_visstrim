@@ -25,11 +25,9 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/irqdomain.h>
+#include <linux/gpio.h>
+#include <linux/platform_data/gpio-omap.h>
 
-#include <mach/hardware.h>
-#include <asm/irq.h>
-#include <mach/irqs.h>
-#include <asm/gpio.h>
 #include <asm/mach/irq.h>
 
 #define OFF_MODE	1
@@ -174,12 +172,22 @@ static inline void _gpio_dbck_enable(struct gpio_bank *bank)
 	if (bank->dbck_enable_mask && !bank->dbck_enabled) {
 		clk_enable(bank->dbck);
 		bank->dbck_enabled = true;
+
+		__raw_writel(bank->dbck_enable_mask,
+			     bank->base + bank->regs->debounce_en);
 	}
 }
 
 static inline void _gpio_dbck_disable(struct gpio_bank *bank)
 {
 	if (bank->dbck_enable_mask && bank->dbck_enabled) {
+		/*
+		 * Disable debounce before cutting it's clock. If debounce is
+		 * enabled but the clock is not, GPIO module seems to be unable
+		 * to detect events and generate interrupts at least on OMAP3.
+		 */
+		__raw_writel(0, bank->base + bank->regs->debounce_en);
+
 		clk_disable(bank->dbck);
 		bank->dbck_enabled = false;
 	}
@@ -240,6 +248,40 @@ static void _set_gpio_debounce(struct gpio_bank *bank, unsigned gpio,
 	if (bank->dbck_enable_mask) {
 		bank->context.debounce = debounce;
 		bank->context.debounce_en = val;
+	}
+}
+
+/**
+ * _clear_gpio_debounce - clear debounce settings for a gpio
+ * @bank: the gpio bank we're acting upon
+ * @gpio: the gpio number on this @gpio
+ *
+ * If a gpio is using debounce, then clear the debounce enable bit and if
+ * this is the only gpio in this bank using debounce, then clear the debounce
+ * time too. The debounce clock will also be disabled when calling this function
+ * if this is the only gpio in the bank using debounce.
+ */
+static void _clear_gpio_debounce(struct gpio_bank *bank, unsigned gpio)
+{
+	u32 gpio_bit = GPIO_BIT(bank, gpio);
+
+	if (!bank->dbck_flag)
+		return;
+
+	if (!(bank->dbck_enable_mask & gpio_bit))
+		return;
+
+	bank->dbck_enable_mask &= ~gpio_bit;
+	bank->context.debounce_en &= ~gpio_bit;
+	__raw_writel(bank->context.debounce_en,
+		     bank->base + bank->regs->debounce_en);
+
+	if (!bank->dbck_enable_mask) {
+		bank->context.debounce = 0;
+		__raw_writel(bank->context.debounce, bank->base +
+			     bank->regs->debounce);
+		clk_disable(bank->dbck);
+		bank->dbck_enabled = false;
 	}
 }
 
@@ -375,13 +417,16 @@ static int _set_gpio_triggering(struct gpio_bank *bank, int gpio,
 static int gpio_irq_type(struct irq_data *d, unsigned type)
 {
 	struct gpio_bank *bank = irq_data_get_irq_chip_data(d);
-	unsigned gpio;
+	unsigned gpio = 0;
 	int retval;
 	unsigned long flags;
 
-	if (!cpu_class_is_omap2() && d->irq > IH_MPUIO_BASE)
+#ifdef CONFIG_ARCH_OMAP1
+	if (d->irq > IH_MPUIO_BASE)
 		gpio = OMAP_MPUIO(d->irq - IH_MPUIO_BASE);
-	else
+#endif
+
+	if (!gpio)
 		gpio = irq_to_gpio(bank, d->irq);
 
 	if (type & ~IRQ_TYPE_SENSE_MASK)
@@ -528,6 +573,7 @@ static void _reset_gpio(struct gpio_bank *bank, int gpio)
 	_set_gpio_irqenable(bank, gpio, 0);
 	_clear_gpio_irqstatus(bank, gpio);
 	_set_gpio_triggering(bank, GPIO_INDEX(bank, gpio), IRQ_TYPE_NONE);
+	_clear_gpio_debounce(bank, gpio);
 }
 
 /* Use disable_irq_wake() and enable_irq_wake() functions from drivers */
@@ -889,12 +935,6 @@ static int gpio_debounce(struct gpio_chip *chip, unsigned offset,
 
 	bank = container_of(chip, struct gpio_bank, chip);
 
-	if (!bank->dbck) {
-		bank->dbck = clk_get(bank->dev, "dbclk");
-		if (IS_ERR(bank->dbck))
-			dev_err(bank->dev, "Could not get gpio dbck\n");
-	}
-
 	spin_lock_irqsave(&bank->lock, flags);
 	_set_gpio_debounce(bank, offset, debounce);
 	spin_unlock_irqrestore(&bank->lock, flags);
@@ -966,9 +1006,13 @@ static void omap_gpio_mod_init(struct gpio_bank *bank)
 	 /* Initialize interface clk ungated, module enabled */
 	if (bank->regs->ctrl)
 		__raw_writel(0, base + bank->regs->ctrl);
+
+	bank->dbck = clk_get(bank->dev, "dbclk");
+	if (IS_ERR(bank->dbck))
+		dev_err(bank->dev, "Could not get gpio dbck\n");
 }
 
-static __devinit void
+static void
 omap_mpuio_alloc_gc(struct gpio_bank *bank, unsigned int irq_start,
 		    unsigned int num)
 {
@@ -997,7 +1041,7 @@ omap_mpuio_alloc_gc(struct gpio_bank *bank, unsigned int irq_start,
 			       IRQ_NOREQUEST | IRQ_NOPROBE, 0);
 }
 
-static void __devinit omap_gpio_chip_init(struct gpio_bank *bank)
+static void omap_gpio_chip_init(struct gpio_bank *bank)
 {
 	int j;
 	static int gpio;
@@ -1045,12 +1089,12 @@ static void __devinit omap_gpio_chip_init(struct gpio_bank *bank)
 
 static const struct of_device_id omap_gpio_match[];
 
-static int __devinit omap_gpio_probe(struct platform_device *pdev)
+static int omap_gpio_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
 	const struct of_device_id *match;
-	struct omap_gpio_platform_data *pdata;
+	const struct omap_gpio_platform_data *pdata;
 	struct resource *res;
 	struct gpio_bank *bank;
 	int ret = 0;
@@ -1061,7 +1105,7 @@ static int __devinit omap_gpio_probe(struct platform_device *pdev)
 	if (!pdata)
 		return -EINVAL;
 
-	bank = devm_kzalloc(&pdev->dev, sizeof(struct gpio_bank), GFP_KERNEL);
+	bank = devm_kzalloc(dev, sizeof(struct gpio_bank), GFP_KERNEL);
 	if (!bank) {
 		dev_err(dev, "Memory alloc failed\n");
 		return -ENOMEM;
@@ -1081,7 +1125,6 @@ static int __devinit omap_gpio_probe(struct platform_device *pdev)
 	bank->is_mpuio = pdata->is_mpuio;
 	bank->non_wakeup_gpios = pdata->non_wakeup_gpios;
 	bank->loses_context = pdata->loses_context;
-	bank->get_context_loss_count = pdata->get_context_loss_count;
 	bank->regs = pdata->regs;
 #ifdef CONFIG_OF_GPIO
 	bank->chip.of_node = of_node_get(node);
@@ -1134,6 +1177,9 @@ static int __devinit omap_gpio_probe(struct platform_device *pdev)
 	omap_gpio_mod_init(bank);
 	omap_gpio_chip_init(bank);
 	omap_gpio_show_rev(bank);
+
+	if (bank->loses_context)
+		bank->get_context_loss_count = pdata->get_context_loss_count;
 
 	pm_runtime_put(bank->dev);
 
@@ -1430,19 +1476,19 @@ static struct omap_gpio_reg_offs omap4_gpio_regs = {
 	.fallingdetect =	OMAP4_GPIO_FALLINGDETECT,
 };
 
-static struct omap_gpio_platform_data omap2_pdata = {
+const static struct omap_gpio_platform_data omap2_pdata = {
 	.regs = &omap2_gpio_regs,
 	.bank_width = 32,
 	.dbck_flag = false,
 };
 
-static struct omap_gpio_platform_data omap3_pdata = {
+const static struct omap_gpio_platform_data omap3_pdata = {
 	.regs = &omap2_gpio_regs,
 	.bank_width = 32,
 	.dbck_flag = true,
 };
 
-static struct omap_gpio_platform_data omap4_pdata = {
+const static struct omap_gpio_platform_data omap4_pdata = {
 	.regs = &omap4_gpio_regs,
 	.bank_width = 32,
 	.dbck_flag = true,

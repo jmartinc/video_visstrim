@@ -18,11 +18,9 @@
 #include <net/sock.h>
 #include <net/net_namespace.h>
 #include <linux/rtnetlink.h>
-#include <linux/wireless.h>
 #include <linux/vmalloc.h>
 #include <linux/export.h>
 #include <linux/jiffies.h>
-#include <net/wext.h>
 
 #include "net-sysfs.h"
 
@@ -73,11 +71,12 @@ static ssize_t netdev_store(struct device *dev, struct device_attribute *attr,
 			    const char *buf, size_t len,
 			    int (*set)(struct net_device *, unsigned long))
 {
-	struct net_device *net = to_net_dev(dev);
+	struct net_device *netdev = to_net_dev(dev);
+	struct net *net = dev_net(netdev);
 	unsigned long new;
 	int ret = -EINVAL;
 
-	if (!capable(CAP_NET_ADMIN))
+	if (!ns_capable(net->user_ns, CAP_NET_ADMIN))
 		return -EPERM;
 
 	ret = kstrtoul(buf, 0, &new);
@@ -87,8 +86,8 @@ static ssize_t netdev_store(struct device *dev, struct device_attribute *attr,
 	if (!rtnl_trylock())
 		return restart_syscall();
 
-	if (dev_isalive(net)) {
-		if ((ret = (*set)(net, new)) == 0)
+	if (dev_isalive(netdev)) {
+		if ((ret = (*set)(netdev, new)) == 0)
 			ret = len;
 	}
 	rtnl_unlock();
@@ -166,9 +165,21 @@ static ssize_t show_duplex(struct device *dev,
 
 	if (netif_running(netdev)) {
 		struct ethtool_cmd cmd;
-		if (!__ethtool_get_settings(netdev, &cmd))
-			ret = sprintf(buf, "%s\n",
-				      cmd.duplex ? "full" : "half");
+		if (!__ethtool_get_settings(netdev, &cmd)) {
+			const char *duplex;
+			switch (cmd.duplex) {
+			case DUPLEX_HALF:
+				duplex = "half";
+				break;
+			case DUPLEX_FULL:
+				duplex = "full";
+				break;
+			default:
+				duplex = "unknown";
+				break;
+			}
+			ret = sprintf(buf, "%s\n", duplex);
+		}
 	}
 	rtnl_unlock();
 	return ret;
@@ -252,6 +263,9 @@ static ssize_t store_tx_queue_len(struct device *dev,
 				  struct device_attribute *attr,
 				  const char *buf, size_t len)
 {
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
+
 	return netdev_store(dev, attr, buf, len, change_tx_queue_len);
 }
 
@@ -259,10 +273,11 @@ static ssize_t store_ifalias(struct device *dev, struct device_attribute *attr,
 			     const char *buf, size_t len)
 {
 	struct net_device *netdev = to_net_dev(dev);
+	struct net *net = dev_net(netdev);
 	size_t count = len;
 	ssize_t ret;
 
-	if (!capable(CAP_NET_ADMIN))
+	if (!ns_capable(net->user_ns, CAP_NET_ADMIN))
 		return -EPERM;
 
 	/* ignore trailing newline */
@@ -418,63 +433,8 @@ static struct attribute_group netstat_group = {
 	.attrs  = netstat_attrs,
 };
 
-#ifdef CONFIG_WIRELESS_EXT_SYSFS
-/* helper function that does all the locking etc for wireless stats */
-static ssize_t wireless_show(struct device *d, char *buf,
-			     ssize_t (*format)(const struct iw_statistics *,
-					       char *))
-{
-	struct net_device *dev = to_net_dev(d);
-	const struct iw_statistics *iw;
-	ssize_t ret = -EINVAL;
-
-	if (!rtnl_trylock())
-		return restart_syscall();
-	if (dev_isalive(dev)) {
-		iw = get_wireless_stats(dev);
-		if (iw)
-			ret = (*format)(iw, buf);
-	}
-	rtnl_unlock();
-
-	return ret;
-}
-
-/* show function template for wireless fields */
-#define WIRELESS_SHOW(name, field, format_string)			\
-static ssize_t format_iw_##name(const struct iw_statistics *iw, char *buf) \
-{									\
-	return sprintf(buf, format_string, iw->field);			\
-}									\
-static ssize_t show_iw_##name(struct device *d,				\
-			      struct device_attribute *attr, char *buf)	\
-{									\
-	return wireless_show(d, buf, format_iw_##name);			\
-}									\
-static DEVICE_ATTR(name, S_IRUGO, show_iw_##name, NULL)
-
-WIRELESS_SHOW(status, status, fmt_hex);
-WIRELESS_SHOW(link, qual.qual, fmt_dec);
-WIRELESS_SHOW(level, qual.level, fmt_dec);
-WIRELESS_SHOW(noise, qual.noise, fmt_dec);
-WIRELESS_SHOW(nwid, discard.nwid, fmt_dec);
-WIRELESS_SHOW(crypt, discard.code, fmt_dec);
-WIRELESS_SHOW(fragment, discard.fragment, fmt_dec);
-WIRELESS_SHOW(misc, discard.misc, fmt_dec);
-WIRELESS_SHOW(retries, discard.retries, fmt_dec);
-WIRELESS_SHOW(beacon, miss.beacon, fmt_dec);
-
+#if IS_ENABLED(CONFIG_WIRELESS_EXT) || IS_ENABLED(CONFIG_CFG80211)
 static struct attribute *wireless_attrs[] = {
-	&dev_attr_status.attr,
-	&dev_attr_link.attr,
-	&dev_attr_level.attr,
-	&dev_attr_noise.attr,
-	&dev_attr_nwid.attr,
-	&dev_attr_crypt.attr,
-	&dev_attr_fragment.attr,
-	&dev_attr_retries.attr,
-	&dev_attr_misc.attr,
-	&dev_attr_beacon.attr,
 	NULL
 };
 
@@ -1374,7 +1334,6 @@ struct kobj_ns_type_operations net_ns_type_operations = {
 };
 EXPORT_SYMBOL_GPL(net_ns_type_operations);
 
-#ifdef CONFIG_HOTPLUG
 static int netdev_uevent(struct device *d, struct kobj_uevent_env *env)
 {
 	struct net_device *dev = to_net_dev(d);
@@ -1393,7 +1352,6 @@ static int netdev_uevent(struct device *d, struct kobj_uevent_env *env)
 exit:
 	return retval;
 }
-#endif
 
 /*
  *	netdev_release -- destroy and free a dead device.
@@ -1422,9 +1380,7 @@ static struct class net_class = {
 #ifdef CONFIG_SYSFS
 	.dev_attrs = net_class_attributes,
 #endif /* CONFIG_SYSFS */
-#ifdef CONFIG_HOTPLUG
 	.dev_uevent = netdev_uevent,
-#endif
 	.ns_type = &net_ns_type_operations,
 	.namespace = net_namespace,
 };
@@ -1463,10 +1419,11 @@ int netdev_register_kobject(struct net_device *net)
 		groups++;
 
 	*groups++ = &netstat_group;
-#ifdef CONFIG_WIRELESS_EXT_SYSFS
+
+#if IS_ENABLED(CONFIG_WIRELESS_EXT) || IS_ENABLED(CONFIG_CFG80211)
 	if (net->ieee80211_ptr)
 		*groups++ = &wireless_group;
-#ifdef CONFIG_WIRELESS_EXT
+#if IS_ENABLED(CONFIG_WIRELESS_EXT)
 	else if (net->wireless_handlers)
 		*groups++ = &wireless_group;
 #endif

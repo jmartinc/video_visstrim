@@ -385,6 +385,8 @@ static ssize_t ade7759_write_frequency(struct device *dev,
 	ret = strict_strtol(buf, 10, &val);
 	if (ret)
 		return ret;
+	if (val == 0)
+		return -EINVAL;
 
 	mutex_lock(&indio_dev->mlock);
 
@@ -456,7 +458,7 @@ static const struct iio_info ade7759_info = {
 	.driver_module = THIS_MODULE,
 };
 
-static int __devinit ade7759_probe(struct spi_device *spi)
+static int ade7759_probe(struct spi_device *spi)
 {
 	int ret;
 	struct ade7759_state *st;
@@ -499,18 +501,13 @@ error_ret:
 /* fixme, confirm ordering in this function */
 static int ade7759_remove(struct spi_device *spi)
 {
-	int ret;
 	struct iio_dev *indio_dev = spi_get_drvdata(spi);
 
 	iio_device_unregister(indio_dev);
-	ret = ade7759_stop_device(&(indio_dev->dev));
-	if (ret)
-		goto err_ret;
-
+	ade7759_stop_device(&indio_dev->dev);
 	iio_device_free(indio_dev);
 
-err_ret:
-	return ret;
+	return 0;
 }
 
 static struct spi_driver ade7759_driver = {
@@ -519,7 +516,7 @@ static struct spi_driver ade7759_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = ade7759_probe,
-	.remove = __devexit_p(ade7759_remove),
+	.remove = ade7759_remove,
 };
 module_spi_driver(ade7759_driver);
 

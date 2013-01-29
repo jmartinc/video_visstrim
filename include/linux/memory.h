@@ -19,7 +19,7 @@
 #include <linux/compiler.h>
 #include <linux/mutex.h>
 
-#define MIN_MEMORY_BLOCK_SIZE     (1 << SECTION_SIZE_BITS)
+#define MIN_MEMORY_BLOCK_SIZE     (1UL << SECTION_SIZE_BITS)
 
 struct memory_block {
 	unsigned long start_section_nr;
@@ -53,6 +53,8 @@ int arch_get_memory_phys_device(unsigned long start_pfn);
 struct memory_notify {
 	unsigned long start_pfn;
 	unsigned long nr_pages;
+	int status_change_nid_normal;
+	int status_change_nid_high;
 	int status_change_nid;
 };
 

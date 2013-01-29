@@ -45,6 +45,7 @@
 #include "xfs_filestream.h"
 #include "xfs_vnodeops.h"
 #include "xfs_trace.h"
+#include "xfs_icache.h"
 
 kmem_zone_t *xfs_ifork_zone;
 kmem_zone_t *xfs_inode_zone;
@@ -72,6 +73,256 @@ xfs_get_extsz_hint(
 	if (XFS_IS_REALTIME_INODE(ip))
 		return ip->i_mount->m_sb.sb_rextsize;
 	return 0;
+}
+
+/*
+ * This is a wrapper routine around the xfs_ilock() routine used to centralize
+ * some grungy code.  It is used in places that wish to lock the inode solely
+ * for reading the extents.  The reason these places can't just call
+ * xfs_ilock(SHARED) is that the inode lock also guards to bringing in of the
+ * extents from disk for a file in b-tree format.  If the inode is in b-tree
+ * format, then we need to lock the inode exclusively until the extents are read
+ * in.  Locking it exclusively all the time would limit our parallelism
+ * unnecessarily, though.  What we do instead is check to see if the extents
+ * have been read in yet, and only lock the inode exclusively if they have not.
+ *
+ * The function returns a value which should be given to the corresponding
+ * xfs_iunlock_map_shared().  This value is the mode in which the lock was
+ * actually taken.
+ */
+uint
+xfs_ilock_map_shared(
+	xfs_inode_t	*ip)
+{
+	uint	lock_mode;
+
+	if ((ip->i_d.di_format == XFS_DINODE_FMT_BTREE) &&
+	    ((ip->i_df.if_flags & XFS_IFEXTENTS) == 0)) {
+		lock_mode = XFS_ILOCK_EXCL;
+	} else {
+		lock_mode = XFS_ILOCK_SHARED;
+	}
+
+	xfs_ilock(ip, lock_mode);
+
+	return lock_mode;
+}
+
+/*
+ * This is simply the unlock routine to go with xfs_ilock_map_shared().
+ * All it does is call xfs_iunlock() with the given lock_mode.
+ */
+void
+xfs_iunlock_map_shared(
+	xfs_inode_t	*ip,
+	unsigned int	lock_mode)
+{
+	xfs_iunlock(ip, lock_mode);
+}
+
+/*
+ * The xfs inode contains 2 locks: a multi-reader lock called the
+ * i_iolock and a multi-reader lock called the i_lock.  This routine
+ * allows either or both of the locks to be obtained.
+ *
+ * The 2 locks should always be ordered so that the IO lock is
+ * obtained first in order to prevent deadlock.
+ *
+ * ip -- the inode being locked
+ * lock_flags -- this parameter indicates the inode's locks
+ *       to be locked.  It can be:
+ *		XFS_IOLOCK_SHARED,
+ *		XFS_IOLOCK_EXCL,
+ *		XFS_ILOCK_SHARED,
+ *		XFS_ILOCK_EXCL,
+ *		XFS_IOLOCK_SHARED | XFS_ILOCK_SHARED,
+ *		XFS_IOLOCK_SHARED | XFS_ILOCK_EXCL,
+ *		XFS_IOLOCK_EXCL | XFS_ILOCK_SHARED,
+ *		XFS_IOLOCK_EXCL | XFS_ILOCK_EXCL
+ */
+void
+xfs_ilock(
+	xfs_inode_t		*ip,
+	uint			lock_flags)
+{
+	trace_xfs_ilock(ip, lock_flags, _RET_IP_);
+
+	/*
+	 * You can't set both SHARED and EXCL for the same lock,
+	 * and only XFS_IOLOCK_SHARED, XFS_IOLOCK_EXCL, XFS_ILOCK_SHARED,
+	 * and XFS_ILOCK_EXCL are valid values to set in lock_flags.
+	 */
+	ASSERT((lock_flags & (XFS_IOLOCK_SHARED | XFS_IOLOCK_EXCL)) !=
+	       (XFS_IOLOCK_SHARED | XFS_IOLOCK_EXCL));
+	ASSERT((lock_flags & (XFS_ILOCK_SHARED | XFS_ILOCK_EXCL)) !=
+	       (XFS_ILOCK_SHARED | XFS_ILOCK_EXCL));
+	ASSERT((lock_flags & ~(XFS_LOCK_MASK | XFS_LOCK_DEP_MASK)) == 0);
+
+	if (lock_flags & XFS_IOLOCK_EXCL)
+		mrupdate_nested(&ip->i_iolock, XFS_IOLOCK_DEP(lock_flags));
+	else if (lock_flags & XFS_IOLOCK_SHARED)
+		mraccess_nested(&ip->i_iolock, XFS_IOLOCK_DEP(lock_flags));
+
+	if (lock_flags & XFS_ILOCK_EXCL)
+		mrupdate_nested(&ip->i_lock, XFS_ILOCK_DEP(lock_flags));
+	else if (lock_flags & XFS_ILOCK_SHARED)
+		mraccess_nested(&ip->i_lock, XFS_ILOCK_DEP(lock_flags));
+}
+
+/*
+ * This is just like xfs_ilock(), except that the caller
+ * is guaranteed not to sleep.  It returns 1 if it gets
+ * the requested locks and 0 otherwise.  If the IO lock is
+ * obtained but the inode lock cannot be, then the IO lock
+ * is dropped before returning.
+ *
+ * ip -- the inode being locked
+ * lock_flags -- this parameter indicates the inode's locks to be
+ *       to be locked.  See the comment for xfs_ilock() for a list
+ *	 of valid values.
+ */
+int
+xfs_ilock_nowait(
+	xfs_inode_t		*ip,
+	uint			lock_flags)
+{
+	trace_xfs_ilock_nowait(ip, lock_flags, _RET_IP_);
+
+	/*
+	 * You can't set both SHARED and EXCL for the same lock,
+	 * and only XFS_IOLOCK_SHARED, XFS_IOLOCK_EXCL, XFS_ILOCK_SHARED,
+	 * and XFS_ILOCK_EXCL are valid values to set in lock_flags.
+	 */
+	ASSERT((lock_flags & (XFS_IOLOCK_SHARED | XFS_IOLOCK_EXCL)) !=
+	       (XFS_IOLOCK_SHARED | XFS_IOLOCK_EXCL));
+	ASSERT((lock_flags & (XFS_ILOCK_SHARED | XFS_ILOCK_EXCL)) !=
+	       (XFS_ILOCK_SHARED | XFS_ILOCK_EXCL));
+	ASSERT((lock_flags & ~(XFS_LOCK_MASK | XFS_LOCK_DEP_MASK)) == 0);
+
+	if (lock_flags & XFS_IOLOCK_EXCL) {
+		if (!mrtryupdate(&ip->i_iolock))
+			goto out;
+	} else if (lock_flags & XFS_IOLOCK_SHARED) {
+		if (!mrtryaccess(&ip->i_iolock))
+			goto out;
+	}
+	if (lock_flags & XFS_ILOCK_EXCL) {
+		if (!mrtryupdate(&ip->i_lock))
+			goto out_undo_iolock;
+	} else if (lock_flags & XFS_ILOCK_SHARED) {
+		if (!mrtryaccess(&ip->i_lock))
+			goto out_undo_iolock;
+	}
+	return 1;
+
+ out_undo_iolock:
+	if (lock_flags & XFS_IOLOCK_EXCL)
+		mrunlock_excl(&ip->i_iolock);
+	else if (lock_flags & XFS_IOLOCK_SHARED)
+		mrunlock_shared(&ip->i_iolock);
+ out:
+	return 0;
+}
+
+/*
+ * xfs_iunlock() is used to drop the inode locks acquired with
+ * xfs_ilock() and xfs_ilock_nowait().  The caller must pass
+ * in the flags given to xfs_ilock() or xfs_ilock_nowait() so
+ * that we know which locks to drop.
+ *
+ * ip -- the inode being unlocked
+ * lock_flags -- this parameter indicates the inode's locks to be
+ *       to be unlocked.  See the comment for xfs_ilock() for a list
+ *	 of valid values for this parameter.
+ *
+ */
+void
+xfs_iunlock(
+	xfs_inode_t		*ip,
+	uint			lock_flags)
+{
+	/*
+	 * You can't set both SHARED and EXCL for the same lock,
+	 * and only XFS_IOLOCK_SHARED, XFS_IOLOCK_EXCL, XFS_ILOCK_SHARED,
+	 * and XFS_ILOCK_EXCL are valid values to set in lock_flags.
+	 */
+	ASSERT((lock_flags & (XFS_IOLOCK_SHARED | XFS_IOLOCK_EXCL)) !=
+	       (XFS_IOLOCK_SHARED | XFS_IOLOCK_EXCL));
+	ASSERT((lock_flags & (XFS_ILOCK_SHARED | XFS_ILOCK_EXCL)) !=
+	       (XFS_ILOCK_SHARED | XFS_ILOCK_EXCL));
+	ASSERT((lock_flags & ~(XFS_LOCK_MASK | XFS_LOCK_DEP_MASK)) == 0);
+	ASSERT(lock_flags != 0);
+
+	if (lock_flags & XFS_IOLOCK_EXCL)
+		mrunlock_excl(&ip->i_iolock);
+	else if (lock_flags & XFS_IOLOCK_SHARED)
+		mrunlock_shared(&ip->i_iolock);
+
+	if (lock_flags & XFS_ILOCK_EXCL)
+		mrunlock_excl(&ip->i_lock);
+	else if (lock_flags & XFS_ILOCK_SHARED)
+		mrunlock_shared(&ip->i_lock);
+
+	trace_xfs_iunlock(ip, lock_flags, _RET_IP_);
+}
+
+/*
+ * give up write locks.  the i/o lock cannot be held nested
+ * if it is being demoted.
+ */
+void
+xfs_ilock_demote(
+	xfs_inode_t		*ip,
+	uint			lock_flags)
+{
+	ASSERT(lock_flags & (XFS_IOLOCK_EXCL|XFS_ILOCK_EXCL));
+	ASSERT((lock_flags & ~(XFS_IOLOCK_EXCL|XFS_ILOCK_EXCL)) == 0);
+
+	if (lock_flags & XFS_ILOCK_EXCL)
+		mrdemote(&ip->i_lock);
+	if (lock_flags & XFS_IOLOCK_EXCL)
+		mrdemote(&ip->i_iolock);
+
+	trace_xfs_ilock_demote(ip, lock_flags, _RET_IP_);
+}
+
+#ifdef DEBUG
+int
+xfs_isilocked(
+	xfs_inode_t		*ip,
+	uint			lock_flags)
+{
+	if (lock_flags & (XFS_ILOCK_EXCL|XFS_ILOCK_SHARED)) {
+		if (!(lock_flags & XFS_ILOCK_SHARED))
+			return !!ip->i_lock.mr_writer;
+		return rwsem_is_locked(&ip->i_lock.mr_lock);
+	}
+
+	if (lock_flags & (XFS_IOLOCK_EXCL|XFS_IOLOCK_SHARED)) {
+		if (!(lock_flags & XFS_IOLOCK_SHARED))
+			return !!ip->i_iolock.mr_writer;
+		return rwsem_is_locked(&ip->i_iolock.mr_lock);
+	}
+
+	ASSERT(0);
+	return 0;
+}
+#endif
+
+void
+__xfs_iflock(
+	struct xfs_inode	*ip)
+{
+	wait_queue_head_t *wq = bit_waitqueue(&ip->i_flags, __XFS_IFLOCK_BIT);
+	DEFINE_WAIT_BIT(wait, &ip->i_flags, __XFS_IFLOCK_BIT);
+
+	do {
+		prepare_to_wait_exclusive(wq, &wait.wait, TASK_UNINTERRUPTIBLE);
+		if (xfs_isiflocked(ip))
+			io_schedule();
+	} while (!xfs_iflock_nowait(ip));
+
+	finish_wait(wq, &wait.wait);
 }
 
 #ifdef DEBUG
@@ -131,169 +382,108 @@ xfs_inobp_check(
 }
 #endif
 
-/*
- * Find the buffer associated with the given inode map
- * We do basic validation checks on the buffer once it has been
- * retrieved from disk.
- */
-STATIC int
-xfs_imap_to_bp(
-	xfs_mount_t	*mp,
-	xfs_trans_t	*tp,
-	struct xfs_imap	*imap,
-	xfs_buf_t	**bpp,
-	uint		buf_flags,
-	uint		iget_flags)
+static void
+xfs_inode_buf_verify(
+	struct xfs_buf	*bp)
 {
-	int		error;
+	struct xfs_mount *mp = bp->b_target->bt_mount;
 	int		i;
 	int		ni;
-	xfs_buf_t	*bp;
-
-	buf_flags |= XBF_UNMAPPED;
-	error = xfs_trans_read_buf(mp, tp, mp->m_ddev_targp, imap->im_blkno,
-				   (int)imap->im_len, buf_flags, &bp);
-	if (error) {
-		if (error != EAGAIN) {
-			xfs_warn(mp,
-				"%s: xfs_trans_read_buf() returned error %d.",
-				__func__, error);
-		} else {
-			ASSERT(buf_flags & XBF_TRYLOCK);
-		}
-		return error;
-	}
 
 	/*
 	 * Validate the magic number and version of every inode in the buffer
-	 * (if DEBUG kernel) or the first inode in the buffer, otherwise.
 	 */
-#ifdef DEBUG
-	ni = BBTOB(imap->im_len) >> mp->m_sb.sb_inodelog;
-#else	/* usual case */
-	ni = 1;
-#endif
-
+	ni = XFS_BB_TO_FSB(mp, bp->b_length) * mp->m_sb.sb_inopblock;
 	for (i = 0; i < ni; i++) {
 		int		di_ok;
 		xfs_dinode_t	*dip;
 
-		dip = (xfs_dinode_t *)xfs_buf_offset(bp,
+		dip = (struct xfs_dinode *)xfs_buf_offset(bp,
 					(i << mp->m_sb.sb_inodelog));
 		di_ok = dip->di_magic == cpu_to_be16(XFS_DINODE_MAGIC) &&
 			    XFS_DINODE_GOOD_VERSION(dip->di_version);
 		if (unlikely(XFS_TEST_ERROR(!di_ok, mp,
 						XFS_ERRTAG_ITOBP_INOTOBP,
 						XFS_RANDOM_ITOBP_INOTOBP))) {
-			if (iget_flags & XFS_IGET_UNTRUSTED) {
-				xfs_trans_brelse(tp, bp);
-				return XFS_ERROR(EINVAL);
-			}
-			XFS_CORRUPTION_ERROR("xfs_imap_to_bp",
-						XFS_ERRLEVEL_HIGH, mp, dip);
+			xfs_buf_ioerror(bp, EFSCORRUPTED);
+			XFS_CORRUPTION_ERROR(__func__, XFS_ERRLEVEL_HIGH,
+					     mp, dip);
 #ifdef DEBUG
 			xfs_emerg(mp,
 				"bad inode magic/vsn daddr %lld #%d (magic=%x)",
-				(unsigned long long)imap->im_blkno, i,
+				(unsigned long long)bp->b_bn, i,
 				be16_to_cpu(dip->di_magic));
 			ASSERT(0);
 #endif
-			xfs_trans_brelse(tp, bp);
-			return XFS_ERROR(EFSCORRUPTED);
 		}
 	}
-
 	xfs_inobp_check(mp, bp);
-	*bpp = bp;
-	return 0;
-}
-
-/*
- * This routine is called to map an inode number within a file
- * system to the buffer containing the on-disk version of the
- * inode.  It returns a pointer to the buffer containing the
- * on-disk inode in the bpp parameter, and in the dip parameter
- * it returns a pointer to the on-disk inode within that buffer.
- *
- * If a non-zero error is returned, then the contents of bpp and
- * dipp are undefined.
- *
- * Use xfs_imap() to determine the size and location of the
- * buffer to read from disk.
- */
-int
-xfs_inotobp(
-	xfs_mount_t	*mp,
-	xfs_trans_t	*tp,
-	xfs_ino_t	ino,
-	xfs_dinode_t	**dipp,
-	xfs_buf_t	**bpp,
-	int		*offset,
-	uint		imap_flags)
-{
-	struct xfs_imap	imap;
-	xfs_buf_t	*bp;
-	int		error;
-
-	imap.im_blkno = 0;
-	error = xfs_imap(mp, tp, ino, &imap, imap_flags);
-	if (error)
-		return error;
-
-	error = xfs_imap_to_bp(mp, tp, &imap, &bp, 0, imap_flags);
-	if (error)
-		return error;
-
-	*dipp = (xfs_dinode_t *)xfs_buf_offset(bp, imap.im_boffset);
-	*bpp = bp;
-	*offset = imap.im_boffset;
-	return 0;
 }
 
 
+static void
+xfs_inode_buf_read_verify(
+	struct xfs_buf	*bp)
+{
+	xfs_inode_buf_verify(bp);
+}
+
+static void
+xfs_inode_buf_write_verify(
+	struct xfs_buf	*bp)
+{
+	xfs_inode_buf_verify(bp);
+}
+
+const struct xfs_buf_ops xfs_inode_buf_ops = {
+	.verify_read = xfs_inode_buf_read_verify,
+	.verify_write = xfs_inode_buf_write_verify,
+};
+
+
 /*
- * This routine is called to map an inode to the buffer containing
- * the on-disk version of the inode.  It returns a pointer to the
- * buffer containing the on-disk inode in the bpp parameter, and in
- * the dip parameter it returns a pointer to the on-disk inode within
- * that buffer.
+ * This routine is called to map an inode to the buffer containing the on-disk
+ * version of the inode.  It returns a pointer to the buffer containing the
+ * on-disk inode in the bpp parameter, and in the dipp parameter it returns a
+ * pointer to the on-disk inode within that buffer.
  *
- * If a non-zero error is returned, then the contents of bpp and
- * dipp are undefined.
- *
- * The inode is expected to already been mapped to its buffer and read
- * in once, thus we can use the mapping information stored in the inode
- * rather than calling xfs_imap().  This allows us to avoid the overhead
- * of looking at the inode btree for small block file systems
- * (see xfs_imap()).
+ * If a non-zero error is returned, then the contents of bpp and dipp are
+ * undefined.
  */
 int
-xfs_itobp(
-	xfs_mount_t	*mp,
-	xfs_trans_t	*tp,
-	xfs_inode_t	*ip,
-	xfs_dinode_t	**dipp,
-	xfs_buf_t	**bpp,
-	uint		buf_flags)
+xfs_imap_to_bp(
+	struct xfs_mount	*mp,
+	struct xfs_trans	*tp,
+	struct xfs_imap		*imap,
+	struct xfs_dinode       **dipp,
+	struct xfs_buf		**bpp,
+	uint			buf_flags,
+	uint			iget_flags)
 {
-	xfs_buf_t	*bp;
-	int		error;
+	struct xfs_buf		*bp;
+	int			error;
 
-	ASSERT(ip->i_imap.im_blkno != 0);
+	buf_flags |= XBF_UNMAPPED;
+	error = xfs_trans_read_buf(mp, tp, mp->m_ddev_targp, imap->im_blkno,
+				   (int)imap->im_len, buf_flags, &bp,
+				   &xfs_inode_buf_ops);
+	if (error) {
+		if (error == EAGAIN) {
+			ASSERT(buf_flags & XBF_TRYLOCK);
+			return error;
+		}
 
-	error = xfs_imap_to_bp(mp, tp, &ip->i_imap, &bp, buf_flags, 0);
-	if (error)
+		if (error == EFSCORRUPTED &&
+		    (iget_flags & XFS_IGET_UNTRUSTED))
+			return XFS_ERROR(EINVAL);
+
+		xfs_warn(mp, "%s: xfs_trans_read_buf() returned error %d.",
+			__func__, error);
 		return error;
-
-	if (!bp) {
-		ASSERT(buf_flags & XBF_TRYLOCK);
-		ASSERT(tp == NULL);
-		*bpp = NULL;
-		return EAGAIN;
 	}
 
-	*dipp = (xfs_dinode_t *)xfs_buf_offset(bp, ip->i_imap.im_boffset);
 	*bpp = bp;
+	*dipp = (struct xfs_dinode *)xfs_buf_offset(bp, imap->im_boffset);
 	return 0;
 }
 
@@ -796,10 +986,9 @@ xfs_iread(
 	/*
 	 * Get pointers to the on-disk inode and the buffer containing it.
 	 */
-	error = xfs_imap_to_bp(mp, tp, &ip->i_imap, &bp, 0, iget_flags);
+	error = xfs_imap_to_bp(mp, tp, &ip->i_imap, &dip, &bp, 0, iget_flags);
 	if (error)
 		return error;
-	dip = (xfs_dinode_t *)xfs_buf_offset(bp, ip->i_imap.im_boffset);
 
 	/*
 	 * If we got something that isn't an inode it means someone
@@ -876,7 +1065,7 @@ xfs_iread(
 	/*
 	 * Use xfs_trans_brelse() to release the buffer containing the
 	 * on-disk inode, because it was acquired with xfs_trans_read_buf()
-	 * in xfs_itobp() above.  If tp is NULL, this is just a normal
+	 * in xfs_imap_to_bp() above.  If tp is NULL, this is just a normal
 	 * brelse().  If we're within a transaction, then xfs_trans_brelse()
 	 * will only release the buffer if it is not dirty within the
 	 * transaction.  It will be OK to release the buffer in this case,
@@ -936,16 +1125,16 @@ xfs_iread_extents(
  * set according to the contents of the given cred structure.
  *
  * Use xfs_dialloc() to allocate the on-disk inode. If xfs_dialloc()
- * has a free inode available, call xfs_iget()
- * to obtain the in-core version of the allocated inode.  Finally,
- * fill in the inode and log its initial contents.  In this case,
- * ialloc_context would be set to NULL and call_again set to false.
+ * has a free inode available, call xfs_iget() to obtain the in-core
+ * version of the allocated inode.  Finally, fill in the inode and
+ * log its initial contents.  In this case, ialloc_context would be
+ * set to NULL.
  *
- * If xfs_dialloc() does not have an available inode,
- * it will replenish its supply by doing an allocation. Since we can
- * only do one allocation within a transaction without deadlocks, we
- * must commit the current transaction before returning the inode itself.
- * In this case, therefore, we will set call_again to true and return.
+ * If xfs_dialloc() does not have an available inode, it will replenish
+ * its supply by doing an allocation. Since we can only do one
+ * allocation within a transaction without deadlocks, we must commit
+ * the current transaction before returning the inode itself.
+ * In this case, therefore, we will set ialloc_context and return.
  * The caller should then commit the current transaction, start a new
  * transaction, and call xfs_ialloc() again to actually get the inode.
  *
@@ -970,7 +1159,6 @@ xfs_ialloc(
 	prid_t		prid,
 	int		okalloc,
 	xfs_buf_t	**ialloc_context,
-	boolean_t	*call_again,
 	xfs_inode_t	**ipp)
 {
 	xfs_ino_t	ino;
@@ -985,10 +1173,10 @@ xfs_ialloc(
 	 * the on-disk inode to be allocated.
 	 */
 	error = xfs_dialloc(tp, pip ? pip->i_ino : 0, mode, okalloc,
-			    ialloc_context, call_again, &ino);
+			    ialloc_context, &ino);
 	if (error)
 		return error;
-	if (*call_again || ino == NULLFSINO) {
+	if (*ialloc_context || ino == NULLFSINO) {
 		*ipp = NULL;
 		return 0;
 	}
@@ -1207,7 +1395,9 @@ xfs_itruncate_extents(
 	int			error = 0;
 	int			done = 0;
 
-	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL|XFS_IOLOCK_EXCL));
+	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
+	ASSERT(!atomic_read(&VFS_I(ip)->i_count) ||
+	       xfs_isilocked(ip, XFS_IOLOCK_EXCL));
 	ASSERT(new_size <= XFS_ISIZE(ip));
 	ASSERT(tp->t_flags & XFS_TRANS_PERM_LOG_RES);
 	ASSERT(ip->i_itemp != NULL);
@@ -1226,7 +1416,7 @@ xfs_itruncate_extents(
 	 * then there is nothing to do.
 	 */
 	first_unmap_block = XFS_B_TO_FSB(mp, (xfs_ufsize_t)new_size);
-	last_block = XFS_B_TO_FSB(mp, (xfs_ufsize_t)XFS_MAXIOFFSET(mp));
+	last_block = XFS_B_TO_FSB(mp, mp->m_super->s_maxbytes);
 	if (first_unmap_block == last_block)
 		return 0;
 
@@ -1355,7 +1545,8 @@ xfs_iunlink(
 		 * Here we put the head pointer into our next pointer,
 		 * and then we fall through to point the head at us.
 		 */
-		error = xfs_itobp(mp, tp, ip, &dip, &ibp, 0);
+		error = xfs_imap_to_bp(mp, tp, &ip->i_imap, &dip, &ibp,
+				       0, 0);
 		if (error)
 			return error;
 
@@ -1429,16 +1620,16 @@ xfs_iunlink_remove(
 
 	if (be32_to_cpu(agi->agi_unlinked[bucket_index]) == agino) {
 		/*
-		 * We're at the head of the list.  Get the inode's
-		 * on-disk buffer to see if there is anyone after us
-		 * on the list.  Only modify our next pointer if it
-		 * is not already NULLAGINO.  This saves us the overhead
-		 * of dealing with the buffer when there is no need to
-		 * change it.
+		 * We're at the head of the list.  Get the inode's on-disk
+		 * buffer to see if there is anyone after us on the list.
+		 * Only modify our next pointer if it is not already NULLAGINO.
+		 * This saves us the overhead of dealing with the buffer when
+		 * there is no need to change it.
 		 */
-		error = xfs_itobp(mp, tp, ip, &dip, &ibp, 0);
+		error = xfs_imap_to_bp(mp, tp, &ip->i_imap, &dip, &ibp,
+				       0, 0);
 		if (error) {
-			xfs_warn(mp, "%s: xfs_itobp() returned error %d.",
+			xfs_warn(mp, "%s: xfs_imap_to_bp returned error %d.",
 				__func__, error);
 			return error;
 		}
@@ -1472,34 +1663,45 @@ xfs_iunlink_remove(
 		next_agino = be32_to_cpu(agi->agi_unlinked[bucket_index]);
 		last_ibp = NULL;
 		while (next_agino != agino) {
-			/*
-			 * If the last inode wasn't the one pointing to
-			 * us, then release its buffer since we're not
-			 * going to do anything with it.
-			 */
-			if (last_ibp != NULL) {
+			struct xfs_imap	imap;
+
+			if (last_ibp)
 				xfs_trans_brelse(tp, last_ibp);
-			}
+
+			imap.im_blkno = 0;
 			next_ino = XFS_AGINO_TO_INO(mp, agno, next_agino);
-			error = xfs_inotobp(mp, tp, next_ino, &last_dip,
-					    &last_ibp, &last_offset, 0);
+
+			error = xfs_imap(mp, tp, next_ino, &imap, 0);
 			if (error) {
 				xfs_warn(mp,
-					"%s: xfs_inotobp() returned error %d.",
+	"%s: xfs_imap returned error %d.",
+					 __func__, error);
+				return error;
+			}
+
+			error = xfs_imap_to_bp(mp, tp, &imap, &last_dip,
+					       &last_ibp, 0, 0);
+			if (error) {
+				xfs_warn(mp,
+	"%s: xfs_imap_to_bp returned error %d.",
 					__func__, error);
 				return error;
 			}
+
+			last_offset = imap.im_boffset;
 			next_agino = be32_to_cpu(last_dip->di_next_unlinked);
 			ASSERT(next_agino != NULLAGINO);
 			ASSERT(next_agino != 0);
 		}
+
 		/*
-		 * Now last_ibp points to the buffer previous to us on
-		 * the unlinked list.  Pull us from the list.
+		 * Now last_ibp points to the buffer previous to us on the
+		 * unlinked list.  Pull us from the list.
 		 */
-		error = xfs_itobp(mp, tp, ip, &dip, &ibp, 0);
+		error = xfs_imap_to_bp(mp, tp, &ip->i_imap, &dip, &ibp,
+				       0, 0);
 		if (error) {
-			xfs_warn(mp, "%s: xfs_itobp(2) returned error %d.",
+			xfs_warn(mp, "%s: xfs_imap_to_bp(2) returned error %d.",
 				__func__, error);
 			return error;
 		}
@@ -1579,10 +1781,23 @@ xfs_ifree_cluster(
 		 * to mark all the active inodes on the buffer stale.
 		 */
 		bp = xfs_trans_get_buf(tp, mp->m_ddev_targp, blkno,
-					mp->m_bsize * blks_per_cluster, 0);
+					mp->m_bsize * blks_per_cluster,
+					XBF_UNMAPPED);
 
 		if (!bp)
 			return ENOMEM;
+
+		/*
+		 * This buffer may not have been correctly initialised as we
+		 * didn't read it from disk. That's not important because we are
+		 * only using to mark the buffer as stale in the log, and to
+		 * attach stale cached inodes on it. That means it will never be
+		 * dispatched for IO. If it is, we want to know about it, and we
+		 * want it to fail. We can acheive this by adding a write
+		 * verifier to the buffer.
+		 */
+		 bp->b_ops = &xfs_inode_buf_ops;
+
 		/*
 		 * Walk the inodes already attached to the buffer and mark them
 		 * stale. These will all have the flush locks held, so an
@@ -1749,7 +1964,8 @@ xfs_ifree(
 
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 
-	error = xfs_itobp(ip->i_mount, tp, ip, &dip, &ibp, 0);
+	error = xfs_imap_to_bp(ip->i_mount, tp, &ip->i_imap, &dip, &ibp,
+			       0, 0);
 	if (error)
 		return error;
 
@@ -2428,7 +2644,7 @@ xfs_iflush(
 	/*
 	 * For stale inodes we cannot rely on the backing buffer remaining
 	 * stale in cache for the remaining life of the stale inode and so
-	 * xfs_itobp() below may give us a buffer that no longer contains
+	 * xfs_imap_to_bp() below may give us a buffer that no longer contains
 	 * inodes below. We have to check this after ensuring the inode is
 	 * unpinned so that it is safe to reclaim the stale inode after the
 	 * flush call.
@@ -2454,7 +2670,8 @@ xfs_iflush(
 	/*
 	 * Get the buffer containing the on-disk inode.
 	 */
-	error = xfs_itobp(mp, NULL, ip, &dip, &bp, XBF_TRYLOCK);
+	error = xfs_imap_to_bp(mp, NULL, &ip->i_imap, &dip, &bp, XBF_TRYLOCK,
+			       0);
 	if (error || !bp) {
 		xfs_ifunlock(ip);
 		return error;
@@ -3728,3 +3945,40 @@ xfs_iext_irec_update_extoffs(
 		ifp->if_u1.if_ext_irec[i].er_extoff += ext_diff;
 	}
 }
+
+/*
+ * Test whether it is appropriate to check an inode for and free post EOF
+ * blocks. The 'force' parameter determines whether we should also consider
+ * regular files that are marked preallocated or append-only.
+ */
+bool
+xfs_can_free_eofblocks(struct xfs_inode *ip, bool force)
+{
+	/* prealloc/delalloc exists only on regular files */
+	if (!S_ISREG(ip->i_d.di_mode))
+		return false;
+
+	/*
+	 * Zero sized files with no cached pages and delalloc blocks will not
+	 * have speculative prealloc/delalloc blocks to remove.
+	 */
+	if (VFS_I(ip)->i_size == 0 &&
+	    VN_CACHED(VFS_I(ip)) == 0 &&
+	    ip->i_delayed_blks == 0)
+		return false;
+
+	/* If we haven't read in the extent list, then don't do it now. */
+	if (!(ip->i_df.if_flags & XFS_IFEXTENTS))
+		return false;
+
+	/*
+	 * Do not free real preallocated or append-only files unless the file
+	 * has delalloc blocks and we are forced to remove them.
+	 */
+	if (ip->i_d.di_flags & (XFS_DIFLAG_PREALLOC | XFS_DIFLAG_APPEND))
+		if (!force || ip->i_delayed_blks == 0)
+			return false;
+
+	return true;
+}
+

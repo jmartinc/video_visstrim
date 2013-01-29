@@ -1,6 +1,4 @@
 /*
- * drivers/s390/net/ctcm_main.c
- *
  * Copyright IBM Corp. 2001, 2009
  * Author(s):
  *	Original CTC driver(s):
@@ -1456,7 +1454,7 @@ static int add_channel(struct ccw_device *cdev, enum ctcm_channel_types type,
 				ch_fsm_len, GFP_KERNEL);
 	}
 	if (ch->fsm == NULL)
-				goto free_return;
+				goto nomem_return;
 
 	fsm_newstate(ch->fsm, CTC_STATE_IDLE);
 
@@ -1692,8 +1690,6 @@ static int ctcm_shutdown_device(struct ccwgroup_device *cgdev)
 static void ctcm_remove_device(struct ccwgroup_device *cgdev)
 {
 	struct ctcm_priv *priv = dev_get_drvdata(&cgdev->dev);
-
-	BUG_ON(priv == NULL);
 
 	CTCM_DBF_TEXT_(SETUP, CTC_DBF_INFO,
 			"removing device %p, proto : %d",

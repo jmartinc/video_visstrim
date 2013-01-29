@@ -267,6 +267,12 @@ static const struct omap_video_timings tpo_td043_timings = {
 	.vsw		= 1,
 	.vfp		= 39,
 	.vbp		= 34,
+
+	.vsync_level	= OMAPDSS_SIG_ACTIVE_LOW,
+	.hsync_level	= OMAPDSS_SIG_ACTIVE_LOW,
+	.data_pclk_edge	= OMAPDSS_DRIVE_SIG_FALLING_EDGE,
+	.de_level	= OMAPDSS_SIG_ACTIVE_HIGH,
+	.sync_pclk_edge	= OMAPDSS_DRIVE_SIG_OPPOSITE_EDGES,
 };
 
 static int tpo_td043_power_on(struct tpo_td043_device *tpo_td043)
@@ -331,6 +337,9 @@ static int tpo_td043_enable_dss(struct omap_dss_device *dssdev)
 	if (dssdev->state == OMAP_DSS_DISPLAY_ACTIVE)
 		return 0;
 
+	omapdss_dpi_set_timings(dssdev, &dssdev->panel.timings);
+	omapdss_dpi_set_data_lines(dssdev, dssdev->phy.dpi.data_lines);
+
 	r = omapdss_dpi_display_enable(dssdev);
 	if (r)
 		goto err0;
@@ -392,24 +401,6 @@ static void tpo_td043_disable(struct omap_dss_device *dssdev)
 	dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
 }
 
-static int tpo_td043_suspend(struct omap_dss_device *dssdev)
-{
-	dev_dbg(&dssdev->dev, "suspend\n");
-
-	tpo_td043_disable_dss(dssdev);
-
-	dssdev->state = OMAP_DSS_DISPLAY_SUSPENDED;
-
-	return 0;
-}
-
-static int tpo_td043_resume(struct omap_dss_device *dssdev)
-{
-	dev_dbg(&dssdev->dev, "resume\n");
-
-	return tpo_td043_enable_dss(dssdev);
-}
-
 static int tpo_td043_probe(struct omap_dss_device *dssdev)
 {
 	struct tpo_td043_device *tpo_td043 = dev_get_drvdata(&dssdev->dev);
@@ -423,8 +414,6 @@ static int tpo_td043_probe(struct omap_dss_device *dssdev)
 		return -ENODEV;
 	}
 
-	dssdev->panel.config = OMAP_DSS_LCD_TFT | OMAP_DSS_LCD_IHS |
-				OMAP_DSS_LCD_IVS | OMAP_DSS_LCD_IPC;
 	dssdev->panel.timings = tpo_td043_timings;
 	dssdev->ctrl.pixel_size = 24;
 
@@ -476,7 +465,9 @@ static void tpo_td043_remove(struct omap_dss_device *dssdev)
 static void tpo_td043_set_timings(struct omap_dss_device *dssdev,
 		struct omap_video_timings *timings)
 {
-	dpi_set_timings(dssdev, timings);
+	omapdss_dpi_set_timings(dssdev, timings);
+
+	dssdev->panel.timings = *timings;
 }
 
 static int tpo_td043_check_timings(struct omap_dss_device *dssdev,
@@ -491,8 +482,6 @@ static struct omap_dss_driver tpo_td043_driver = {
 
 	.enable		= tpo_td043_enable,
 	.disable	= tpo_td043_disable,
-	.suspend	= tpo_td043_suspend,
-	.resume		= tpo_td043_resume,
 	.set_mirror	= tpo_td043_set_hmirror,
 	.get_mirror	= tpo_td043_get_hmirror,
 
@@ -539,7 +528,7 @@ static int tpo_td043_spi_probe(struct spi_device *spi)
 	return 0;
 }
 
-static int __devexit tpo_td043_spi_remove(struct spi_device *spi)
+static int tpo_td043_spi_remove(struct spi_device *spi)
 {
 	struct tpo_td043_device *tpo_td043 = dev_get_drvdata(&spi->dev);
 
@@ -591,7 +580,7 @@ static struct spi_driver tpo_td043_spi_driver = {
 		.pm	= &tpo_td043_spi_pm,
 	},
 	.probe	= tpo_td043_spi_probe,
-	.remove	= __devexit_p(tpo_td043_spi_remove),
+	.remove	= tpo_td043_spi_remove,
 };
 
 module_spi_driver(tpo_td043_spi_driver);

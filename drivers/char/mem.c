@@ -27,13 +27,15 @@
 #include <linux/splice.h>
 #include <linux/pfn.h>
 #include <linux/export.h>
+#include <linux/io.h>
 
 #include <asm/uaccess.h>
-#include <asm/io.h>
 
 #ifdef CONFIG_IA64
 # include <linux/efi.h>
 #endif
+
+#define DEVPORT_MINOR	4
 
 static inline unsigned long size_inside_page(unsigned long start,
 					     unsigned long size)
@@ -46,7 +48,7 @@ static inline unsigned long size_inside_page(unsigned long start,
 }
 
 #ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
-static inline int valid_phys_addr_range(unsigned long addr, size_t count)
+static inline int valid_phys_addr_range(phys_addr_t addr, size_t count)
 {
 	return addr + count <= __pa(high_memory);
 }
@@ -94,7 +96,7 @@ void __weak unxlate_dev_mem_ptr(unsigned long phys, void *addr)
 static ssize_t read_mem(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos)
 {
-	unsigned long p = *ppos;
+	phys_addr_t p = *ppos;
 	ssize_t read, sz;
 	char *ptr;
 
@@ -151,7 +153,7 @@ static ssize_t read_mem(struct file *file, char __user *buf,
 static ssize_t write_mem(struct file *file, const char __user *buf,
 			 size_t count, loff_t *ppos)
 {
-	unsigned long p = *ppos;
+	phys_addr_t p = *ppos;
 	ssize_t written, sz;
 	unsigned long copied;
 	void *ptr;
@@ -224,7 +226,7 @@ int __weak phys_mem_access_prot_allowed(struct file *file,
  *
  */
 #ifdef pgprot_noncached
-static int uncached_access(struct file *file, unsigned long addr)
+static int uncached_access(struct file *file, phys_addr_t addr)
 {
 #if defined(CONFIG_IA64)
 	/*
@@ -256,7 +258,7 @@ static pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
 				     unsigned long size, pgprot_t vma_prot)
 {
 #ifdef pgprot_noncached
-	unsigned long offset = pfn << PAGE_SHIFT;
+	phys_addr_t offset = pfn << PAGE_SHIFT;
 
 	if (uncached_access(file, offset))
 		return pgprot_noncached(vma_prot);
@@ -320,7 +322,7 @@ static int mmap_mem(struct file *file, struct vm_area_struct *vma)
 
 	vma->vm_ops = &mmap_mem_ops;
 
-	/* Remap-pfn-range will mark the range VM_IO and VM_RESERVED */
+	/* Remap-pfn-range will mark the range VM_IO */
 	if (remap_pfn_range(vma,
 			    vma->vm_start,
 			    vma->vm_pgoff,
@@ -894,6 +896,13 @@ static int __init chr_dev_init(void)
 	for (minor = 1; minor < ARRAY_SIZE(devlist); minor++) {
 		if (!devlist[minor].name)
 			continue;
+
+		/*
+		 * Create /dev/port? 
+		 */
+		if ((minor == DEVPORT_MINOR) && !arch_has_dev_port())
+			continue;
+
 		device_create(mem_class, NULL, MKDEV(MEM_MAJOR, minor),
 			      NULL, devlist[minor].name);
 	}

@@ -113,7 +113,7 @@ static struct tps65910_board *tps65910_parse_dt_for_gpio(struct device *dev,
 }
 #endif
 
-static int __devinit tps65910_gpio_probe(struct platform_device *pdev)
+static int tps65910_gpio_probe(struct platform_device *pdev)
 {
 	struct tps65910 *tps65910 = dev_get_drvdata(pdev->dev.parent);
 	struct tps65910_board *pdata = dev_get_platdata(tps65910->dev);
@@ -149,6 +149,9 @@ static int __devinit tps65910_gpio_probe(struct platform_device *pdev)
 	tps65910_gpio->gpio_chip.set	= tps65910_gpio_set;
 	tps65910_gpio->gpio_chip.get	= tps65910_gpio_get;
 	tps65910_gpio->gpio_chip.dev = &pdev->dev;
+#ifdef CONFIG_OF_GPIO
+	tps65910_gpio->gpio_chip.of_node = tps65910->dev->of_node;
+#endif
 	if (pdata && pdata->gpio_base)
 		tps65910_gpio->gpio_chip.base = pdata->gpio_base;
 	else
@@ -185,7 +188,7 @@ skip_init:
 	return ret;
 }
 
-static int __devexit tps65910_gpio_remove(struct platform_device *pdev)
+static int tps65910_gpio_remove(struct platform_device *pdev)
 {
 	struct tps65910_gpio *tps65910_gpio = platform_get_drvdata(pdev);
 
@@ -196,7 +199,7 @@ static struct platform_driver tps65910_gpio_driver = {
 	.driver.name    = "tps65910-gpio",
 	.driver.owner   = THIS_MODULE,
 	.probe		= tps65910_gpio_probe,
-	.remove		= __devexit_p(tps65910_gpio_remove),
+	.remove		= tps65910_gpio_remove,
 };
 
 static int __init tps65910_gpio_init(void)

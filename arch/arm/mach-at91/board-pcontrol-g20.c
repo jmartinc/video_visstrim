@@ -29,12 +29,13 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
-#include <mach/board.h>
 #include <mach/at91sam9_smc.h>
-#include <mach/stamp9g20.h>
 
+#include "at91_aic.h"
+#include "board.h"
 #include "sam9_smc.h"
 #include "generic.h"
+#include "stamp9g20.h"
 
 
 static void __init pcontrol_g20_init_early(void)
@@ -218,6 +219,7 @@ MACHINE_START(PCONTROL_G20, "PControl G20")
 	/* Maintainer: pgsellmann@portner-elektronik.at */
 	.timer		= &at91sam926x_timer,
 	.map_io		= at91_map_io,
+	.handle_irq	= at91_aic_handle_irq,
 	.init_early	= pcontrol_g20_init_early,
 	.init_irq	= at91_init_irq_default,
 	.init_machine	= pcontrol_g20_board_init,

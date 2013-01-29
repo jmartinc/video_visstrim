@@ -100,14 +100,12 @@ static void disc_dupl_alert(struct tipc_bearer *b_ptr, u32 node_addr,
 {
 	char node_addr_str[16];
 	char media_addr_str[64];
-	struct print_buf pb;
 
 	tipc_addr_string_fill(node_addr_str, node_addr);
-	tipc_printbuf_init(&pb, media_addr_str, sizeof(media_addr_str));
-	tipc_media_addr_printf(&pb, media_addr);
-	tipc_printbuf_validate(&pb);
-	warn("Duplicate %s using %s seen on <%s>\n",
-	     node_addr_str, media_addr_str, b_ptr->name);
+	tipc_media_addr_printf(media_addr_str, sizeof(media_addr_str),
+			       media_addr);
+	pr_warn("Duplicate %s using %s seen on <%s>\n", node_addr_str,
+		media_addr_str, b_ptr->name);
 }
 
 /**
@@ -245,7 +243,7 @@ void tipc_disc_recv_msg(struct sk_buff *buf, struct tipc_bearer *b_ptr)
 	if ((type == DSC_REQ_MSG) && !link_fully_up && !b_ptr->blocked) {
 		rbuf = tipc_disc_init_msg(DSC_RESP_MSG, orig, b_ptr);
 		if (rbuf) {
-			b_ptr->media->send_msg(rbuf, b_ptr, &media_addr);
+			tipc_bearer_send(b_ptr, rbuf, &media_addr);
 			kfree_skb(rbuf);
 		}
 	}

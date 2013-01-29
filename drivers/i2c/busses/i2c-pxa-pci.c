@@ -94,7 +94,7 @@ out:
 	return ERR_PTR(ret);
 }
 
-static int __devinit ce4100_i2c_probe(struct pci_dev *dev,
+static int ce4100_i2c_probe(struct pci_dev *dev,
 		const struct pci_device_id *ent)
 {
 	int ret;
@@ -135,7 +135,7 @@ err_mem:
 	return ret;
 }
 
-static void __devexit ce4100_i2c_remove(struct pci_dev *dev)
+static void ce4100_i2c_remove(struct pci_dev *dev)
 {
 	struct ce4100_devices *sds;
 	unsigned int i;
@@ -160,20 +160,10 @@ static struct pci_driver ce4100_i2c_driver = {
 	.name           = "ce4100_i2c",
 	.id_table       = ce4100_i2c_devices,
 	.probe          = ce4100_i2c_probe,
-	.remove         = __devexit_p(ce4100_i2c_remove),
+	.remove         = ce4100_i2c_remove,
 };
 
-static int __init ce4100_i2c_init(void)
-{
-	return pci_register_driver(&ce4100_i2c_driver);
-}
-module_init(ce4100_i2c_init);
-
-static void __exit ce4100_i2c_exit(void)
-{
-	pci_unregister_driver(&ce4100_i2c_driver);
-}
-module_exit(ce4100_i2c_exit);
+module_pci_driver(ce4100_i2c_driver);
 
 MODULE_DESCRIPTION("CE4100 PCI-I2C glue code for PXA's driver");
 MODULE_LICENSE("GPL v2");

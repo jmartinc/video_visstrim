@@ -154,7 +154,7 @@ struct hd_struct *disk_part_iter_next(struct disk_part_iter *piter)
 		part = rcu_dereference(ptbl->part[piter->idx]);
 		if (!part)
 			continue;
-		if (!part->nr_sects &&
+		if (!part_nr_sects_read(part) &&
 		    !(piter->flags & DISK_PITER_INCL_EMPTY) &&
 		    !(piter->flags & DISK_PITER_INCL_EMPTY_PART0 &&
 		      piter->idx == 0))
@@ -191,7 +191,7 @@ EXPORT_SYMBOL_GPL(disk_part_iter_exit);
 static inline int sector_in_part(struct hd_struct *part, sector_t sector)
 {
 	return part->start_sect <= sector &&
-		sector < part->start_sect + part->nr_sects;
+		sector < part->start_sect + part_nr_sects_read(part);
 }
 
 /**
@@ -743,7 +743,6 @@ void __init printk_all_partitions(void)
 		struct hd_struct *part;
 		char name_buf[BDEVNAME_SIZE];
 		char devt_buf[BDEVT_SIZE];
-		char uuid_buf[PARTITION_META_INFO_UUIDLTH * 2 + 5];
 
 		/*
 		 * Don't show empty devices or things that have been
@@ -762,16 +761,11 @@ void __init printk_all_partitions(void)
 		while ((part = disk_part_iter_next(&piter))) {
 			bool is_part0 = part == &disk->part0;
 
-			uuid_buf[0] = '\0';
-			if (part->info)
-				snprintf(uuid_buf, sizeof(uuid_buf), "%pU",
-					 part->info->uuid);
-
 			printk("%s%s %10llu %s %s", is_part0 ? "" : "  ",
 			       bdevt_str(part_devt(part), devt_buf),
-			       (unsigned long long)part->nr_sects >> 1,
-			       disk_name(disk, part->partno, name_buf),
-			       uuid_buf);
+			       (unsigned long long)part_nr_sects_read(part) >> 1
+			       , disk_name(disk, part->partno, name_buf),
+			       part->info ? part->info->uuid : "");
 			if (is_part0) {
 				if (disk->driverfs_dev != NULL &&
 				    disk->driverfs_dev->driver != NULL)
@@ -835,7 +829,7 @@ static void disk_seqf_stop(struct seq_file *seqf, void *v)
 
 static void *show_partition_start(struct seq_file *seqf, loff_t *pos)
 {
-	static void *p;
+	void *p;
 
 	p = disk_seqf_start(seqf, pos);
 	if (!IS_ERR_OR_NULL(p) && !*pos)
@@ -862,7 +856,7 @@ static int show_partition(struct seq_file *seqf, void *v)
 	while ((part = disk_part_iter_next(&piter)))
 		seq_printf(seqf, "%4d  %7d %10llu %s\n",
 			   MAJOR(part_devt(part)), MINOR(part_devt(part)),
-			   (unsigned long long)part->nr_sects >> 1,
+			   (unsigned long long)part_nr_sects_read(part) >> 1,
 			   disk_name(sgp, part->partno, buf));
 	disk_part_iter_exit(&piter);
 
@@ -1245,7 +1239,7 @@ EXPORT_SYMBOL(blk_lookup_devt);
 
 struct gendisk *alloc_disk(int minors)
 {
-	return alloc_disk_node(minors, -1);
+	return alloc_disk_node(minors, NUMA_NO_NODE);
 }
 EXPORT_SYMBOL(alloc_disk);
 
@@ -1268,6 +1262,16 @@ struct gendisk *alloc_disk_node(int minors, int node_id)
 		}
 		disk->part_tbl->part[0] = &disk->part0;
 
+		/*
+		 * set_capacity() and get_capacity() currently don't use
+		 * seqcounter to read/update the part0->nr_sects. Still init
+		 * the counter as we can read the sectors in IO submission
+		 * patch using seqence counters.
+		 *
+		 * TODO: Ideally set_capacity() and get_capacity() should be
+		 * converted to make use of bd_mutex and sequence counters.
+		 */
+		seqcount_init(&disk->part0.nr_sects_seq);
 		hd_ref_init(&disk->part0);
 
 		disk->minors = minors;
@@ -1480,9 +1484,9 @@ static void __disk_unblock_events(struct gendisk *disk, bool check_now)
 	intv = disk_events_poll_jiffies(disk);
 	set_timer_slack(&ev->dwork.timer, intv / 4);
 	if (check_now)
-		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, 0);
+		queue_delayed_work(system_freezable_wq, &ev->dwork, 0);
 	else if (intv)
-		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, intv);
+		queue_delayed_work(system_freezable_wq, &ev->dwork, intv);
 out_unlock:
 	spin_unlock_irqrestore(&ev->lock, flags);
 }
@@ -1524,10 +1528,8 @@ void disk_flush_events(struct gendisk *disk, unsigned int mask)
 
 	spin_lock_irq(&ev->lock);
 	ev->clearing |= mask;
-	if (!ev->block) {
-		cancel_delayed_work(&ev->dwork);
-		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, 0);
-	}
+	if (!ev->block)
+		mod_delayed_work(system_freezable_wq, &ev->dwork, 0);
 	spin_unlock_irq(&ev->lock);
 }
 
@@ -1563,7 +1565,7 @@ unsigned int disk_clear_events(struct gendisk *disk, unsigned int mask)
 
 	/* uncondtionally schedule event check and wait for it to finish */
 	disk_block_events(disk);
-	queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, 0);
+	queue_delayed_work(system_freezable_wq, &ev->dwork, 0);
 	flush_delayed_work(&ev->dwork);
 	__disk_unblock_events(disk, false);
 
@@ -1600,7 +1602,7 @@ static void disk_events_workfn(struct work_struct *work)
 
 	intv = disk_events_poll_jiffies(disk);
 	if (!ev->block && intv)
-		queue_delayed_work(system_nrt_freezable_wq, &ev->dwork, intv);
+		queue_delayed_work(system_freezable_wq, &ev->dwork, intv);
 
 	spin_unlock_irq(&ev->lock);
 

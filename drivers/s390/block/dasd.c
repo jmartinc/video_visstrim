@@ -1,5 +1,4 @@
 /*
- * File...........: linux/drivers/s390/block/dasd.c
  * Author(s)......: Holger Smolinski <Holger.Smolinski@de.ibm.com>
  *		    Horst Hummel <Horst.Hummel@de.ibm.com>
  *		    Carsten Otte <Cotte@de.ibm.com>
@@ -52,7 +51,7 @@ void dasd_int_handler(struct ccw_device *, unsigned long, struct irb *);
 
 MODULE_AUTHOR("Holger Smolinski <Holger.Smolinski@de.ibm.com>");
 MODULE_DESCRIPTION("Linux on S/390 DASD device driver,"
-		   " Copyright 2000 IBM Corporation");
+		   " Copyright IBM Corp. 2000");
 MODULE_SUPPORTED_DEVICE("dasd");
 MODULE_LICENSE("GPL");
 
@@ -82,6 +81,7 @@ static void dasd_profile_exit(struct dasd_profile *);
 static wait_queue_head_t dasd_init_waitq;
 static wait_queue_head_t dasd_flush_wq;
 static wait_queue_head_t generic_waitq;
+static wait_queue_head_t shutdown_waitq;
 
 /*
  * Allocate memory for a new device structure.
@@ -349,6 +349,16 @@ static int dasd_state_basic_to_ready(struct dasd_device *device)
 	return rc;
 }
 
+static inline
+int _wait_for_empty_queues(struct dasd_device *device)
+{
+	if (device->block)
+		return list_empty(&device->ccw_queue) &&
+			list_empty(&device->block->ccw_queue);
+	else
+		return list_empty(&device->ccw_queue);
+}
+
 /*
  * Remove device from block device layer. Destroy dirty buffers.
  * Forget format information. Check if the target level is basic
@@ -534,11 +544,11 @@ static void dasd_change_state(struct dasd_device *device)
 	if (rc)
 		device->target = device->state;
 
-	if (device->state == device->target)
-		wake_up(&dasd_init_waitq);
-
 	/* let user-space know that the device status changed */
 	kobject_uevent(&device->cdev->dev.kobj, KOBJ_CHANGE);
+
+	if (device->state == device->target)
+		wake_up(&dasd_init_waitq);
 }
 
 /*
@@ -1841,6 +1851,13 @@ static void __dasd_device_check_expire(struct dasd_device *device)
 	cqr = list_entry(device->ccw_queue.next, struct dasd_ccw_req, devlist);
 	if ((cqr->status == DASD_CQR_IN_IO && cqr->expires != 0) &&
 	    (time_after_eq(jiffies, cqr->expires + cqr->starttime))) {
+		if (test_bit(DASD_FLAG_SAFE_OFFLINE_RUNNING, &device->flags)) {
+			/*
+			 * IO in safe offline processing should not
+			 * run out of retries
+			 */
+			cqr->retries++;
+		}
 		if (device->discipline->term_IO(cqr) != 0) {
 			/* Hmpf, try again in 5 sec */
 			dev_err(&device->cdev->dev,
@@ -1994,6 +2011,8 @@ static void dasd_device_tasklet(struct dasd_device *device)
 	/* Now check if the head of the ccw queue needs to be started. */
 	__dasd_device_start_head(device);
 	spin_unlock_irq(get_ccwdev_lock(device->cdev));
+	if (waitqueue_active(&shutdown_waitq))
+		wake_up(&shutdown_waitq);
 	dasd_put_device(device);
 }
 
@@ -2155,6 +2174,7 @@ static int _dasd_sleep_on(struct dasd_ccw_req *maincqr, int interruptible)
 		    test_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags) &&
 		    (!dasd_eer_enabled(device))) {
 			cqr->status = DASD_CQR_FAILED;
+			cqr->intrc = -EAGAIN;
 			continue;
 		}
 		/* Don't try to start requests if device is stopped */
@@ -2632,6 +2652,8 @@ static void dasd_block_tasklet(struct dasd_block *block)
 	__dasd_block_start_head(block);
 	spin_unlock(&block->queue_lock);
 	spin_unlock_irq(&block->request_queue_lock);
+	if (waitqueue_active(&shutdown_waitq))
+		wake_up(&shutdown_waitq);
 	dasd_put_device(block->base);
 }
 
@@ -3019,11 +3041,11 @@ void dasd_generic_remove(struct ccw_device *cdev)
 
 	cdev->handler = NULL;
 
-	dasd_remove_sysfs_files(cdev);
 	device = dasd_device_from_cdev(cdev);
 	if (IS_ERR(device))
 		return;
-	if (test_and_set_bit(DASD_FLAG_OFFLINE, &device->flags)) {
+	if (test_and_set_bit(DASD_FLAG_OFFLINE, &device->flags) &&
+	    !test_bit(DASD_FLAG_SAFE_OFFLINE_RUNNING, &device->flags)) {
 		/* Already doing offline processing */
 		dasd_put_device(device);
 		return;
@@ -3043,6 +3065,8 @@ void dasd_generic_remove(struct ccw_device *cdev)
 	 */
 	if (block)
 		dasd_free_block(block);
+
+	dasd_remove_sysfs_files(cdev);
 }
 
 /*
@@ -3121,16 +3145,13 @@ int dasd_generic_set_offline(struct ccw_device *cdev)
 {
 	struct dasd_device *device;
 	struct dasd_block *block;
-	int max_count, open_count;
+	int max_count, open_count, rc;
 
+	rc = 0;
 	device = dasd_device_from_cdev(cdev);
 	if (IS_ERR(device))
 		return PTR_ERR(device);
-	if (test_and_set_bit(DASD_FLAG_OFFLINE, &device->flags)) {
-		/* Already doing offline processing */
-		dasd_put_device(device);
-		return 0;
-	}
+
 	/*
 	 * We must make sure that this device is currently not in use.
 	 * The open_count is increased for every opener, that includes
@@ -3154,6 +3175,54 @@ int dasd_generic_set_offline(struct ccw_device *cdev)
 			return -EBUSY;
 		}
 	}
+
+	if (test_bit(DASD_FLAG_SAFE_OFFLINE_RUNNING, &device->flags)) {
+		/*
+		 * safe offline allready running
+		 * could only be called by normal offline so safe_offline flag
+		 * needs to be removed to run normal offline and kill all I/O
+		 */
+		if (test_and_set_bit(DASD_FLAG_OFFLINE, &device->flags)) {
+			/* Already doing normal offline processing */
+			dasd_put_device(device);
+			return -EBUSY;
+		} else
+			clear_bit(DASD_FLAG_SAFE_OFFLINE, &device->flags);
+
+	} else
+		if (test_bit(DASD_FLAG_OFFLINE, &device->flags)) {
+			/* Already doing offline processing */
+			dasd_put_device(device);
+			return -EBUSY;
+		}
+
+	/*
+	 * if safe_offline called set safe_offline_running flag and
+	 * clear safe_offline so that a call to normal offline
+	 * can overrun safe_offline processing
+	 */
+	if (test_and_clear_bit(DASD_FLAG_SAFE_OFFLINE, &device->flags) &&
+	    !test_and_set_bit(DASD_FLAG_SAFE_OFFLINE_RUNNING, &device->flags)) {
+		/*
+		 * If we want to set the device safe offline all IO operations
+		 * should be finished before continuing the offline process
+		 * so sync bdev first and then wait for our queues to become
+		 * empty
+		 */
+		/* sync blockdev and partitions */
+		rc = fsync_bdev(device->block->bdev);
+		if (rc != 0)
+			goto interrupted;
+
+		/* schedule device tasklet and wait for completion */
+		dasd_schedule_device_bh(device);
+		rc = wait_event_interruptible(shutdown_waitq,
+					      _wait_for_empty_queues(device));
+		if (rc != 0)
+			goto interrupted;
+	}
+
+	set_bit(DASD_FLAG_OFFLINE, &device->flags);
 	dasd_set_target_state(device, DASD_STATE_NEW);
 	/* dasd_delete_device destroys the device reference. */
 	block = device->block;
@@ -3165,6 +3234,14 @@ int dasd_generic_set_offline(struct ccw_device *cdev)
 	if (block)
 		dasd_free_block(block);
 	return 0;
+
+interrupted:
+	/* interrupted by signal */
+	clear_bit(DASD_FLAG_SAFE_OFFLINE, &device->flags);
+	clear_bit(DASD_FLAG_SAFE_OFFLINE_RUNNING, &device->flags);
+	clear_bit(DASD_FLAG_OFFLINE, &device->flags);
+	dasd_put_device(device);
+	return rc;
 }
 
 int dasd_generic_last_path_gone(struct dasd_device *device)
@@ -3266,6 +3343,16 @@ void dasd_generic_path_event(struct ccw_device *cdev, int *path_event)
 			dasd_schedule_device_bh(device);
 		}
 		if (path_event[chp] & PE_PATHGROUP_ESTABLISHED) {
+			if (!(device->path_data.opm & eventlpm) &&
+			    !(device->path_data.tbvpm & eventlpm)) {
+				/*
+				 * we can not establish a pathgroup on an
+				 * unavailable path, so trigger a path
+				 * verification first
+				 */
+				device->path_data.tbvpm |= eventlpm;
+				dasd_schedule_device_bh(device);
+			}
 			DBF_DEV_EVENT(DBF_WARNING, device, "%s",
 				      "Pathgroup re-established\n");
 			if (device->discipline->kick_validate)
@@ -3474,6 +3561,23 @@ char *dasd_get_sense(struct irb *irb)
 }
 EXPORT_SYMBOL_GPL(dasd_get_sense);
 
+void dasd_generic_shutdown(struct ccw_device *cdev)
+{
+	struct dasd_device *device;
+
+	device = dasd_device_from_cdev(cdev);
+	if (IS_ERR(device))
+		return;
+
+	if (device->block)
+		dasd_schedule_block_bh(device->block);
+
+	dasd_schedule_device_bh(device);
+
+	wait_event(shutdown_waitq, _wait_for_empty_queues(device));
+}
+EXPORT_SYMBOL_GPL(dasd_generic_shutdown);
+
 static int __init dasd_init(void)
 {
 	int rc;
@@ -3481,6 +3585,7 @@ static int __init dasd_init(void)
 	init_waitqueue_head(&dasd_init_waitq);
 	init_waitqueue_head(&dasd_flush_wq);
 	init_waitqueue_head(&generic_waitq);
+	init_waitqueue_head(&shutdown_waitq);
 
 	/* register 'common' DASD debug area, used for all DBF_XXX calls */
 	dasd_debug_area = debug_register("dasd", 1, 1, 8 * sizeof(long));

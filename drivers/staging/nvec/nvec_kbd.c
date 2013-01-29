@@ -100,7 +100,7 @@ static int nvec_kbd_event(struct input_dev *dev, unsigned int type,
 	return 0;
 }
 
-static int __devinit nvec_kbd_probe(struct platform_device *pdev)
+static int nvec_kbd_probe(struct platform_device *pdev)
 {
 	struct nvec_chip *nvec = dev_get_drvdata(pdev->dev.parent);
 	int i, j, err;
@@ -159,20 +159,24 @@ fail:
 	return err;
 }
 
+static int nvec_kbd_remove(struct platform_device *pdev)
+{
+	input_unregister_device(keys_dev.input);
+	input_free_device(keys_dev.input);
+
+	return 0;
+}
+
 static struct platform_driver nvec_kbd_driver = {
 	.probe  = nvec_kbd_probe,
+	.remove = nvec_kbd_remove,
 	.driver = {
 		.name = "nvec-kbd",
 		.owner = THIS_MODULE,
 	},
 };
 
-static int __init nvec_kbd_init(void)
-{
-	return platform_driver_register(&nvec_kbd_driver);
-}
-
-module_init(nvec_kbd_init);
+module_platform_driver(nvec_kbd_driver);
 
 MODULE_AUTHOR("Marc Dietrich <marvin24@gmx.de>");
 MODULE_DESCRIPTION("NVEC keyboard driver");

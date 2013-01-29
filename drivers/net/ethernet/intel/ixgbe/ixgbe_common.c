@@ -65,12 +65,12 @@ static s32 ixgbe_disable_pcie_master(struct ixgbe_hw *hw);
  *  function check the device id to see if the associated phy supports
  *  autoneg flow control.
  **/
-static s32 ixgbe_device_supports_autoneg_fc(struct ixgbe_hw *hw)
+s32 ixgbe_device_supports_autoneg_fc(struct ixgbe_hw *hw)
 {
 
 	switch (hw->device_id) {
 	case IXGBE_DEV_ID_X540T:
-		return 0;
+	case IXGBE_DEV_ID_X540T1:
 	case IXGBE_DEV_ID_82599_T3_LOM:
 		return 0;
 	default:
@@ -89,6 +89,7 @@ static s32 ixgbe_setup_fc(struct ixgbe_hw *hw)
 	s32 ret_val = 0;
 	u32 reg = 0, reg_bp = 0;
 	u16 reg_cu = 0;
+	bool got_lock = false;
 
 	/*
 	 * Validate the requested mode.  Strict IEEE mode does not allow
@@ -209,8 +210,29 @@ static s32 ixgbe_setup_fc(struct ixgbe_hw *hw)
 	 *
 	 */
 	if (hw->phy.media_type == ixgbe_media_type_backplane) {
-		reg_bp |= IXGBE_AUTOC_AN_RESTART;
+		/* Need the SW/FW semaphore around AUTOC writes if 82599 and
+		 * LESM is on, likewise reset_pipeline requries the lock as
+		 * it also writes AUTOC.
+		 */
+		if ((hw->mac.type == ixgbe_mac_82599EB) &&
+		    ixgbe_verify_lesm_fw_enabled_82599(hw)) {
+			ret_val = hw->mac.ops.acquire_swfw_sync(hw,
+							IXGBE_GSSR_MAC_CSR_SM);
+			if (ret_val)
+				goto out;
+
+			got_lock = true;
+		}
+
 		IXGBE_WRITE_REG(hw, IXGBE_AUTOC, reg_bp);
+
+		if (hw->mac.type == ixgbe_mac_82599EB)
+			ixgbe_reset_pipeline_82599(hw);
+
+		if (got_lock)
+			hw->mac.ops.release_swfw_sync(hw,
+						      IXGBE_GSSR_MAC_CSR_SM);
+
 	} else if ((hw->phy.media_type == ixgbe_media_type_copper) &&
 		    (ixgbe_device_supports_autoneg_fc(hw) == 0)) {
 		hw->phy.ops.write_reg(hw, MDIO_AN_ADVERTISE,
@@ -1761,30 +1783,6 @@ s32 ixgbe_update_eeprom_checksum_generic(struct ixgbe_hw *hw)
 }
 
 /**
- *  ixgbe_validate_mac_addr - Validate MAC address
- *  @mac_addr: pointer to MAC address.
- *
- *  Tests a MAC address to ensure it is a valid Individual Address
- **/
-s32 ixgbe_validate_mac_addr(u8 *mac_addr)
-{
-	s32 status = 0;
-
-	/* Make sure it is not a multicast address */
-	if (IXGBE_IS_MULTICAST(mac_addr))
-		status = IXGBE_ERR_INVALID_MAC_ADDR;
-	/* Not a broadcast address */
-	else if (IXGBE_IS_BROADCAST(mac_addr))
-		status = IXGBE_ERR_INVALID_MAC_ADDR;
-	/* Reject the zero address */
-	else if (mac_addr[0] == 0 && mac_addr[1] == 0 && mac_addr[2] == 0 &&
-	         mac_addr[3] == 0 && mac_addr[4] == 0 && mac_addr[5] == 0)
-		status = IXGBE_ERR_INVALID_MAC_ADDR;
-
-	return status;
-}
-
-/**
  *  ixgbe_set_rar_generic - Set Rx address register
  *  @hw: pointer to hardware structure
  *  @index: Receive address register to write
@@ -1888,8 +1886,7 @@ s32 ixgbe_init_rx_addrs_generic(struct ixgbe_hw *hw)
 	 * to the permanent address.
 	 * Otherwise, use the permanent address from the eeprom.
 	 */
-	if (ixgbe_validate_mac_addr(hw->mac.addr) ==
-	    IXGBE_ERR_INVALID_MAC_ADDR) {
+	if (!is_valid_ether_addr(hw->mac.addr)) {
 		/* Get the MAC address from the RAR0 for later reference */
 		hw->mac.ops.get_mac_addr(hw, hw->mac.addr);
 
@@ -2616,6 +2613,7 @@ s32 ixgbe_blink_led_start_generic(struct ixgbe_hw *hw, u32 index)
 	bool link_up = false;
 	u32 autoc_reg = IXGBE_READ_REG(hw, IXGBE_AUTOC);
 	u32 led_reg = IXGBE_READ_REG(hw, IXGBE_LEDCTL);
+	s32 ret_val = 0;
 
 	/*
 	 * Link must be up to auto-blink the LEDs;
@@ -2624,10 +2622,28 @@ s32 ixgbe_blink_led_start_generic(struct ixgbe_hw *hw, u32 index)
 	hw->mac.ops.check_link(hw, &speed, &link_up, false);
 
 	if (!link_up) {
+		/* Need the SW/FW semaphore around AUTOC writes if 82599 and
+		 * LESM is on.
+		 */
+		bool got_lock = false;
+
+		if ((hw->mac.type == ixgbe_mac_82599EB) &&
+		    ixgbe_verify_lesm_fw_enabled_82599(hw)) {
+			ret_val = hw->mac.ops.acquire_swfw_sync(hw,
+							IXGBE_GSSR_MAC_CSR_SM);
+			if (ret_val)
+				goto out;
+
+			got_lock = true;
+		}
 		autoc_reg |= IXGBE_AUTOC_AN_RESTART;
 		autoc_reg |= IXGBE_AUTOC_FLU;
 		IXGBE_WRITE_REG(hw, IXGBE_AUTOC, autoc_reg);
 		IXGBE_WRITE_FLUSH(hw);
+
+		if (got_lock)
+			hw->mac.ops.release_swfw_sync(hw,
+						      IXGBE_GSSR_MAC_CSR_SM);
 		usleep_range(10000, 20000);
 	}
 
@@ -2636,7 +2652,8 @@ s32 ixgbe_blink_led_start_generic(struct ixgbe_hw *hw, u32 index)
 	IXGBE_WRITE_REG(hw, IXGBE_LEDCTL, led_reg);
 	IXGBE_WRITE_FLUSH(hw);
 
-	return 0;
+out:
+	return ret_val;
 }
 
 /**
@@ -2648,10 +2665,31 @@ s32 ixgbe_blink_led_stop_generic(struct ixgbe_hw *hw, u32 index)
 {
 	u32 autoc_reg = IXGBE_READ_REG(hw, IXGBE_AUTOC);
 	u32 led_reg = IXGBE_READ_REG(hw, IXGBE_LEDCTL);
+	s32 ret_val = 0;
+	bool got_lock = false;
+
+	/* Need the SW/FW semaphore around AUTOC writes if 82599 and
+	 * LESM is on.
+	 */
+	if ((hw->mac.type == ixgbe_mac_82599EB) &&
+	    ixgbe_verify_lesm_fw_enabled_82599(hw)) {
+		ret_val = hw->mac.ops.acquire_swfw_sync(hw,
+						IXGBE_GSSR_MAC_CSR_SM);
+		if (ret_val)
+			goto out;
+
+		got_lock = true;
+	}
 
 	autoc_reg &= ~IXGBE_AUTOC_FLU;
 	autoc_reg |= IXGBE_AUTOC_AN_RESTART;
 	IXGBE_WRITE_REG(hw, IXGBE_AUTOC, autoc_reg);
+
+	if (hw->mac.type == ixgbe_mac_82599EB)
+		ixgbe_reset_pipeline_82599(hw);
+
+	if (got_lock)
+		hw->mac.ops.release_swfw_sync(hw, IXGBE_GSSR_MAC_CSR_SM);
 
 	led_reg &= ~IXGBE_LED_MODE_MASK(index);
 	led_reg &= ~IXGBE_LED_BLINK(index);
@@ -2659,7 +2697,8 @@ s32 ixgbe_blink_led_stop_generic(struct ixgbe_hw *hw, u32 index)
 	IXGBE_WRITE_REG(hw, IXGBE_LEDCTL, led_reg);
 	IXGBE_WRITE_FLUSH(hw);
 
-	return 0;
+out:
+	return ret_val;
 }
 
 /**
@@ -2844,6 +2883,31 @@ s32 ixgbe_set_vmdq_generic(struct ixgbe_hw *hw, u32 rar, u32 vmdq)
 		mpsar |= 1 << (vmdq - 32);
 		IXGBE_WRITE_REG(hw, IXGBE_MPSAR_HI(rar), mpsar);
 	}
+	return 0;
+}
+
+/**
+ *  This function should only be involved in the IOV mode.
+ *  In IOV mode, Default pool is next pool after the number of
+ *  VFs advertized and not 0.
+ *  MPSAR table needs to be updated for SAN_MAC RAR [hw->mac.san_mac_rar_index]
+ *
+ *  ixgbe_set_vmdq_san_mac - Associate default VMDq pool index with a rx address
+ *  @hw: pointer to hardware struct
+ *  @vmdq: VMDq pool index
+ **/
+s32 ixgbe_set_vmdq_san_mac_generic(struct ixgbe_hw *hw, u32 vmdq)
+{
+	u32 rar = hw->mac.san_mac_rar_index;
+
+	if (vmdq < 32) {
+		IXGBE_WRITE_REG(hw, IXGBE_MPSAR_LO(rar), 1 << vmdq);
+		IXGBE_WRITE_REG(hw, IXGBE_MPSAR_HI(rar), 0);
+	} else {
+		IXGBE_WRITE_REG(hw, IXGBE_MPSAR_LO(rar), 0);
+		IXGBE_WRITE_REG(hw, IXGBE_MPSAR_HI(rar), 1 << (vmdq - 32));
+	}
+
 	return 0;
 }
 
@@ -3132,7 +3196,7 @@ s32 ixgbe_check_mac_link_generic(struct ixgbe_hw *hw, ixgbe_link_speed *speed,
 }
 
 /**
- *  ixgbe_get_wwn_prefix_generic Get alternative WWNN/WWPN prefix from
+ *  ixgbe_get_wwn_prefix_generic - Get alternative WWNN/WWPN prefix from
  *  the EEPROM
  *  @hw: pointer to hardware structure
  *  @wwnn_prefix: the alternative WWNN prefix
@@ -3200,20 +3264,22 @@ void ixgbe_set_mac_anti_spoofing(struct ixgbe_hw *hw, bool enable, int pf)
 	 * PFVFSPOOF register array is size 8 with 8 bits assigned to
 	 * MAC anti-spoof enables in each register array element.
 	 */
-	for (j = 0; j < IXGBE_PFVFSPOOF_REG_COUNT; j++)
+	for (j = 0; j < pf_target_reg; j++)
 		IXGBE_WRITE_REG(hw, IXGBE_PFVFSPOOF(j), pfvfspoof);
-
-	/* If not enabling anti-spoofing then done */
-	if (!enable)
-		return;
 
 	/*
 	 * The PF should be allowed to spoof so that it can support
-	 * emulation mode NICs.  Reset the bit assigned to the PF
+	 * emulation mode NICs.  Do not set the bits assigned to the PF
 	 */
-	pfvfspoof = IXGBE_READ_REG(hw, IXGBE_PFVFSPOOF(pf_target_reg));
-	pfvfspoof ^= (1 << pf_target_shift);
-	IXGBE_WRITE_REG(hw, IXGBE_PFVFSPOOF(pf_target_reg), pfvfspoof);
+	pfvfspoof &= (1 << pf_target_shift) - 1;
+	IXGBE_WRITE_REG(hw, IXGBE_PFVFSPOOF(j), pfvfspoof);
+
+	/*
+	 * Remaining pools belong to the PF so they do not need to have
+	 * anti-spoofing enabled.
+	 */
+	for (j++; j < IXGBE_PFVFSPOOF_REG_COUNT; j++)
+		IXGBE_WRITE_REG(hw, IXGBE_PFVFSPOOF(j), 0);
 }
 
 /**
@@ -3325,6 +3391,7 @@ void ixgbe_set_rxpba_generic(struct ixgbe_hw *hw,
  *  ixgbe_calculate_checksum - Calculate checksum for buffer
  *  @buffer: pointer to EEPROM
  *  @length: size of EEPROM to calculate a checksum for
+ *
  *  Calculates the checksum for some buffer on a specified length.  The
  *  checksum calculated is returned.
  **/

@@ -140,7 +140,7 @@ enum acpi_return_package_types {
  *
  * The main entries in the table each contain the following items:
  *
- * Name                 - The ACPI reserved name
+ * name                 - The ACPI reserved name
  * param_count          - Number of arguments to the method
  * expected_btypes      - Allowed type(s) for the return value.
  *                        0 means that no return value is expected.
@@ -150,8 +150,7 @@ enum acpi_return_package_types {
  * is saved here (rather than in a separate table) in order to minimize the
  * overall size of the stored data.
  */
-static const union acpi_predefined_info predefined_names[] =
-{
+static const union acpi_predefined_info predefined_names[] = {
 	{{"_AC0", 0, ACPI_RTYPE_INTEGER}},
 	{{"_AC1", 0, ACPI_RTYPE_INTEGER}},
 	{{"_AC2", 0, ACPI_RTYPE_INTEGER}},
@@ -511,14 +510,14 @@ static const union acpi_predefined_info predefined_names[] =
 	{{"_TMP", 0, ACPI_RTYPE_INTEGER}},
 	{{"_TPC", 0, ACPI_RTYPE_INTEGER}},
 	{{"_TPT", 1, 0}},
-	{{"_TRT", 0, ACPI_RTYPE_PACKAGE}}, /* Variable-length (Pkgs) each 2_ref/6_int */
+	{{"_TRT", 0, ACPI_RTYPE_PACKAGE}}, /* Variable-length (Pkgs) each 2 Ref/6 Int */
 			  {{{ACPI_PTYPE2, ACPI_RTYPE_REFERENCE, 2, ACPI_RTYPE_INTEGER}, 6, 0}},
 
-	{{"_TSD", 0, ACPI_RTYPE_PACKAGE}}, /* Variable-length (Pkgs) each 5_int with count */
+	{{"_TSD", 0, ACPI_RTYPE_PACKAGE}}, /* Variable-length (Pkgs) each 5 Int with count */
 			  {{{ACPI_PTYPE2_COUNT,ACPI_RTYPE_INTEGER, 5,0}, 0,0}},
 
 	{{"_TSP", 0, ACPI_RTYPE_INTEGER}},
-	{{"_TSS", 0, ACPI_RTYPE_PACKAGE}}, /* Variable-length (Pkgs) each 5_int */
+	{{"_TSS", 0, ACPI_RTYPE_PACKAGE}}, /* Variable-length (Pkgs) each 5 Int */
 			  {{{ACPI_PTYPE2, ACPI_RTYPE_INTEGER, 5,0}, 0,0}},
 
 	{{"_TST", 0, ACPI_RTYPE_INTEGER}},
@@ -538,7 +537,8 @@ static const union acpi_predefined_info predefined_names[] =
 
 	/* Acpi 1.0 defined _WAK with no return value. Later, it was changed to return a package */
 
-	{{"_WAK", 1, ACPI_RTYPE_NONE | ACPI_RTYPE_INTEGER | ACPI_RTYPE_PACKAGE}},
+	{{"_WAK", 1,
+          ACPI_RTYPE_NONE | ACPI_RTYPE_INTEGER | ACPI_RTYPE_PACKAGE}},
 			  {{{ACPI_PTYPE1_FIXED, ACPI_RTYPE_INTEGER, 2,0}, 0,0}}, /* Fixed-length (2 Int), but is optional */
 
 	/* _WDG/_WED are MS extensions defined by "Windows Instrumentation" */
@@ -551,11 +551,12 @@ static const union acpi_predefined_info predefined_names[] =
 };
 
 #if 0
+
 	/* This is an internally implemented control method, no need to check */
-	{{"_OSI", 1, ACPI_RTYPE_INTEGER}},
+{ {
+"_OSI", 1, ACPI_RTYPE_INTEGER}},
 
 	/* TBD: */
-
 	_PRT - currently ignore reversed entries. attempt to fix here?
 	think about possibly fixing package elements like _BIF, etc.
 #endif

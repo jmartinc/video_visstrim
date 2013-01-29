@@ -140,6 +140,10 @@ mac802154_add_iface(struct wpan_phy *phy, const char *name, int type)
 		dev = alloc_netdev(sizeof(struct mac802154_sub_if_data),
 				   name, mac802154_monitor_setup);
 		break;
+	case IEEE802154_DEV_WPAN:
+		dev = alloc_netdev(sizeof(struct mac802154_sub_if_data),
+				   name, mac802154_wpan_setup);
+		break;
 	default:
 		dev = NULL;
 		err = -EINVAL;
@@ -220,9 +224,9 @@ void ieee802154_free_device(struct ieee802154_dev *hw)
 
 	BUG_ON(!list_empty(&priv->slaves));
 
-	wpan_phy_free(priv->phy);
-
 	mutex_destroy(&priv->slaves_mtx);
+
+	wpan_phy_free(priv->phy);
 }
 EXPORT_SYMBOL(ieee802154_free_device);
 

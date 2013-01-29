@@ -188,6 +188,26 @@ static int rpmsg_uevent(struct device *dev, struct kobj_uevent_env *env)
 					rpdev->id.name);
 }
 
+/**
+ * __ept_release() - deallocate an rpmsg endpoint
+ * @kref: the ept's reference count
+ *
+ * This function deallocates an ept, and is invoked when its @kref refcount
+ * drops to zero.
+ *
+ * Never invoke this function directly!
+ */
+static void __ept_release(struct kref *kref)
+{
+	struct rpmsg_endpoint *ept = container_of(kref, struct rpmsg_endpoint,
+						  refcount);
+	/*
+	 * At this point no one holds a reference to ept anymore,
+	 * so we can directly free it
+	 */
+	kfree(ept);
+}
+
 /* for more info, see below documentation of rpmsg_create_ept() */
 static struct rpmsg_endpoint *__rpmsg_create_ept(struct virtproc_info *vrp,
 		struct rpmsg_channel *rpdev, rpmsg_rx_cb_t cb,
@@ -205,6 +225,9 @@ static struct rpmsg_endpoint *__rpmsg_create_ept(struct virtproc_info *vrp,
 		dev_err(dev, "failed to kzalloc a new ept\n");
 		return NULL;
 	}
+
+	kref_init(&ept->refcount);
+	mutex_init(&ept->cb_lock);
 
 	ept->rpdev = rpdev;
 	ept->cb = cb;
@@ -238,7 +261,7 @@ rem_idr:
 	idr_remove(&vrp->endpoints, request);
 free_ept:
 	mutex_unlock(&vrp->endpoints_lock);
-	kfree(ept);
+	kref_put(&ept->refcount, __ept_release);
 	return NULL;
 }
 
@@ -302,11 +325,17 @@ EXPORT_SYMBOL(rpmsg_create_ept);
 static void
 __rpmsg_destroy_ept(struct virtproc_info *vrp, struct rpmsg_endpoint *ept)
 {
+	/* make sure new inbound messages can't find this ept anymore */
 	mutex_lock(&vrp->endpoints_lock);
 	idr_remove(&vrp->endpoints, ept->addr);
 	mutex_unlock(&vrp->endpoints_lock);
 
-	kfree(ept);
+	/* make sure in-flight inbound messages won't invoke cb anymore */
+	mutex_lock(&ept->cb_lock);
+	ept->cb = NULL;
+	mutex_unlock(&ept->cb_lock);
+
+	kref_put(&ept->refcount, __ept_release);
 }
 
 /**
@@ -735,7 +764,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 
 	/* add message to the remote processor's virtqueue */
 	err = virtqueue_add_buf(vrp->svq, &sg, 1, 0, msg, GFP_KERNEL);
-	if (err < 0) {
+	if (err) {
 		/*
 		 * need to reclaim the buffer here, otherwise it's lost
 		 * (memory won't leak, but rpmsg won't use it again for TX).
@@ -747,8 +776,6 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 
 	/* tell the remote processor it has a pending message to read */
 	virtqueue_kick(vrp->svq);
-
-	err = 0;
 out:
 	mutex_unlock(&vrp->tx_lock);
 	return err;
@@ -790,12 +817,28 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 
 	/* use the dst addr to fetch the callback of the appropriate user */
 	mutex_lock(&vrp->endpoints_lock);
+
 	ept = idr_find(&vrp->endpoints, msg->dst);
+
+	/* let's make sure no one deallocates ept while we use it */
+	if (ept)
+		kref_get(&ept->refcount);
+
 	mutex_unlock(&vrp->endpoints_lock);
 
-	if (ept && ept->cb)
-		ept->cb(ept->rpdev, msg->data, msg->len, ept->priv, msg->src);
-	else
+	if (ept) {
+		/* make sure ept->cb doesn't go away while we use it */
+		mutex_lock(&ept->cb_lock);
+
+		if (ept->cb)
+			ept->cb(ept->rpdev, msg->data, msg->len, ept->priv,
+				msg->src);
+
+		mutex_unlock(&ept->cb_lock);
+
+		/* farewell, ept, we don't need you anymore */
+		kref_put(&ept->refcount, __ept_release);
+	} else
 		dev_warn(dev, "msg received with no recepient\n");
 
 	/* publish the real size of the buffer */
@@ -911,7 +954,8 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	vrp->svq = vqs[1];
 
 	/* allocate coherent memory for the buffers */
-	bufs_va = dma_alloc_coherent(vdev->dev.parent, RPMSG_TOTAL_BUF_SPACE,
+	bufs_va = dma_alloc_coherent(vdev->dev.parent->parent,
+				RPMSG_TOTAL_BUF_SPACE,
 				&vrp->bufs_dma, GFP_KERNEL);
 	if (!bufs_va)
 		goto vqs_del;
@@ -934,7 +978,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 		err = virtqueue_add_buf(vrp->rvq, &sg, 0, 1, cpu_addr,
 								GFP_KERNEL);
-		WARN_ON(err < 0); /* sanity check; this can't really happen */
+		WARN_ON(err); /* sanity check; this can't really happen */
 	}
 
 	/* suppress "tx-complete" interrupts */
@@ -962,8 +1006,8 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	return 0;
 
 free_coherent:
-	dma_free_coherent(vdev->dev.parent, RPMSG_TOTAL_BUF_SPACE, bufs_va,
-					vrp->bufs_dma);
+	dma_free_coherent(vdev->dev.parent->parent, RPMSG_TOTAL_BUF_SPACE,
+					bufs_va, vrp->bufs_dma);
 vqs_del:
 	vdev->config->del_vqs(vrp->vdev);
 free_vrp:
@@ -978,7 +1022,7 @@ static int rpmsg_remove_device(struct device *dev, void *data)
 	return 0;
 }
 
-static void __devexit rpmsg_remove(struct virtio_device *vdev)
+static void rpmsg_remove(struct virtio_device *vdev)
 {
 	struct virtproc_info *vrp = vdev->priv;
 	int ret;
@@ -997,7 +1041,7 @@ static void __devexit rpmsg_remove(struct virtio_device *vdev)
 
 	vdev->config->del_vqs(vrp->vdev);
 
-	dma_free_coherent(vdev->dev.parent, RPMSG_TOTAL_BUF_SPACE,
+	dma_free_coherent(vdev->dev.parent->parent, RPMSG_TOTAL_BUF_SPACE,
 					vrp->rbufs, vrp->bufs_dma);
 
 	kfree(vrp);
@@ -1019,7 +1063,7 @@ static struct virtio_driver virtio_ipc_driver = {
 	.driver.owner	= THIS_MODULE,
 	.id_table	= id_table,
 	.probe		= rpmsg_probe,
-	.remove		= __devexit_p(rpmsg_remove),
+	.remove		= rpmsg_remove,
 };
 
 static int __init rpmsg_init(void)
@@ -1040,7 +1084,7 @@ static int __init rpmsg_init(void)
 
 	return ret;
 }
-module_init(rpmsg_init);
+subsys_initcall(rpmsg_init);
 
 static void __exit rpmsg_fini(void)
 {

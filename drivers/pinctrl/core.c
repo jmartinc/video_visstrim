@@ -230,8 +230,10 @@ static int pinctrl_register_one_pin(struct pinctrl_dev *pctldev,
 		pindesc->name = name;
 	} else {
 		pindesc->name = kasprintf(GFP_KERNEL, "PIN%u", number);
-		if (pindesc->name == NULL)
+		if (pindesc->name == NULL) {
+			kfree(pindesc);
 			return -ENOMEM;
+		}
 		pindesc->dynamic_name = true;
 	}
 
@@ -331,6 +333,59 @@ void pinctrl_add_gpio_range(struct pinctrl_dev *pctldev,
 	mutex_unlock(&pinctrl_mutex);
 }
 EXPORT_SYMBOL_GPL(pinctrl_add_gpio_range);
+
+void pinctrl_add_gpio_ranges(struct pinctrl_dev *pctldev,
+			     struct pinctrl_gpio_range *ranges,
+			     unsigned nranges)
+{
+	int i;
+
+	for (i = 0; i < nranges; i++)
+		pinctrl_add_gpio_range(pctldev, &ranges[i]);
+}
+EXPORT_SYMBOL_GPL(pinctrl_add_gpio_ranges);
+
+struct pinctrl_dev *pinctrl_find_and_add_gpio_range(const char *devname,
+		struct pinctrl_gpio_range *range)
+{
+	struct pinctrl_dev *pctldev = get_pinctrl_dev_from_devname(devname);
+
+	/*
+	 * If we can't find this device, let's assume that is because
+	 * it has not probed yet, so the driver trying to register this
+	 * range need to defer probing.
+	 */
+	if (!pctldev)
+		return ERR_PTR(-EPROBE_DEFER);
+
+	pinctrl_add_gpio_range(pctldev, range);
+	return pctldev;
+}
+EXPORT_SYMBOL_GPL(pinctrl_find_and_add_gpio_range);
+
+/**
+ * pinctrl_find_gpio_range_from_pin() - locate the GPIO range for a pin
+ * @pctldev: the pin controller device to look in
+ * @pin: a controller-local number to find the range for
+ */
+struct pinctrl_gpio_range *
+pinctrl_find_gpio_range_from_pin(struct pinctrl_dev *pctldev,
+				 unsigned int pin)
+{
+	struct pinctrl_gpio_range *range = NULL;
+
+	/* Loop over the ranges */
+	list_for_each_entry(range, &pctldev->gpio_ranges, node) {
+		/* Check if we're in the valid range */
+		if (pin >= range->pin_base &&
+		    pin < range->pin_base + range->npins) {
+			return range;
+		}
+	}
+
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(pinctrl_find_gpio_range_from_pin);
 
 /**
  * pinctrl_remove_gpio_range() - remove a range of GPIOs fro a pin controller
@@ -564,6 +619,8 @@ static int add_setting(struct pinctrl *p, struct pinctrl_map const *map)
 		return -EPROBE_DEFER;
 	}
 
+	setting->dev_name = map->dev_name;
+
 	switch (map->type) {
 	case PIN_MAP_TYPE_MUX_GROUP:
 		ret = pinmux_map_to_setting(map, setting);
@@ -643,7 +700,7 @@ static struct pinctrl *create_pinctrl(struct device *dev)
 		}
 	}
 
-	/* Add the pinmux to the global list */
+	/* Add the pinctrl handle to the global list */
 	list_add_tail(&p->node, &pinctrl_list);
 
 	return p;
@@ -660,11 +717,7 @@ static struct pinctrl *pinctrl_get_locked(struct device *dev)
 	if (p != NULL)
 		return ERR_PTR(-EBUSY);
 
-	p = create_pinctrl(dev);
-	if (IS_ERR(p))
-		return p;
-
-	return p;
+	return create_pinctrl(dev);
 }
 
 /**
@@ -741,11 +794,8 @@ static struct pinctrl_state *pinctrl_lookup_state_locked(struct pinctrl *p,
 			dev_dbg(p->dev, "using pinctrl dummy state (%s)\n",
 				name);
 			state = create_state(p, name);
-			if (IS_ERR(state))
-				return state;
-		} else {
-			return ERR_PTR(-ENODEV);
-		}
+		} else
+			state = ERR_PTR(-ENODEV);
 	}
 
 	return state;
@@ -1069,8 +1119,10 @@ static int pinctrl_groups_show(struct seq_file *s, void *what)
 			seq_printf(s, "group: %s\n", gname);
 			for (i = 0; i < num_pins; i++) {
 				pname = pin_get_name(pctldev, pins[i]);
-				if (WARN_ON(!pname))
+				if (WARN_ON(!pname)) {
+					mutex_unlock(&pinctrl_mutex);
 					return -EINVAL;
+				}
 				seq_printf(s, "pin %d (%s)\n", pins[i], pname);
 			}
 			seq_puts(s, "\n");
@@ -1395,9 +1447,9 @@ struct pinctrl_dev *pinctrl_register(struct pinctrl_desc *pctldesc,
 	struct pinctrl_dev *pctldev;
 	int ret;
 
-	if (pctldesc == NULL)
+	if (!pctldesc)
 		return NULL;
-	if (pctldesc->name == NULL)
+	if (!pctldesc->name)
 		return NULL;
 
 	pctldev = kzalloc(sizeof(*pctldev), GFP_KERNEL);
@@ -1415,23 +1467,20 @@ struct pinctrl_dev *pinctrl_register(struct pinctrl_desc *pctldesc,
 	pctldev->dev = dev;
 
 	/* check core ops for sanity */
-	ret = pinctrl_check_ops(pctldev);
-	if (ret) {
+	if (pinctrl_check_ops(pctldev)) {
 		dev_err(dev, "pinctrl ops lacks necessary functions\n");
 		goto out_err;
 	}
 
 	/* If we're implementing pinmuxing, check the ops for sanity */
 	if (pctldesc->pmxops) {
-		ret = pinmux_check_ops(pctldev);
-		if (ret)
+		if (pinmux_check_ops(pctldev))
 			goto out_err;
 	}
 
 	/* If we're implementing pinconfig, check the ops for sanity */
 	if (pctldesc->confops) {
-		ret = pinconf_check_ops(pctldev);
-		if (ret)
+		if (pinconf_check_ops(pctldev))
 			goto out_err;
 	}
 
@@ -1457,11 +1506,9 @@ struct pinctrl_dev *pinctrl_register(struct pinctrl_desc *pctldesc,
 		if (IS_ERR(s)) {
 			dev_dbg(dev, "failed to lookup the default state\n");
 		} else {
-			ret = pinctrl_select_state_locked(pctldev->p, s);
-			if (ret) {
+			if (pinctrl_select_state_locked(pctldev->p, s))
 				dev_err(dev,
 					"failed to select default state\n");
-			}
 		}
 	}
 
@@ -1485,6 +1532,7 @@ EXPORT_SYMBOL_GPL(pinctrl_register);
  */
 void pinctrl_unregister(struct pinctrl_dev *pctldev)
 {
+	struct pinctrl_gpio_range *range, *n;
 	if (pctldev == NULL)
 		return;
 
@@ -1500,6 +1548,10 @@ void pinctrl_unregister(struct pinctrl_dev *pctldev)
 	/* Destroy descriptor tree */
 	pinctrl_free_pindescs(pctldev, pctldev->desc->pins,
 			      pctldev->desc->npins);
+	/* remove gpio ranges map */
+	list_for_each_entry_safe(range, n, &pctldev->gpio_ranges, node)
+		list_del(&range->node);
+
 	kfree(pctldev);
 
 	mutex_unlock(&pinctrl_mutex);

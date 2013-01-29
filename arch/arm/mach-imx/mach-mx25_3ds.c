@@ -31,17 +31,17 @@
 #include <linux/platform_device.h>
 #include <linux/usb/otg.h>
 
-#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
 #include <asm/memory.h>
 #include <asm/mach/map.h>
-#include <mach/common.h>
-#include <mach/mx25.h>
-#include <mach/iomux-mx25.h>
 
+#include "common.h"
 #include "devices-imx25.h"
+#include "hardware.h"
+#include "iomux-mx25.h"
+#include "mx25.h"
 
 #define MX25PDK_CAN_PWDN	IMX_GPIO_NR(4, 6)
 
@@ -237,9 +237,9 @@ static void __init mx25pdk_init(void)
 	imx25_add_fsl_usb2_udc(&otg_device_pdata);
 	imx25_add_mxc_ehci_hs(&usbh2_pdata);
 	imx25_add_mxc_nand(&mx25pdk_nand_board_info);
-	imx25_add_imxdi_rtc(NULL);
+	imx25_add_imxdi_rtc();
 	imx25_add_imx_fb(&mx25pdk_fb_pdata);
-	imx25_add_imx2_wdt(NULL);
+	imx25_add_imx2_wdt();
 
 	mx25pdk_fec_reset();
 	imx25_add_fec(&mx25_fec_pdata);

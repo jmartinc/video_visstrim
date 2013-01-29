@@ -505,12 +505,23 @@ static int dn_fib_check_attr(struct rtmsg *r, struct rtattr **rta)
 	return 0;
 }
 
+static inline u32 rtm_get_table(struct rtattr **rta, u8 table)
+{
+	if (rta[RTA_TABLE - 1])
+		table = nla_get_u32((struct nlattr *) rta[RTA_TABLE - 1]);
+
+	return table;
+}
+
 static int dn_fib_rtm_delroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *arg)
 {
 	struct net *net = sock_net(skb->sk);
 	struct dn_fib_table *tb;
 	struct rtattr **rta = arg;
 	struct rtmsg *r = NLMSG_DATA(nlh);
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
 
 	if (!net_eq(net, &init_net))
 		return -EINVAL;
@@ -531,6 +542,9 @@ static int dn_fib_rtm_newroute(struct sk_buff *skb, struct nlmsghdr *nlh, void *
 	struct dn_fib_table *tb;
 	struct rtattr **rta = arg;
 	struct rtmsg *r = NLMSG_DATA(nlh);
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
 
 	if (!net_eq(net, &init_net))
 		return -EINVAL;

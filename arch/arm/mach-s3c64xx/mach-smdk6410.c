@@ -43,6 +43,7 @@
 #endif
 
 #include <video/platform_lcd.h>
+#include <video/samsung_fimd.h>
 
 #include <asm/hardware/vic.h>
 #include <asm/mach/arch.h>
@@ -60,8 +61,8 @@
 #include <mach/regs-gpio.h>
 #include <mach/regs-sys.h>
 #include <mach/regs-srom.h>
-#include <plat/ata.h>
-#include <plat/iic.h>
+#include <linux/platform_data/ata-samsung_cf.h>
+#include <linux/platform_data/i2c-s3c2410.h>
 #include <plat/fb.h>
 #include <plat/gpio-cfg.h>
 
@@ -69,10 +70,9 @@
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/adc.h>
-#include <plat/ts.h>
+#include <linux/platform_data/touchscreen-s3c2410.h>
 #include <plat/keypad.h>
 #include <plat/backlight.h>
-#include <plat/regs-fb-v4.h>
 
 #include "common.h"
 
@@ -275,7 +275,6 @@ static struct platform_device *smdk6410_devices[] __initdata = {
 	&s3c_device_fb,
 	&s3c_device_ohci,
 	&s3c_device_usb_hsotg,
-	&samsung_asoc_dma,
 	&s3c64xx_device_iisv4,
 	&samsung_device_keypad,
 
@@ -566,7 +565,6 @@ static struct wm831x_status_pdata wm1192_led8_pdata = {
 
 static struct wm831x_pdata smdk6410_wm1192_pdata = {
 	.pre_init = wm1192_pre_init,
-	.irq_base = IRQ_BOARD_START,
 
 	.backlight = &wm1192_backlight_pdata,
 	.dcdc = {

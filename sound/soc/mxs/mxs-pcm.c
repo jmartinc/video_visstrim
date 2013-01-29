@@ -141,7 +141,7 @@ static struct snd_pcm_ops mxs_pcm_ops = {
 	.ioctl		= snd_pcm_lib_ioctl,
 	.hw_params	= snd_mxs_pcm_hw_params,
 	.trigger	= snd_dmaengine_pcm_trigger,
-	.pointer	= snd_dmaengine_pcm_pointer,
+	.pointer	= snd_dmaengine_pcm_pointer_no_residue,
 	.mmap		= snd_mxs_pcm_mmap,
 };
 
@@ -220,13 +220,13 @@ static struct snd_soc_platform_driver mxs_soc_platform = {
 	.pcm_free	= mxs_pcm_free,
 };
 
-int __devinit mxs_pcm_platform_register(struct device *dev)
+int mxs_pcm_platform_register(struct device *dev)
 {
 	return snd_soc_register_platform(dev, &mxs_soc_platform);
 }
 EXPORT_SYMBOL_GPL(mxs_pcm_platform_register);
 
-void __devexit mxs_pcm_platform_unregister(struct device *dev)
+void mxs_pcm_platform_unregister(struct device *dev)
 {
 	snd_soc_unregister_platform(dev);
 }

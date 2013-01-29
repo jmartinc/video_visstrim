@@ -38,9 +38,8 @@
 #include <linux/of_device.h>
 
 #include <asm/irq.h>
-#include <mach/sdma.h>
-#include <mach/dma.h>
-#include <mach/hardware.h>
+#include <linux/platform_data/dma-imx-sdma.h>
+#include <linux/platform_data/dma-imx.h>
 
 #include "dmaengine.h"
 
@@ -815,8 +814,6 @@ static int sdma_request_channel(struct sdma_channel *sdmac)
 
 	init_completion(&sdmac->done);
 
-	sdmac->buf_tail = 0;
-
 	return 0;
 out:
 
@@ -927,6 +924,8 @@ static struct dma_async_tx_descriptor *sdma_prep_slave_sg(
 
 	sdmac->flags = 0;
 
+	sdmac->buf_tail = 0;
+
 	dev_dbg(sdma->dev, "setting up %d entries for channel %d.\n",
 			sg_len, channel);
 
@@ -1012,7 +1011,7 @@ err_out:
 static struct dma_async_tx_descriptor *sdma_prep_dma_cyclic(
 		struct dma_chan *chan, dma_addr_t dma_addr, size_t buf_len,
 		size_t period_len, enum dma_transfer_direction direction,
-		void *context)
+		unsigned long flags, void *context)
 {
 	struct sdma_channel *sdmac = to_sdma_chan(chan);
 	struct sdma_engine *sdma = sdmac->sdma;
@@ -1026,6 +1025,8 @@ static struct dma_async_tx_descriptor *sdma_prep_dma_cyclic(
 		return NULL;
 
 	sdmac->status = DMA_IN_PROGRESS;
+
+	sdmac->buf_tail = 0;
 
 	sdmac->flags |= IMX_DMA_SG_LOOP;
 	sdmac->direction = direction;

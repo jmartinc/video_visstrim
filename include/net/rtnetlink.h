@@ -44,8 +44,10 @@ static inline int rtnl_msg_family(const struct nlmsghdr *nlh)
  *	@get_xstats_size: Function to calculate required room for dumping device
  *			  specific statistics
  *	@fill_xstats: Function to dump device specific statistics
- *	@get_tx_queues: Function to determine number of transmit queues to create when
- *		        creating a new device.
+ *	@get_num_tx_queues: Function to determine number of transmit queues
+ *			    to create when creating a new device.
+ *	@get_num_rx_queues: Function to determine number of receive queues
+ *			    to create when creating a new device.
  */
 struct rtnl_link_ops {
 	struct list_head	list;
@@ -77,8 +79,8 @@ struct rtnl_link_ops {
 	size_t			(*get_xstats_size)(const struct net_device *dev);
 	int			(*fill_xstats)(struct sk_buff *skb,
 					       const struct net_device *dev);
-	int			(*get_tx_queues)(struct net *net,
-						 struct nlattr *tb[]);
+	unsigned int		(*get_num_tx_queues)(void);
+	unsigned int		(*get_num_rx_queues)(void);
 };
 
 extern int	__rtnl_link_register(struct rtnl_link_ops *ops);
@@ -123,7 +125,7 @@ extern void	rtnl_af_unregister(struct rtnl_af_ops *ops);
 
 
 extern struct net *rtnl_link_get_net(struct net *src_net, struct nlattr *tb[]);
-extern struct net_device *rtnl_create_link(struct net *src_net, struct net *net,
+extern struct net_device *rtnl_create_link(struct net *net,
 	char *ifname, const struct rtnl_link_ops *ops, struct nlattr *tb[]);
 extern int rtnl_configure_link(struct net_device *dev,
 			       const struct ifinfomsg *ifm);

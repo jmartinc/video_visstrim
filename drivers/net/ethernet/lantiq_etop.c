@@ -149,7 +149,6 @@ ltq_etop_hw_receive(struct ltq_etop_chan *ch)
 	spin_unlock_irqrestore(&priv->lock, flags);
 
 	skb_put(skb, len);
-	skb->dev = ch->netdev;
 	skb->protocol = eth_type_trans(skb, ch->netdev);
 	netif_receive_skb(skb);
 }
@@ -646,7 +645,7 @@ ltq_etop_init(struct net_device *dev)
 	memcpy(&mac, &priv->pldata->mac, sizeof(struct sockaddr));
 	if (!is_valid_ether_addr(mac.sa_data)) {
 		pr_warn("etop: invalid MAC, using random\n");
-		random_ether_addr(mac.sa_data);
+		eth_random_addr(mac.sa_data);
 		random_mac = true;
 	}
 
@@ -775,7 +774,7 @@ err_out:
 	return err;
 }
 
-static int __devexit
+static int
 ltq_etop_remove(struct platform_device *pdev)
 {
 	struct net_device *dev = platform_get_drvdata(pdev);
@@ -790,7 +789,7 @@ ltq_etop_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver ltq_mii_driver = {
-	.remove = __devexit_p(ltq_etop_remove),
+	.remove = ltq_etop_remove,
 	.driver = {
 		.name = "ltq_etop",
 		.owner = THIS_MODULE,

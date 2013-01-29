@@ -14,12 +14,15 @@
  */
 
 #include <linux/list.h>
+#include <linux/rbtree.h>
 
 struct module;
 struct device;
 struct i2c_client;
+struct irq_domain;
 struct spi_device;
 struct regmap;
+struct regmap_range_cfg;
 
 /* An enum of all the supported cache types */
 enum regcache_type {
@@ -43,6 +46,47 @@ struct reg_default {
 
 #ifdef CONFIG_REGMAP
 
+enum regmap_endian {
+	/* Unspecified -> 0 -> Backwards compatible default */
+	REGMAP_ENDIAN_DEFAULT = 0,
+	REGMAP_ENDIAN_BIG,
+	REGMAP_ENDIAN_LITTLE,
+	REGMAP_ENDIAN_NATIVE,
+};
+
+/**
+ * A register range, used for access related checks
+ * (readable/writeable/volatile/precious checks)
+ *
+ * @range_min: address of first register
+ * @range_max: address of last register
+ */
+struct regmap_range {
+	unsigned int range_min;
+	unsigned int range_max;
+};
+
+/*
+ * A table of ranges including some yes ranges and some no ranges.
+ * If a register belongs to a no_range, the corresponding check function
+ * will return false. If a register belongs to a yes range, the corresponding
+ * check function will return true. "no_ranges" are searched first.
+ *
+ * @yes_ranges : pointer to an array of regmap ranges used as "yes ranges"
+ * @n_yes_ranges: size of the above array
+ * @no_ranges: pointer to an array of regmap ranges used as "no ranges"
+ * @n_no_ranges: size of the above array
+ */
+struct regmap_access_table {
+	const struct regmap_range *yes_ranges;
+	unsigned int n_yes_ranges;
+	const struct regmap_range *no_ranges;
+	unsigned int n_no_ranges;
+};
+
+typedef void (*regmap_lock)(void *);
+typedef void (*regmap_unlock)(void *);
+
 /**
  * Configuration for the register map of a device.
  *
@@ -57,16 +101,39 @@ struct reg_default {
  * @val_bits: Number of bits in a register value, mandatory.
  *
  * @writeable_reg: Optional callback returning true if the register
- *                 can be written to.
+ *		   can be written to. If this field is NULL but wr_table
+ *		   (see below) is not, the check is performed on such table
+ *                 (a register is writeable if it belongs to one of the ranges
+ *                  specified by wr_table).
  * @readable_reg: Optional callback returning true if the register
- *                can be read from.
+ *		  can be read from. If this field is NULL but rd_table
+ *		   (see below) is not, the check is performed on such table
+ *                 (a register is readable if it belongs to one of the ranges
+ *                  specified by rd_table).
  * @volatile_reg: Optional callback returning true if the register
- *                value can't be cached.
+ *		  value can't be cached. If this field is NULL but
+ *		  volatile_table (see below) is not, the check is performed on
+ *                such table (a register is volatile if it belongs to one of
+ *                the ranges specified by volatile_table).
  * @precious_reg: Optional callback returning true if the rgister
- *                should not be read outside of a call from the driver
- *                (eg, a clear on read interrupt status register).
+ *		  should not be read outside of a call from the driver
+ *		  (eg, a clear on read interrupt status register). If this
+ *                field is NULL but precious_table (see below) is not, the
+ *                check is performed on such table (a register is precious if
+ *                it belongs to one of the ranges specified by precious_table).
+ * @lock:	  Optional lock callback (overrides regmap's default lock
+ *		  function, based on spinlock or mutex).
+ * @unlock:	  As above for unlocking.
+ * @lock_arg:	  this field is passed as the only argument of lock/unlock
+ *		  functions (ignored in case regular lock/unlock functions
+ *		  are not overridden).
  *
  * @max_register: Optional, specifies the maximum valid register index.
+ * @wr_table:     Optional, points to a struct regmap_access_table specifying
+ *                valid ranges for write access.
+ * @rd_table:     As above, for read access.
+ * @volatile_table: As above, for volatile registers.
+ * @precious_table: As above, for precious registers.
  * @reg_defaults: Power on reset values for registers (for use with
  *                register cache support).
  * @num_reg_defaults: Number of elements in reg_defaults.
@@ -84,6 +151,15 @@ struct reg_default {
  * @reg_defaults_raw: Power on reset values for registers (for use with
  *                    register cache support).
  * @num_reg_defaults_raw: Number of elements in reg_defaults_raw.
+ * @reg_format_endian: Endianness for formatted register addresses. If this is
+ *                     DEFAULT, the @reg_format_endian_default value from the
+ *                     regmap bus is used.
+ * @val_format_endian: Endianness for formatted register values. If this is
+ *                     DEFAULT, the @reg_format_endian_default value from the
+ *                     regmap bus is used.
+ *
+ * @ranges: Array of configuration entries for virtual address ranges.
+ * @num_ranges: Number of range configuration entries.
  */
 struct regmap_config {
 	const char *name;
@@ -97,8 +173,15 @@ struct regmap_config {
 	bool (*readable_reg)(struct device *dev, unsigned int reg);
 	bool (*volatile_reg)(struct device *dev, unsigned int reg);
 	bool (*precious_reg)(struct device *dev, unsigned int reg);
+	regmap_lock lock;
+	regmap_unlock unlock;
+	void *lock_arg;
 
 	unsigned int max_register;
+	const struct regmap_access_table *wr_table;
+	const struct regmap_access_table *rd_table;
+	const struct regmap_access_table *volatile_table;
+	const struct regmap_access_table *precious_table;
 	const struct reg_default *reg_defaults;
 	unsigned int num_reg_defaults;
 	enum regcache_type cache_type;
@@ -109,6 +192,47 @@ struct regmap_config {
 	u8 write_flag_mask;
 
 	bool use_single_rw;
+
+	enum regmap_endian reg_format_endian;
+	enum regmap_endian val_format_endian;
+
+	const struct regmap_range_cfg *ranges;
+	unsigned int num_ranges;
+};
+
+/**
+ * Configuration for indirectly accessed or paged registers.
+ * Registers, mapped to this virtual range, are accessed in two steps:
+ *     1. page selector register update;
+ *     2. access through data window registers.
+ *
+ * @name: Descriptive name for diagnostics
+ *
+ * @range_min: Address of the lowest register address in virtual range.
+ * @range_max: Address of the highest register in virtual range.
+ *
+ * @page_sel_reg: Register with selector field.
+ * @page_sel_mask: Bit shift for selector value.
+ * @page_sel_shift: Bit mask for selector value.
+ *
+ * @window_start: Address of first (lowest) register in data window.
+ * @window_len: Number of registers in data window.
+ */
+struct regmap_range_cfg {
+	const char *name;
+
+	/* Registers of virtual address range */
+	unsigned int range_min;
+	unsigned int range_max;
+
+	/* Page selector for indirect addressing */
+	unsigned int selector_reg;
+	unsigned int selector_mask;
+	int selector_shift;
+
+	/* Data window (per each page) */
+	unsigned int window_start;
+	unsigned int window_len;
 };
 
 typedef int (*regmap_hw_write)(void *context, const void *data,
@@ -125,7 +249,9 @@ typedef void (*regmap_hw_free_context)(void *context);
  * Description of a hardware bus for the register map infrastructure.
  *
  * @fast_io: Register IO is fast. Use a spinlock instead of a mutex
- *           to perform locking.
+ *	     to perform locking. This field is ignored if custom lock/unlock
+ *	     functions are used (see fields lock/unlock of
+ *	     struct regmap_config).
  * @write: Write operation.
  * @gather_write: Write operation with split register/value, return -ENOTSUPP
  *                if not implemented  on a given device.
@@ -133,6 +259,12 @@ typedef void (*regmap_hw_free_context)(void *context);
  *         data.
  * @read_flag_mask: Mask to be set in the top byte of the register when doing
  *                  a read.
+ * @reg_format_endian_default: Default endianness for formatted register
+ *     addresses. Used when the regmap_config specifies DEFAULT. If this is
+ *     DEFAULT, BIG is assumed.
+ * @val_format_endian_default: Default endianness for formatted register
+ *     values. Used when the regmap_config specifies DEFAULT. If this is
+ *     DEFAULT, BIG is assumed.
  */
 struct regmap_bus {
 	bool fast_io;
@@ -141,6 +273,8 @@ struct regmap_bus {
 	regmap_hw_read read;
 	regmap_hw_free_context free_context;
 	u8 read_flag_mask;
+	enum regmap_endian reg_format_endian_default;
+	enum regmap_endian val_format_endian_default;
 };
 
 struct regmap *regmap_init(struct device *dev,
@@ -198,6 +332,16 @@ void regcache_mark_dirty(struct regmap *map);
 int regmap_register_patch(struct regmap *map, const struct reg_default *regs,
 			  int num_regs);
 
+static inline bool regmap_reg_in_range(unsigned int reg,
+				       const struct regmap_range *range)
+{
+	return reg >= range->range_min && reg <= range->range_max;
+}
+
+bool regmap_reg_in_ranges(unsigned int reg,
+			  const struct regmap_range *ranges,
+			  unsigned int nranges);
+
 /**
  * Description of an IRQ for the generic regmap irq_chip.
  *
@@ -219,7 +363,9 @@ struct regmap_irq {
  * @status_base: Base status register address.
  * @mask_base:   Base mask register address.
  * @ack_base:    Base ack address.  If zero then the chip is clear on read.
+ * @wake_base:   Base address for wake enables.  If zero unsupported.
  * @irq_reg_stride:  Stride to use for chips where registers are not contiguous.
+ * @runtime_pm:  Hold a runtime PM lock on the device when accessing it.
  *
  * @num_regs:    Number of registers in each control bank.
  * @irqs:        Descriptors for individual IRQs.  Interrupt numbers are
@@ -232,7 +378,10 @@ struct regmap_irq_chip {
 	unsigned int status_base;
 	unsigned int mask_base;
 	unsigned int ack_base;
+	unsigned int wake_base;
 	unsigned int irq_reg_stride;
+	unsigned int mask_invert;
+	bool runtime_pm;
 
 	int num_regs;
 
@@ -243,11 +392,12 @@ struct regmap_irq_chip {
 struct regmap_irq_chip_data;
 
 int regmap_add_irq_chip(struct regmap *map, int irq, int irq_flags,
-			int irq_base, struct regmap_irq_chip *chip,
+			int irq_base, const struct regmap_irq_chip *chip,
 			struct regmap_irq_chip_data **data);
 void regmap_del_irq_chip(int irq, struct regmap_irq_chip_data *data);
 int regmap_irq_chip_get_base(struct regmap_irq_chip_data *data);
 int regmap_irq_get_virq(struct regmap_irq_chip_data *data, int irq);
+struct irq_domain *regmap_irq_get_domain(struct regmap_irq_chip_data *data);
 
 #else
 
@@ -361,7 +511,6 @@ static inline int regmap_register_patch(struct regmap *map,
 static inline struct regmap *dev_get_regmap(struct device *dev,
 					    const char *name)
 {
-	WARN_ONCE(1, "regmap API is disabled");
 	return NULL;
 }
 

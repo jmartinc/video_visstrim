@@ -752,6 +752,9 @@ void ipoib_cm_send(struct net_device *dev, struct sk_buff *skb, struct ipoib_cm_
 		dev->trans_start = jiffies;
 		++tx->tx_head;
 
+		skb_orphan(skb);
+		skb_dst_drop(skb);
+
 		if (++priv->tx_outstanding == ipoib_sendq_size) {
 			ipoib_dbg(priv, "TX ring 0x%x full, stopping kernel net queue\n",
 				  tx->qp->qp_num);
@@ -811,9 +814,7 @@ void ipoib_cm_handle_tx_wc(struct net_device *dev, struct ib_wc *wc)
 		if (neigh) {
 			neigh->cm = NULL;
 			list_del(&neigh->list);
-			if (neigh->ah)
-				ipoib_put_ah(neigh->ah);
-			ipoib_neigh_free(dev, neigh);
+			ipoib_neigh_free(neigh);
 
 			tx->neigh = NULL;
 		}
@@ -1230,9 +1231,7 @@ static int ipoib_cm_tx_handler(struct ib_cm_id *cm_id,
 		if (neigh) {
 			neigh->cm = NULL;
 			list_del(&neigh->list);
-			if (neigh->ah)
-				ipoib_put_ah(neigh->ah);
-			ipoib_neigh_free(dev, neigh);
+			ipoib_neigh_free(neigh);
 
 			tx->neigh = NULL;
 		}
@@ -1275,12 +1274,15 @@ struct ipoib_cm_tx *ipoib_cm_create_tx(struct net_device *dev, struct ipoib_path
 void ipoib_cm_destroy_tx(struct ipoib_cm_tx *tx)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(tx->dev);
+	unsigned long flags;
 	if (test_and_clear_bit(IPOIB_FLAG_INITIALIZED, &tx->flags)) {
+		spin_lock_irqsave(&priv->lock, flags);
 		list_move(&tx->list, &priv->cm.reap_list);
 		queue_work(ipoib_workqueue, &priv->cm.reap_task);
 		ipoib_dbg(priv, "Reap connection for gid %pI6\n",
-			  tx->neigh->dgid.raw);
+			  tx->neigh->daddr + 4);
 		tx->neigh = NULL;
+		spin_unlock_irqrestore(&priv->lock, flags);
 	}
 }
 
@@ -1304,7 +1306,7 @@ static void ipoib_cm_tx_start(struct work_struct *work)
 		p = list_entry(priv->cm.start_list.next, typeof(*p), list);
 		list_del_init(&p->list);
 		neigh = p->neigh;
-		qpn = IPOIB_QPN(neigh->neighbour->ha);
+		qpn = IPOIB_QPN(neigh->daddr);
 		memcpy(&pathrec, &p->path->pathrec, sizeof pathrec);
 
 		spin_unlock_irqrestore(&priv->lock, flags);
@@ -1320,9 +1322,7 @@ static void ipoib_cm_tx_start(struct work_struct *work)
 			if (neigh) {
 				neigh->cm = NULL;
 				list_del(&neigh->list);
-				if (neigh->ah)
-					ipoib_put_ah(neigh->ah);
-				ipoib_neigh_free(dev, neigh);
+				ipoib_neigh_free(neigh);
 			}
 			list_del(&p->list);
 			kfree(p);
@@ -1376,7 +1376,7 @@ static void ipoib_cm_skb_reap(struct work_struct *work)
 
 		if (skb->protocol == htons(ETH_P_IP))
 			icmp_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(mtu));
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if IS_ENABLED(CONFIG_IPV6)
 		else if (skb->protocol == htons(ETH_P_IPV6))
 			icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
 #endif
@@ -1397,7 +1397,7 @@ void ipoib_cm_skb_too_long(struct net_device *dev, struct sk_buff *skb,
 	int e = skb_queue_empty(&priv->cm.skb_queue);
 
 	if (skb_dst(skb))
-		skb_dst(skb)->ops->update_pmtu(skb_dst(skb), mtu);
+		skb_dst(skb)->ops->update_pmtu(skb_dst(skb), NULL, skb, mtu);
 
 	skb_queue_tail(&priv->cm.skb_queue, skb);
 	if (e)
@@ -1455,36 +1455,19 @@ static ssize_t set_mode(struct device *d, struct device_attribute *attr,
 			const char *buf, size_t count)
 {
 	struct net_device *dev = to_net_dev(d);
-	struct ipoib_dev_priv *priv = netdev_priv(dev);
+	int ret;
 
 	if (!rtnl_trylock())
 		return restart_syscall();
 
-	/* flush paths if we switch modes so that connections are restarted */
-	if (IPOIB_CM_SUPPORTED(dev->dev_addr) && !strcmp(buf, "connected\n")) {
-		set_bit(IPOIB_FLAG_ADMIN_CM, &priv->flags);
-		ipoib_warn(priv, "enabling connected mode "
-			   "will cause multicast packet drops\n");
-		netdev_update_features(dev);
-		rtnl_unlock();
-		priv->tx_wr.send_flags &= ~IB_SEND_IP_CSUM;
+	ret = ipoib_set_mode(dev, buf);
 
-		ipoib_flush_paths(dev);
-		return count;
-	}
-
-	if (!strcmp(buf, "datagram\n")) {
-		clear_bit(IPOIB_FLAG_ADMIN_CM, &priv->flags);
-		netdev_update_features(dev);
-		dev_set_mtu(dev, min(priv->mcast_mtu, dev->mtu));
-		rtnl_unlock();
-		ipoib_flush_paths(dev);
-
-		return count;
-	}
 	rtnl_unlock();
 
-	return -EINVAL;
+	if (!ret)
+		return count;
+
+	return ret;
 }
 
 static DEVICE_ATTR(mode, S_IWUSR | S_IRUGO, show_mode, set_mode);

@@ -2216,7 +2216,7 @@ static irqreturn_t max98095_report_jack(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-int max98095_jack_detect_enable(struct snd_soc_codec *codec)
+static int max98095_jack_detect_enable(struct snd_soc_codec *codec)
 {
 	struct max98095_priv *max98095 = snd_soc_codec_get_drvdata(codec);
 	int ret = 0;
@@ -2245,7 +2245,7 @@ int max98095_jack_detect_enable(struct snd_soc_codec *codec)
 	return ret;
 }
 
-int max98095_jack_detect_disable(struct snd_soc_codec *codec)
+static int max98095_jack_detect_disable(struct snd_soc_codec *codec)
 {
 	int ret = 0;
 
@@ -2286,6 +2286,7 @@ int max98095_jack_detect(struct snd_soc_codec *codec,
 	max98095_report_jack(client->irq, codec);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(max98095_jack_detect);
 
 #ifdef CONFIG_PM
 static int max98095_suspend(struct snd_soc_codec *codec)
@@ -2510,7 +2511,7 @@ static int max98095_i2c_probe(struct i2c_client *i2c,
 	return ret;
 }
 
-static int __devexit max98095_i2c_remove(struct i2c_client *client)
+static int max98095_i2c_remove(struct i2c_client *client)
 {
 	snd_soc_unregister_codec(&client->dev);
 	return 0;
@@ -2528,27 +2529,11 @@ static struct i2c_driver max98095_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe  = max98095_i2c_probe,
-	.remove = __devexit_p(max98095_i2c_remove),
+	.remove = max98095_i2c_remove,
 	.id_table = max98095_i2c_id,
 };
 
-static int __init max98095_init(void)
-{
-	int ret;
-
-	ret = i2c_add_driver(&max98095_i2c_driver);
-	if (ret)
-		pr_err("Failed to register max98095 I2C driver: %d\n", ret);
-
-	return ret;
-}
-module_init(max98095_init);
-
-static void __exit max98095_exit(void)
-{
-	i2c_del_driver(&max98095_i2c_driver);
-}
-module_exit(max98095_exit);
+module_i2c_driver(max98095_i2c_driver);
 
 MODULE_DESCRIPTION("ALSA SoC MAX98095 driver");
 MODULE_AUTHOR("Peter Hsiang");

@@ -11,6 +11,8 @@
  * by the Free Software Foundation.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -262,7 +264,7 @@ static struct bin_attribute ks8995_registers_attr = {
 
 /* ------------------------------------------------------------------------ */
 
-static int __devinit ks8995_probe(struct spi_device *spi)
+static int ks8995_probe(struct spi_device *spi)
 {
 	struct ks8995_switch    *ks;
 	struct ks8995_pdata     *pdata;
@@ -330,7 +332,7 @@ err_drvdata:
 	return err;
 }
 
-static int __devexit ks8995_remove(struct spi_device *spi)
+static int ks8995_remove(struct spi_device *spi)
 {
 	struct ks8995_data      *ks8995;
 
@@ -351,12 +353,12 @@ static struct spi_driver ks8995_driver = {
 		.owner	   = THIS_MODULE,
 	},
 	.probe	  = ks8995_probe,
-	.remove	  = __devexit_p(ks8995_remove),
+	.remove	  = ks8995_remove,
 };
 
 static int __init ks8995_init(void)
 {
-	printk(KERN_INFO DRV_DESC " version " DRV_VERSION"\n");
+	pr_info(DRV_DESC " version " DRV_VERSION "\n");
 
 	return spi_register_driver(&ks8995_driver);
 }

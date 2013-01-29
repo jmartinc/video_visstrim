@@ -142,6 +142,7 @@ static int insert_entry(struct ctl_table_header *head, struct ctl_table *entry)
 	}
 
 	rb_link_node(node, parent, p);
+	rb_insert_color(node, &head->parent->root);
 	return 0;
 }
 
@@ -168,10 +169,8 @@ static void init_header(struct ctl_table_header *head,
 	head->node = node;
 	if (node) {
 		struct ctl_table *entry;
-		for (entry = table; entry->procname; entry++, node++) {
-			rb_init_node(&node->node);
+		for (entry = table; entry->procname; entry++, node++)
 			node->header = head;
-		}
 	}
 }
 
@@ -266,8 +265,7 @@ void sysctl_head_put(struct ctl_table_header *head)
 
 static struct ctl_table_header *sysctl_head_grab(struct ctl_table_header *head)
 {
-	if (!head)
-		BUG();
+	BUG_ON(!head);
 	spin_lock(&sysctl_lock);
 	if (!use_table(head))
 		head = ERR_PTR(-ENOENT);
@@ -380,12 +378,13 @@ static int test_perm(int mode, int op)
 	return -EACCES;
 }
 
-static int sysctl_perm(struct ctl_table_root *root, struct ctl_table *table, int op)
+static int sysctl_perm(struct ctl_table_header *head, struct ctl_table *table, int op)
 {
+	struct ctl_table_root *root = head->root;
 	int mode;
 
 	if (root->permissions)
-		mode = root->permissions(root, current->nsproxy, table);
+		mode = root->permissions(head, table);
 	else
 		mode = table->mode;
 
@@ -433,7 +432,7 @@ static struct ctl_table_header *grab_header(struct inode *inode)
 }
 
 static struct dentry *proc_sys_lookup(struct inode *dir, struct dentry *dentry,
-					struct nameidata *nd)
+					unsigned int flags)
 {
 	struct ctl_table_header *head = grab_header(dir);
 	struct ctl_table_header *h = NULL;
@@ -462,9 +461,6 @@ static struct dentry *proc_sys_lookup(struct inode *dir, struct dentry *dentry,
 
 	err = ERR_PTR(-ENOMEM);
 	inode = proc_sys_make_inode(dir->i_sb, h ? h : head, p);
-	if (h)
-		sysctl_head_finish(h);
-
 	if (!inode)
 		goto out;
 
@@ -473,6 +469,8 @@ static struct dentry *proc_sys_lookup(struct inode *dir, struct dentry *dentry,
 	d_add(dentry, inode);
 
 out:
+	if (h)
+		sysctl_head_finish(h);
 	sysctl_head_finish(head);
 	return err;
 }
@@ -494,7 +492,7 @@ static ssize_t proc_sys_call_handler(struct file *filp, void __user *buf,
 	 * and won't be until we finish.
 	 */
 	error = -EPERM;
-	if (sysctl_perm(head->root, table, write ? MAY_WRITE : MAY_READ))
+	if (sysctl_perm(head, table, write ? MAY_WRITE : MAY_READ))
 		goto out;
 
 	/* if that can happen at all, it should be -EINVAL, not -EISDIR */
@@ -720,7 +718,7 @@ static int proc_sys_permission(struct inode *inode, int mask)
 	if (!table) /* global root - r-xr-xr-x */
 		error = mask & MAY_WRITE ? -EACCES : 0;
 	else /* Use the permissions on the sysctl table entry */
-		error = sysctl_perm(head->root, table, mask & ~MAY_NOT_BLOCK);
+		error = sysctl_perm(head, table, mask & ~MAY_NOT_BLOCK);
 
 	sysctl_head_finish(head);
 	return error;
@@ -737,13 +735,6 @@ static int proc_sys_setattr(struct dentry *dentry, struct iattr *attr)
 	error = inode_change_ok(inode, attr);
 	if (error)
 		return error;
-
-	if ((attr->ia_valid & ATTR_SIZE) &&
-	    attr->ia_size != i_size_read(inode)) {
-		error = vmtruncate(inode, attr->ia_size);
-		if (error)
-			return error;
-	}
 
 	setattr_copy(inode, attr);
 	mark_inode_dirty(inode);
@@ -794,9 +785,9 @@ static const struct inode_operations proc_sys_dir_operations = {
 	.getattr	= proc_sys_getattr,
 };
 
-static int proc_sys_revalidate(struct dentry *dentry, struct nameidata *nd)
+static int proc_sys_revalidate(struct dentry *dentry, unsigned int flags)
 {
-	if (nd->flags & LOOKUP_RCU)
+	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 	return !PROC_I(dentry->d_inode)->sysctl->unregistering;
 }

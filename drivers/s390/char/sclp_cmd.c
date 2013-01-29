@@ -1,5 +1,5 @@
 /*
- * Copyright IBM Corp. 2007, 2009
+ * Copyright IBM Corp. 2007,2012
  *
  * Author(s): Heiko Carstens <heiko.carstens@de.ibm.com>,
  *	      Peter Oberparleiter <peter.oberparleiter@de.ibm.com>
@@ -12,6 +12,7 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/err.h>
+#include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/mm.h>
@@ -19,10 +20,11 @@
 #include <linux/memory.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <asm/chpid.h>
-#include <asm/sclp.h>
-#include <asm/setup.h>
 #include <asm/ctl_reg.h>
+#include <asm/chpid.h>
+#include <asm/setup.h>
+#include <asm/page.h>
+#include <asm/sclp.h>
 
 #include "sclp.h"
 
@@ -48,6 +50,7 @@ struct read_info_sccb {
 	u8	_reserved5[4096 - 112];	/* 112-4095 */
 } __attribute__((packed, aligned(PAGE_SIZE)));
 
+static struct init_sccb __initdata early_event_mask_sccb __aligned(PAGE_SIZE);
 static struct read_info_sccb __initdata early_read_info_sccb;
 static int __initdata early_read_info_sccb_valid;
 
@@ -104,6 +107,19 @@ static void __init sclp_read_info_early(void)
 	}
 }
 
+static void __init sclp_event_mask_early(void)
+{
+	struct init_sccb *sccb = &early_event_mask_sccb;
+	int rc;
+
+	do {
+		memset(sccb, 0, sizeof(*sccb));
+		sccb->header.length = sizeof(*sccb);
+		sccb->mask_length = sizeof(sccb_mask_t);
+		rc = sclp_cmd_sync_early(SCLP_CMDW_WRITE_EVENT_MASK, sccb);
+	} while (rc == -EBUSY);
+}
+
 void __init sclp_facilities_detect(void)
 {
 	struct read_info_sccb *sccb;
@@ -119,6 +135,30 @@ void __init sclp_facilities_detect(void)
 	rnmax = sccb->rnmax ? sccb->rnmax : sccb->rnmax2;
 	rzm = sccb->rnsize ? sccb->rnsize : sccb->rnsize2;
 	rzm <<= 20;
+
+	sclp_event_mask_early();
+}
+
+bool __init sclp_has_linemode(void)
+{
+	struct init_sccb *sccb = &early_event_mask_sccb;
+
+	if (sccb->header.response_code != 0x20)
+		return 0;
+	if (sccb->sclp_send_mask & (EVTYP_MSG_MASK | EVTYP_PMSGCMD_MASK))
+		return 1;
+	return 0;
+}
+
+bool __init sclp_has_vt220(void)
+{
+	struct init_sccb *sccb = &early_event_mask_sccb;
+
+	if (sccb->header.response_code != 0x20)
+		return 0;
+	if (sccb->sclp_send_mask & EVTYP_VT220MSG_MASK)
+		return 1;
+	return 0;
 }
 
 unsigned long long sclp_get_rnmax(void)
@@ -362,17 +402,15 @@ out:
 
 static int sclp_assign_storage(u16 rn)
 {
-	unsigned long long start, address;
+	unsigned long long start;
 	int rc;
 
 	rc = do_assign_storage(0x000d0001, rn);
 	if (rc)
-		goto out;
-	start = address = rn2addr(rn);
-	for (; address < start + rzm; address += PAGE_SIZE)
-		page_set_storage_key(address, PAGE_DEFAULT_KEY, 0);
-out:
-	return rc;
+		return rc;
+	start = rn2addr(rn);
+	storage_key_init_range(start, start + rzm);
+	return 0;
 }
 
 static int sclp_unassign_storage(u16 rn)
@@ -662,6 +700,67 @@ out:
 __initcall(sclp_detect_standby_memory);
 
 #endif /* CONFIG_MEMORY_HOTPLUG */
+
+/*
+ * PCI I/O adapter configuration related functions.
+ */
+#define SCLP_CMDW_CONFIGURE_PCI			0x001a0001
+#define SCLP_CMDW_DECONFIGURE_PCI		0x001b0001
+
+#define SCLP_RECONFIG_PCI_ATPYE			2
+
+struct pci_cfg_sccb {
+	struct sccb_header header;
+	u8 atype;		/* adapter type */
+	u8 reserved1;
+	u16 reserved2;
+	u32 aid;		/* adapter identifier */
+} __packed;
+
+static int do_pci_configure(sclp_cmdw_t cmd, u32 fid)
+{
+	struct pci_cfg_sccb *sccb;
+	int rc;
+
+	if (!SCLP_HAS_PCI_RECONFIG)
+		return -EOPNOTSUPP;
+
+	sccb = (struct pci_cfg_sccb *) get_zeroed_page(GFP_KERNEL | GFP_DMA);
+	if (!sccb)
+		return -ENOMEM;
+
+	sccb->header.length = PAGE_SIZE;
+	sccb->atype = SCLP_RECONFIG_PCI_ATPYE;
+	sccb->aid = fid;
+	rc = do_sync_request(cmd, sccb);
+	if (rc)
+		goto out;
+	switch (sccb->header.response_code) {
+	case 0x0020:
+	case 0x0120:
+		break;
+	default:
+		pr_warn("configure PCI I/O adapter failed: cmd=0x%08x  response=0x%04x\n",
+			cmd, sccb->header.response_code);
+		rc = -EIO;
+		break;
+	}
+out:
+	free_page((unsigned long) sccb);
+	return rc;
+}
+
+int sclp_pci_configure(u32 fid)
+{
+	return do_pci_configure(SCLP_CMDW_CONFIGURE_PCI, fid);
+}
+EXPORT_SYMBOL(sclp_pci_configure);
+
+int sclp_pci_deconfigure(u32 fid)
+{
+	return do_pci_configure(SCLP_CMDW_DECONFIGURE_PCI, fid);
+}
+EXPORT_SYMBOL(sclp_pci_deconfigure);
 
 /*
  * Channel path configuration related functions.

@@ -22,11 +22,14 @@
 #include <asm/cputype.h>
 
 #include "common.h"
-#include <plat/cpu.h>
 
-#include <mach/id.h>
+#include "id.h"
 
+#include "soc.h"
 #include "control.h"
+
+#define OMAP4_SILICON_TYPE_STANDARD		0x01
+#define OMAP4_SILICON_TYPE_PERFORMANCE		0x02
 
 static unsigned int omap_revision;
 static const char *cpu_rev;
@@ -44,12 +47,17 @@ int omap_type(void)
 
 	if (cpu_is_omap24xx()) {
 		val = omap_ctrl_readl(OMAP24XX_CONTROL_STATUS);
-	} else if (cpu_is_am33xx()) {
+	} else if (soc_is_am33xx()) {
 		val = omap_ctrl_readl(AM33XX_CONTROL_STATUS);
 	} else if (cpu_is_omap34xx()) {
 		val = omap_ctrl_readl(OMAP343X_CONTROL_STATUS);
 	} else if (cpu_is_omap44xx()) {
 		val = omap_ctrl_readl(OMAP4_CTRL_MODULE_CORE_STATUS);
+	} else if (soc_is_omap54xx()) {
+		val = omap_ctrl_readl(OMAP5XXX_CONTROL_STATUS);
+		val &= OMAP5_DEVICETYPE_MASK;
+		val >>= 6;
+		goto out;
 	} else {
 		pr_err("Cannot detect omap type!\n");
 		goto out;
@@ -100,7 +108,7 @@ static u16 tap_prod_id;
 
 void omap_get_die_id(struct omap_die_id *odi)
 {
-	if (cpu_is_omap44xx()) {
+	if (cpu_is_omap44xx() || soc_is_omap54xx()) {
 		odi->id_0 = read_tap_reg(OMAP_TAP_DIE_ID_44XX_0);
 		odi->id_1 = read_tap_reg(OMAP_TAP_DIE_ID_44XX_1);
 		odi->id_2 = read_tap_reg(OMAP_TAP_DIE_ID_44XX_2);
@@ -156,9 +164,8 @@ void __init omap2xxx_check_revision(void)
 	}
 
 	if (j == ARRAY_SIZE(omap_ids)) {
-		printk(KERN_ERR "Unknown OMAP device type. "
-				"Handling it as OMAP%04x\n",
-				omap_ids[i].type >> 16);
+		pr_err("Unknown OMAP device type. Handling it as OMAP%04x\n",
+		       omap_ids[i].type >> 16);
 		j = i;
 	}
 
@@ -189,7 +196,7 @@ static void __init omap3_cpuinfo(void)
 		cpu_name = (omap3_has_sgx()) ? "AM3517" : "AM3505";
 	} else if (cpu_is_ti816x()) {
 		cpu_name = "TI816X";
-	} else if (cpu_is_am335x()) {
+	} else if (soc_is_am335x()) {
 		cpu_name =  "AM335X";
 	} else if (cpu_is_ti814x()) {
 		cpu_name = "TI814X";
@@ -247,6 +254,17 @@ void __init omap3xxx_check_features(void)
 	omap_features |= OMAP3_HAS_SDRC;
 
 	/*
+	 * am35x fixups:
+	 * - The am35x Chip ID register has bits 12, 7:5, and 3:2 marked as
+	 *   reserved and therefore return 0 when read.  Unfortunately,
+	 *   OMAP3_CHECK_FEATURE() will interpret some of those zeroes to
+	 *   mean that a feature is present even though it isn't so clear
+	 *   the incorrectly set feature bits.
+	 */
+	if (soc_is_am35xx())
+		omap_features &= ~(OMAP3_HAS_IVA | OMAP3_HAS_ISP);
+
+	/*
 	 * TODO: Get additional info (where applicable)
 	 *       e.g. Size of L2 cache.
 	 */
@@ -258,25 +276,11 @@ void __init omap4xxx_check_features(void)
 {
 	u32 si_type;
 
-	if (cpu_is_omap443x())
-		omap_features |= OMAP4_HAS_MPU_1GHZ;
+	si_type =
+	(read_tap_reg(OMAP4_CTRL_MODULE_CORE_STD_FUSE_PROD_ID_1) >> 16) & 0x03;
 
-
-	if (cpu_is_omap446x()) {
-		si_type =
-			read_tap_reg(OMAP4_CTRL_MODULE_CORE_STD_FUSE_PROD_ID_1);
-		switch ((si_type & (3 << 16)) >> 16) {
-		case 2:
-			/* High performance device */
-			omap_features |= OMAP4_HAS_MPU_1_5GHZ;
-			break;
-		case 1:
-		default:
-			/* Standard device */
-			omap_features |= OMAP4_HAS_MPU_1_2GHZ;
-			break;
-		}
-	}
+	if (si_type == OMAP4_SILICON_TYPE_PERFORMANCE)
+		omap_features = OMAP4_HAS_PERF_SILICON;
 }
 
 void __init ti81xx_check_features(void)
@@ -502,6 +506,41 @@ void __init omap4xxx_check_revision(void)
 		((omap_rev() >> 12) & 0xf), ((omap_rev() >> 8) & 0xf));
 }
 
+void __init omap5xxx_check_revision(void)
+{
+	u32 idcode;
+	u16 hawkeye;
+	u8 rev;
+
+	idcode = read_tap_reg(OMAP_TAP_IDCODE);
+	hawkeye = (idcode >> 12) & 0xffff;
+	rev = (idcode >> 28) & 0xff;
+	switch (hawkeye) {
+	case 0xb942:
+		switch (rev) {
+		case 0:
+		default:
+			omap_revision = OMAP5430_REV_ES1_0;
+		}
+		break;
+
+	case 0xb998:
+		switch (rev) {
+		case 0:
+		default:
+			omap_revision = OMAP5432_REV_ES1_0;
+		}
+		break;
+
+	default:
+		/* Unknown default to latest silicon rev as default*/
+		omap_revision = OMAP5430_REV_ES1_0;
+	}
+
+	pr_info("OMAP%04x ES%d.0\n",
+			omap_rev() >> 16, ((omap_rev() >> 12) & 0xf));
+}
+
 /*
  * Set up things for map_io and processor detection later on. Gets called
  * pretty much first thing from board init. For multi-omap, this gets
@@ -509,11 +548,12 @@ void __init omap4xxx_check_revision(void)
  * detect the exact revision later on in omap2_detect_revision() once map_io
  * is done.
  */
-void __init omap2_set_globals_tap(struct omap_globals *omap2_globals)
+void __init omap2_set_globals_tap(u32 class, void __iomem *tap)
 {
-	omap_revision = omap2_globals->class;
-	tap_base = omap2_globals->tap;
+	omap_revision = class;
+	tap_base = tap;
 
+	/* XXX What is this intended to do? */
 	if (cpu_is_omap34xx())
 		tap_prod_id = 0x0210;
 	else

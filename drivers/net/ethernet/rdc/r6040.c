@@ -206,7 +206,7 @@ struct r6040_private {
 	int old_duplex;
 };
 
-static char version[] __devinitdata = DRV_NAME
+static char version[] = DRV_NAME
 	": RDC R6040 NAPI net driver,"
 	"version "DRV_VERSION " (" DRV_RELDATE ")";
 
@@ -1073,8 +1073,7 @@ static int r6040_mii_probe(struct net_device *dev)
 	return 0;
 }
 
-static int __devinit r6040_init_one(struct pci_dev *pdev,
-					 const struct pci_device_id *ent)
+static int r6040_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *dev;
 	struct r6040_private *lp;
@@ -1246,7 +1245,7 @@ err_out:
 	return err;
 }
 
-static void __devexit r6040_remove_one(struct pci_dev *pdev)
+static void r6040_remove_one(struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata(pdev);
 	struct r6040_private *lp = netdev_priv(dev);
@@ -1256,7 +1255,6 @@ static void __devexit r6040_remove_one(struct pci_dev *pdev)
 	kfree(lp->mii_bus->irq);
 	mdiobus_free(lp->mii_bus);
 	netif_napi_del(&lp->napi);
-	pci_set_drvdata(pdev, NULL);
 	pci_iounmap(pdev, lp->base);
 	pci_release_regions(pdev);
 	free_netdev(dev);
@@ -1275,20 +1273,7 @@ static struct pci_driver r6040_driver = {
 	.name		= DRV_NAME,
 	.id_table	= r6040_pci_tbl,
 	.probe		= r6040_init_one,
-	.remove		= __devexit_p(r6040_remove_one),
+	.remove		= r6040_remove_one,
 };
 
-
-static int __init r6040_init(void)
-{
-	return pci_register_driver(&r6040_driver);
-}
-
-
-static void __exit r6040_cleanup(void)
-{
-	pci_unregister_driver(&r6040_driver);
-}
-
-module_init(r6040_init);
-module_exit(r6040_cleanup);
+module_pci_driver(r6040_driver);

@@ -14,16 +14,70 @@
 #include <linux/init.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/clk-provider.h>
+#include <linux/clk/mvebu.h>
 #include <linux/kexec.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <mach/bridge-regs.h>
+#include <linux/platform_data/usb-ehci-orion.h>
+#include <plat/irq.h>
+#include <plat/common.h>
 #include "common.h"
 
 static struct of_device_id kirkwood_dt_match_table[] __initdata = {
 	{ .compatible = "simple-bus", },
 	{ }
 };
+
+/*
+ * There are still devices that doesn't know about DT yet.  Get clock
+ * gates here and add a clock lookup alias, so that old platform
+ * devices still work.
+*/
+
+static void __init kirkwood_legacy_clk_init(void)
+{
+
+	struct device_node *np = of_find_compatible_node(
+		NULL, NULL, "marvell,kirkwood-gating-clock");
+
+	struct of_phandle_args clkspec;
+
+	clkspec.np = np;
+	clkspec.args_count = 1;
+
+	clkspec.args[0] = CGC_BIT_GE0;
+	orion_clkdev_add(NULL, "mv643xx_eth_port.0",
+			 of_clk_get_from_provider(&clkspec));
+
+	clkspec.args[0] = CGC_BIT_PEX0;
+	orion_clkdev_add("0", "pcie",
+			 of_clk_get_from_provider(&clkspec));
+
+	clkspec.args[0] = CGC_BIT_USB0;
+	orion_clkdev_add(NULL, "orion-ehci.0",
+			 of_clk_get_from_provider(&clkspec));
+
+	clkspec.args[0] = CGC_BIT_PEX1;
+	orion_clkdev_add("1", "pcie",
+			 of_clk_get_from_provider(&clkspec));
+
+	clkspec.args[0] = CGC_BIT_GE1;
+	orion_clkdev_add(NULL, "mv643xx_eth_port.1",
+			 of_clk_get_from_provider(&clkspec));
+
+	clkspec.args[0] = CGC_BIT_SDIO;
+	orion_clkdev_add(NULL, "mvsdio",
+			 of_clk_get_from_provider(&clkspec));
+
+}
+
+static void __init kirkwood_of_clk_init(void)
+{
+	mvebu_clocks_init();
+	kirkwood_legacy_clk_init();
+}
 
 static void __init kirkwood_dt_init(void)
 {
@@ -39,18 +93,10 @@ static void __init kirkwood_dt_init(void)
 
 	kirkwood_setup_cpu_mbus();
 
-#ifdef CONFIG_CACHE_FEROCEON_L2
 	kirkwood_l2_init();
-#endif
 
 	/* Setup root of clk tree */
-	kirkwood_clk_init();
-
-	/* internal devices that every board has */
-	kirkwood_wdt_init();
-	kirkwood_xor0_init();
-	kirkwood_xor1_init();
-	kirkwood_crypto_init();
+	kirkwood_of_clk_init();
 
 #ifdef CONFIG_KEXEC
 	kexec_reinit = kirkwood_enable_pcie;
@@ -68,15 +114,67 @@ static void __init kirkwood_dt_init(void)
 	if (of_machine_is_compatible("raidsonic,ib-nas62x0"))
 		ib62x0_init();
 
+	if (of_machine_is_compatible("qnap,ts219"))
+		qnap_dt_ts219_init();
+
+	if (of_machine_is_compatible("seagate,dockstar"))
+		dockstar_dt_init();
+
+	if (of_machine_is_compatible("seagate,goflexnet"))
+		goflexnet_init();
+
+	if (of_machine_is_compatible("buffalo,lsxl"))
+		lsxl_init();
+
+	if (of_machine_is_compatible("iom,ix2-200"))
+		iomega_ix2_200_init();
+
+	if (of_machine_is_compatible("keymile,km_kirkwood"))
+		km_kirkwood_init();
+
+	if (of_machine_is_compatible("lacie,inetspace_v2") ||
+	    of_machine_is_compatible("lacie,netspace_v2") ||
+	    of_machine_is_compatible("lacie,netspace_max_v2") ||
+	    of_machine_is_compatible("lacie,netspace_lite_v2") ||
+	    of_machine_is_compatible("lacie,netspace_mini_v2"))
+		ns2_init();
+
+	if (of_machine_is_compatible("mpl,cec4"))
+		mplcec4_init();
+
+	if (of_machine_is_compatible("plathome,openblocks-a6"))
+		openblocks_a6_init();
+
+	if (of_machine_is_compatible("usi,topkick"))
+		usi_topkick_init();
+
+	if (of_machine_is_compatible("zyxel,nsa310"))
+		nsa310_init();
+
 	of_platform_populate(NULL, kirkwood_dt_match_table, NULL, NULL);
 }
 
-static const char *kirkwood_dt_board_compat[] = {
+static const char * const kirkwood_dt_board_compat[] = {
 	"globalscale,dreamplug",
 	"dlink,dns-320",
 	"dlink,dns-325",
 	"iom,iconnect",
 	"raidsonic,ib-nas62x0",
+	"qnap,ts219",
+	"seagate,dockstar",
+	"seagate,goflexnet",
+	"buffalo,lsxl",
+	"iom,ix2-200",
+	"keymile,km_kirkwood",
+	"lacie,inetspace_v2",
+	"lacie,netspace_max_v2",
+	"lacie,netspace_v2",
+	"lacie,netspace_lite_v2",
+	"lacie,netspace_mini_v2",
+	"mpl,cec4",
+	"plathome,openblocks-a6",
+	"usi,topkick",
+	"zyxel,nsa310",
 	NULL
 };
 
@@ -84,7 +182,7 @@ DT_MACHINE_START(KIRKWOOD_DT, "Marvell Kirkwood (Flattened Device Tree)")
 	/* Maintainer: Jason Cooper <jason@lakedaemon.net> */
 	.map_io		= kirkwood_map_io,
 	.init_early	= kirkwood_init_early,
-	.init_irq	= kirkwood_init_irq,
+	.init_irq	= orion_dt_init_irq,
 	.timer		= &kirkwood_timer,
 	.init_machine	= kirkwood_dt_init,
 	.restart	= kirkwood_restart,

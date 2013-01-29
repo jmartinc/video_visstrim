@@ -240,6 +240,7 @@ int br_add_bridge(struct net *net, const char *name)
 		return -ENOMEM;
 
 	dev_net_set(dev, net);
+	dev->rtnl_link_ops = &br_link_ops;
 
 	res = register_netdev(dev);
 	if (res)
@@ -360,16 +361,16 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 	if (err)
 		goto err2;
 
-	if (br_netpoll_info(br) && ((err = br_netpoll_enable(p))))
+	if (br_netpoll_info(br) && ((err = br_netpoll_enable(p, GFP_KERNEL))))
 		goto err3;
 
 	err = netdev_set_master(dev, br->dev);
 	if (err)
-		goto err3;
+		goto err4;
 
 	err = netdev_rx_handler_register(dev, br_handle_frame, p);
 	if (err)
-		goto err4;
+		goto err5;
 
 	dev->priv_flags |= IFF_BRIDGE_PORT;
 
@@ -401,8 +402,10 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
 
 	return 0;
 
-err4:
+err5:
 	netdev_set_master(dev, NULL);
+err4:
+	br_netpoll_disable(p);
 err3:
 	sysfs_remove_link(br->ifobj, p->dev->name);
 err2:
@@ -426,6 +429,10 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 	if (!p || p->br != br)
 		return -EINVAL;
 
+	/* Since more than one interface can be attached to a bridge,
+	 * there still maybe an alternate path for netconsole to use;
+	 * therefore there is no reason for a NETDEV_RELEASE event.
+	 */
 	del_nbp(p);
 
 	spin_lock_bh(&br->lock);

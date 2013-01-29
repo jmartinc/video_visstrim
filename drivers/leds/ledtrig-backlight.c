@@ -40,15 +40,15 @@ static int fb_notifier_callback(struct notifier_block *p,
 	int new_status = *blank ? BLANK : UNBLANK;
 
 	switch (event) {
-	case FB_EVENT_BLANK :
+	case FB_EVENT_BLANK:
 		if (new_status == n->old_status)
 			break;
 
 		if ((n->old_status == UNBLANK) ^ n->invert) {
 			n->brightness = led->brightness;
-			led_set_brightness(led, LED_OFF);
+			__led_set_brightness(led, LED_OFF);
 		} else {
-			led_set_brightness(led, n->brightness);
+			__led_set_brightness(led, n->brightness);
 		}
 
 		n->old_status = new_status;
@@ -76,7 +76,7 @@ static ssize_t bl_trig_invert_store(struct device *dev,
 	unsigned long invert;
 	int ret;
 
-	ret = strict_strtoul(buf, 10, &invert);
+	ret = kstrtoul(buf, 10, &invert);
 	if (ret < 0)
 		return ret;
 
@@ -87,9 +87,9 @@ static ssize_t bl_trig_invert_store(struct device *dev,
 
 	/* After inverting, we need to update the LED. */
 	if ((n->old_status == BLANK) ^ n->invert)
-		led_set_brightness(led, LED_OFF);
+		__led_set_brightness(led, LED_OFF);
 	else
-		led_set_brightness(led, n->brightness);
+		__led_set_brightness(led, n->brightness);
 
 	return num;
 }

@@ -196,7 +196,7 @@ MODULE_VERSION(HECC_MODULE_VERSION);
 #define HECC_CANGIM_SIL		BIT(2)	/* system interrupts to int line 1 */
 
 /* CAN Bittiming constants as per HECC specs */
-static struct can_bittiming_const ti_hecc_bittiming_const = {
+static const struct can_bittiming_const ti_hecc_bittiming_const = {
 	.name = DRV_NAME,
 	.tseg1_min = 1,
 	.tseg1_max = 16,
@@ -978,18 +978,18 @@ probe_exit:
 	return err;
 }
 
-static int __devexit ti_hecc_remove(struct platform_device *pdev)
+static int ti_hecc_remove(struct platform_device *pdev)
 {
 	struct resource *res;
 	struct net_device *ndev = platform_get_drvdata(pdev);
 	struct ti_hecc_priv *priv = netdev_priv(ndev);
 
+	unregister_candev(ndev);
 	clk_disable(priv->clk);
 	clk_put(priv->clk);
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	iounmap(priv->base);
 	release_mem_region(res->start, resource_size(res));
-	unregister_candev(ndev);
 	free_candev(ndev);
 	platform_set_drvdata(pdev, NULL);
 
@@ -1045,7 +1045,7 @@ static struct platform_driver ti_hecc_driver = {
 		.owner   = THIS_MODULE,
 	},
 	.probe = ti_hecc_probe,
-	.remove = __devexit_p(ti_hecc_remove),
+	.remove = ti_hecc_remove,
 	.suspend = ti_hecc_suspend,
 	.resume = ti_hecc_resume,
 };
@@ -1055,3 +1055,4 @@ module_platform_driver(ti_hecc_driver);
 MODULE_AUTHOR("Anant Gole <anantgole@ti.com>");
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION(DRV_DESC);
+MODULE_ALIAS("platform:" DRV_NAME);

@@ -192,11 +192,6 @@ void pcibios_set_master(struct pci_dev *dev)
 	/* No special bus mastering setup handling */
 }
 
-char __devinit *pcibios_setup(char *str)
-{
-	return str;
-}
-
 /*
  * Reads the interrupt pin to determine if interrupt is use by card.
  * If the interrupt is used, then gets the interrupt line from the
@@ -249,8 +244,7 @@ int pci_read_irq_line(struct pci_dev *pci_dev)
 	} else {
 		pr_debug(" Got one, spec %d cells (0x%08x 0x%08x...) on %s\n",
 			 oirq.size, oirq.specifier[0], oirq.specifier[1],
-			 oirq.controller ? oirq.controller->full_name :
-			 "<default>");
+			 of_node_full_name(oirq.controller));
 
 		virq = irq_create_of_mapping(oirq.controller, oirq.specifier,
 					     oirq.size);
@@ -293,7 +287,7 @@ static struct resource *__pci_mmap_make_offset(struct pci_dev *dev,
 	unsigned long io_offset = 0;
 	int i, res_bit;
 
-	if (hose == 0)
+	if (!hose)
 		return NULL;		/* should never happen */
 
 	/* If memory, add on the PCI bridge address offset */
@@ -661,9 +655,8 @@ void pci_resource_to_user(const struct pci_dev *dev, int bar,
  *   - Some 32 bits platforms such as 4xx can have physical space larger than
  *     32 bits so we need to use 64 bits values for the parsing
  */
-void __devinit pci_process_bridge_OF_ranges(struct pci_controller *hose,
-					    struct device_node *dev,
-					    int primary)
+void pci_process_bridge_OF_ranges(struct pci_controller *hose,
+				  struct device_node *dev, int primary)
 {
 	const u32 *ranges;
 	int rlen;
@@ -828,15 +821,13 @@ void __devinit pci_process_bridge_OF_ranges(struct pci_controller *hose,
 /* Decide whether to display the domain number in /proc */
 int pci_proc_domain(struct pci_bus *bus)
 {
-	struct pci_controller *hose = pci_bus_to_host(bus);
-
 	return 0;
 }
 
 /* This header fixup will do the resource fixup for all devices as they are
  * probed, but not for bridge ranges
  */
-static void __devinit pcibios_fixup_resources(struct pci_dev *dev)
+static void pcibios_fixup_resources(struct pci_dev *dev)
 {
 	struct pci_controller *hose = pci_bus_to_host(dev->bus);
 	int i;
@@ -877,8 +868,8 @@ DECLARE_PCI_FIXUP_HEADER(PCI_ANY_ID, PCI_ANY_ID, pcibios_fixup_resources);
  * things go more smoothly when it gets it right. It should covers cases such
  * as Apple "closed" bridge resources and bare-metal pSeries unassigned bridges
  */
-static int __devinit pcibios_uninitialized_bridge_resource(struct pci_bus *bus,
-							   struct resource *res)
+static int pcibios_uninitialized_bridge_resource(struct pci_bus *bus,
+						 struct resource *res)
 {
 	struct pci_controller *hose = pci_bus_to_host(bus);
 	struct pci_dev *dev = bus->self;
@@ -939,7 +930,7 @@ static int __devinit pcibios_uninitialized_bridge_resource(struct pci_bus *bus,
 }
 
 /* Fixup resources of a PCI<->PCI bridge */
-static void __devinit pcibios_fixup_bridge(struct pci_bus *bus)
+static void pcibios_fixup_bridge(struct pci_bus *bus)
 {
 	struct resource *res;
 	int i;
@@ -976,14 +967,14 @@ static void __devinit pcibios_fixup_bridge(struct pci_bus *bus)
 	}
 }
 
-void __devinit pcibios_setup_bus_self(struct pci_bus *bus)
+void pcibios_setup_bus_self(struct pci_bus *bus)
 {
 	/* Fix up the bus resources for P2P bridges */
 	if (bus->self != NULL)
 		pcibios_fixup_bridge(bus);
 }
 
-void __devinit pcibios_setup_bus_devices(struct pci_bus *bus)
+void pcibios_setup_bus_devices(struct pci_bus *bus)
 {
 	struct pci_dev *dev;
 
@@ -1008,7 +999,7 @@ void __devinit pcibios_setup_bus_devices(struct pci_bus *bus)
 	}
 }
 
-void __devinit pcibios_fixup_bus(struct pci_bus *bus)
+void pcibios_fixup_bus(struct pci_bus *bus)
 {
 	/* When called from the generic PCI probe, read PCI<->PCI bridge
 	 * bases. This is -not- called when generating the PCI tree from
@@ -1130,7 +1121,7 @@ static int __init reparent_resources(struct resource *parent,
  *	    as well.
  */
 
-void pcibios_allocate_bus_resources(struct pci_bus *bus)
+static void pcibios_allocate_bus_resources(struct pci_bus *bus)
 {
 	struct pci_bus *b;
 	int i;
@@ -1185,7 +1176,7 @@ void pcibios_allocate_bus_resources(struct pci_bus *bus)
 		}
 		printk(KERN_WARNING "PCI: Cannot allocate resource region "
 		       "%d of PCI bridge %d, will remap\n", i, bus->number);
-clear_resource:
+
 		res->start = res->end = 0;
 		res->flags = 0;
 	}
@@ -1194,7 +1185,7 @@ clear_resource:
 		pcibios_allocate_bus_resources(b);
 }
 
-static inline void __devinit alloc_resource(struct pci_dev *dev, int idx)
+static inline void alloc_resource(struct pci_dev *dev, int idx)
 {
 	struct resource *pr, *r = &dev->resource[idx];
 
@@ -1352,14 +1343,12 @@ void __init pcibios_resource_survey(void)
 	pci_assign_unassigned_resources();
 }
 
-#ifdef CONFIG_HOTPLUG
-
 /* This is used by the PCI hotplug driver to allocate resource
  * of newly plugged busses. We can try to consolidate with the
  * rest of the code later, for now, keep it as-is as our main
  * resource allocation function doesn't deal with sub-trees yet.
  */
-void __devinit pcibios_claim_one_bus(struct pci_bus *bus)
+void pcibios_claim_one_bus(struct pci_bus *bus)
 {
 	struct pci_dev *dev;
 	struct pci_bus *child_bus;
@@ -1413,14 +1402,13 @@ void pcibios_finish_adding_to_bus(struct pci_bus *bus)
 }
 EXPORT_SYMBOL_GPL(pcibios_finish_adding_to_bus);
 
-#endif /* CONFIG_HOTPLUG */
-
 int pcibios_enable_device(struct pci_dev *dev, int mask)
 {
 	return pci_enable_resources(dev, mask);
 }
 
-static void __devinit pcibios_setup_phb_resources(struct pci_controller *hose, struct list_head *resources)
+static void pcibios_setup_phb_resources(struct pci_controller *hose,
+					struct list_head *resources)
 {
 	unsigned long io_offset;
 	struct resource *res;
@@ -1443,7 +1431,8 @@ static void __devinit pcibios_setup_phb_resources(struct pci_controller *hose, s
 		res->end = res->start + IO_SPACE_LIMIT;
 		res->flags = IORESOURCE_IO;
 	}
-	pci_add_resource_offset(resources, res, hose->io_base_virt - _IO_BASE);
+	pci_add_resource_offset(resources, res,
+		(__force resource_size_t)(hose->io_base_virt - _IO_BASE));
 
 	pr_debug("PCI: PHB IO resource    = %016llx-%016llx [%lx]\n",
 		 (unsigned long long)res->start,
@@ -1487,14 +1476,13 @@ struct device_node *pcibios_get_phb_of_node(struct pci_bus *bus)
 	return of_node_get(hose->dn);
 }
 
-static void __devinit pcibios_scan_phb(struct pci_controller *hose)
+static void pcibios_scan_phb(struct pci_controller *hose)
 {
 	LIST_HEAD(resources);
 	struct pci_bus *bus;
 	struct device_node *node = hose->dn;
 
-	pr_debug("PCI: Scanning PHB %s\n",
-		 node ? node->full_name : "<NO NAME>");
+	pr_debug("PCI: Scanning PHB %s\n", of_node_full_name(node));
 
 	pcibios_setup_phb_resources(hose, &resources);
 
@@ -1506,10 +1494,10 @@ static void __devinit pcibios_scan_phb(struct pci_controller *hose)
 		pci_free_resource_list(&resources);
 		return;
 	}
-	bus->secondary = hose->first_busno;
+	bus->busn_res.start = hose->first_busno;
 	hose->bus = bus;
 
-	hose->last_busno = bus->subordinate;
+	hose->last_busno = bus->busn_res.end;
 }
 
 static int __init pcibios_init(void)

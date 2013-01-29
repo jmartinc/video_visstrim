@@ -58,7 +58,7 @@ static const unsigned short ppi_pins[] = {
  */
 
 static struct bfin_adv7393_fb_par {
-	/* structure holding blackfin / adv7393 paramters when
+	/* structure holding blackfin / adv7393 parameters when
 	   screen is blanked */
 	struct {
 		u8 Mode;	/* ntsc/pal/? */
@@ -88,7 +88,7 @@ static struct fb_var_screeninfo bfin_adv7393_fb_defined = {
 	.transp = {0, 0, 0},
 };
 
-static struct fb_fix_screeninfo bfin_adv7393_fb_fix __devinitdata = {
+static struct fb_fix_screeninfo bfin_adv7393_fb_fix = {
 	.id = "BFIN ADV7393",
 	.smem_len = 720 * 480 * 2,
 	.type = FB_TYPE_PACKED_PIXELS,
@@ -353,25 +353,23 @@ adv7393_read_proc(char *page, char **start, off_t off,
 
 static int
 adv7393_write_proc(struct file *file, const char __user * buffer,
-		   unsigned long count, void *data)
+		   size_t count, void *data)
 {
 	struct adv7393fb_device *fbdev = data;
-	char line[8];
 	unsigned int val;
 	int ret;
 
-	ret = copy_from_user(line, buffer, count);
+	ret = kstrtouint_from_user(buffer, count, 0, &val);
 	if (ret)
 		return -EFAULT;
 
-	val = simple_strtoul(line, NULL, 0);
 	adv7393_write(fbdev->client, val >> 8, val & 0xff);
 
 	return count;
 }
 
-static int __devinit bfin_adv7393_fb_probe(struct i2c_client *client,
-					   const struct i2c_device_id *id)
+static int bfin_adv7393_fb_probe(struct i2c_client *client,
+				 const struct i2c_device_id *id)
 {
 	int ret = 0;
 	struct proc_dir_entry *entry;
@@ -721,7 +719,7 @@ static int bfin_adv7393_fb_setcolreg(u_int regno, u_int red, u_int green,
 	return 0;
 }
 
-static int __devexit bfin_adv7393_fb_remove(struct i2c_client *client)
+static int bfin_adv7393_fb_remove(struct i2c_client *client)
 {
 	struct adv7393fb_device *fbdev = i2c_get_clientdata(client);
 
@@ -796,7 +794,7 @@ static struct i2c_driver bfin_adv7393_fb_driver = {
 #endif
 	},
 	.probe = bfin_adv7393_fb_probe,
-	.remove = __devexit_p(bfin_adv7393_fb_remove),
+	.remove = bfin_adv7393_fb_remove,
 	.id_table = bfin_adv7393_id,
 };
 

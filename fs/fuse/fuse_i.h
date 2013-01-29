@@ -333,10 +333,10 @@ struct fuse_conn {
 	atomic_t count;
 
 	/** The user id for this mount */
-	uid_t user_id;
+	kuid_t user_id;
 
 	/** The group id for this mount */
-	gid_t group_id;
+	kgid_t group_id;
 
 	/** The fuse mount flags for this mount */
 	unsigned flags;
@@ -483,6 +483,9 @@ struct fuse_conn {
 
 	/** Is fallocate not implemented by fs? */
 	unsigned no_fallocate:1;
+
+	/** Use enhanced/automatic page cache invalidation. */
+	unsigned auto_inval_data:1;
 
 	/** The number of requests waiting for completion */
 	atomic_t num_waiting;

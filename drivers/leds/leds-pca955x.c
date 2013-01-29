@@ -255,7 +255,7 @@ static void pca955x_led_set(struct led_classdev *led_cdev, enum led_brightness v
 	schedule_work(&pca955x->work);
 }
 
-static int __devinit pca955x_probe(struct i2c_client *client,
+static int pca955x_probe(struct i2c_client *client,
 					const struct i2c_device_id *id)
 {
 	struct pca955x *pca955x;
@@ -277,7 +277,7 @@ static int __devinit pca955x_probe(struct i2c_client *client,
 		return -ENODEV;
 	}
 
-	printk(KERN_INFO "leds-pca955x: Using %s %d-bit LED driver at "
+	dev_info(&client->dev, "leds-pca955x: Using %s %d-bit LED driver at "
 			"slave address 0x%02x\n",
 			id->name, chip->bits, client->addr);
 
@@ -293,15 +293,14 @@ static int __devinit pca955x_probe(struct i2c_client *client,
 		}
 	}
 
-	pca955x = kzalloc(sizeof(*pca955x), GFP_KERNEL);
+	pca955x = devm_kzalloc(&client->dev, sizeof(*pca955x), GFP_KERNEL);
 	if (!pca955x)
 		return -ENOMEM;
 
-	pca955x->leds = kzalloc(sizeof(*pca955x_led) * chip->bits, GFP_KERNEL);
-	if (!pca955x->leds) {
-		err = -ENOMEM;
-		goto exit_nomem;
-	}
+	pca955x->leds = devm_kzalloc(&client->dev,
+			sizeof(*pca955x_led) * chip->bits, GFP_KERNEL);
+	if (!pca955x->leds)
+		return -ENOMEM;
 
 	i2c_set_clientdata(client, pca955x);
 
@@ -361,14 +360,10 @@ exit:
 		cancel_work_sync(&pca955x->leds[i].work);
 	}
 
-	kfree(pca955x->leds);
-exit_nomem:
-	kfree(pca955x);
-
 	return err;
 }
 
-static int __devexit pca955x_remove(struct i2c_client *client)
+static int pca955x_remove(struct i2c_client *client)
 {
 	struct pca955x *pca955x = i2c_get_clientdata(client);
 	int i;
@@ -377,9 +372,6 @@ static int __devexit pca955x_remove(struct i2c_client *client)
 		led_classdev_unregister(&pca955x->leds[i].led_cdev);
 		cancel_work_sync(&pca955x->leds[i].work);
 	}
-
-	kfree(pca955x->leds);
-	kfree(pca955x);
 
 	return 0;
 }
@@ -390,7 +382,7 @@ static struct i2c_driver pca955x_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe	= pca955x_probe,
-	.remove	= __devexit_p(pca955x_remove),
+	.remove	= pca955x_remove,
 	.id_table = pca955x_id,
 };
 

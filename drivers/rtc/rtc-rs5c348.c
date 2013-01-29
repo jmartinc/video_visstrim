@@ -122,9 +122,12 @@ rs5c348_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	tm->tm_min = bcd2bin(rxbuf[RS5C348_REG_MINS] & RS5C348_MINS_MASK);
 	tm->tm_hour = bcd2bin(rxbuf[RS5C348_REG_HOURS] & RS5C348_HOURS_MASK);
 	if (!pdata->rtc_24h) {
-		tm->tm_hour %= 12;
-		if (rxbuf[RS5C348_REG_HOURS] & RS5C348_BIT_PM)
+		if (rxbuf[RS5C348_REG_HOURS] & RS5C348_BIT_PM) {
+			tm->tm_hour -= 20;
+			tm->tm_hour %= 12;
 			tm->tm_hour += 12;
+		} else
+			tm->tm_hour %= 12;
 	}
 	tm->tm_wday = bcd2bin(rxbuf[RS5C348_REG_WDAY] & RS5C348_WDAY_MASK);
 	tm->tm_mday = bcd2bin(rxbuf[RS5C348_REG_DAY] & RS5C348_DAY_MASK);
@@ -149,7 +152,7 @@ static const struct rtc_class_ops rs5c348_rtc_ops = {
 
 static struct spi_driver rs5c348_driver;
 
-static int __devinit rs5c348_probe(struct spi_device *spi)
+static int rs5c348_probe(struct spi_device *spi)
 {
 	int ret;
 	struct rtc_device *rtc;
@@ -215,7 +218,7 @@ static int __devinit rs5c348_probe(struct spi_device *spi)
 	return ret;
 }
 
-static int __devexit rs5c348_remove(struct spi_device *spi)
+static int rs5c348_remove(struct spi_device *spi)
 {
 	struct rs5c348_plat_data *pdata = spi->dev.platform_data;
 	struct rtc_device *rtc = pdata->rtc;
@@ -232,7 +235,7 @@ static struct spi_driver rs5c348_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe	= rs5c348_probe,
-	.remove	= __devexit_p(rs5c348_remove),
+	.remove	= rs5c348_remove,
 };
 
 module_spi_driver(rs5c348_driver);

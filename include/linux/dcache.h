@@ -128,7 +128,7 @@ struct dentry {
 	 	struct rcu_head d_rcu;
 	} d_u;
 	struct list_head d_subdirs;	/* our children */
-	struct list_head d_alias;	/* inode alias list */
+	struct hlist_node d_alias;	/* inode alias list */
 };
 
 /*
@@ -144,7 +144,7 @@ enum dentry_d_lock_class
 };
 
 struct dentry_operations {
-	int (*d_revalidate)(struct dentry *, struct nameidata *);
+	int (*d_revalidate)(struct dentry *, unsigned int);
 	int (*d_hash)(const struct dentry *, const struct inode *,
 			struct qstr *);
 	int (*d_compare)(const struct dentry *, const struct inode *,
@@ -202,9 +202,10 @@ struct dentry_operations {
 #define DCACHE_MOUNTED		0x10000	/* is a mountpoint */
 #define DCACHE_NEED_AUTOMOUNT	0x20000	/* handle automount on this dir */
 #define DCACHE_MANAGE_TRANSIT	0x40000	/* manage transit from this dirent */
-#define DCACHE_NEED_LOOKUP	0x80000 /* dentry requires i_op->lookup */
 #define DCACHE_MANAGED_DENTRY \
 	(DCACHE_MOUNTED|DCACHE_NEED_AUTOMOUNT|DCACHE_MANAGE_TRANSIT)
+
+#define DCACHE_DENTRY_KILLED	0x100000
 
 extern seqlock_t rename_lock;
 
@@ -405,13 +406,6 @@ static inline bool d_mountpoint(struct dentry *dentry)
 {
 	return dentry->d_flags & DCACHE_MOUNTED;
 }
-
-static inline bool d_need_lookup(struct dentry *dentry)
-{
-	return dentry->d_flags & DCACHE_NEED_LOOKUP;
-}
-
-extern void d_clear_need_lookup(struct dentry *dentry);
 
 extern int sysctl_vfs_cache_pressure;
 

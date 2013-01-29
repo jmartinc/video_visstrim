@@ -273,13 +273,16 @@ void spd_release_page(struct splice_pipe_desc *spd, unsigned int i)
  * Check if we need to grow the arrays holding pages and partial page
  * descriptions.
  */
-int splice_grow_spd(struct pipe_inode_info *pipe, struct splice_pipe_desc *spd)
+int splice_grow_spd(const struct pipe_inode_info *pipe, struct splice_pipe_desc *spd)
 {
-	if (pipe->buffers <= PIPE_DEF_BUFFERS)
+	unsigned int buffers = ACCESS_ONCE(pipe->buffers);
+
+	spd->nr_pages_max = buffers;
+	if (buffers <= PIPE_DEF_BUFFERS)
 		return 0;
 
-	spd->pages = kmalloc(pipe->buffers * sizeof(struct page *), GFP_KERNEL);
-	spd->partial = kmalloc(pipe->buffers * sizeof(struct partial_page), GFP_KERNEL);
+	spd->pages = kmalloc(buffers * sizeof(struct page *), GFP_KERNEL);
+	spd->partial = kmalloc(buffers * sizeof(struct partial_page), GFP_KERNEL);
 
 	if (spd->pages && spd->partial)
 		return 0;
@@ -289,10 +292,9 @@ int splice_grow_spd(struct pipe_inode_info *pipe, struct splice_pipe_desc *spd)
 	return -ENOMEM;
 }
 
-void splice_shrink_spd(struct pipe_inode_info *pipe,
-		       struct splice_pipe_desc *spd)
+void splice_shrink_spd(struct splice_pipe_desc *spd)
 {
-	if (pipe->buffers <= PIPE_DEF_BUFFERS)
+	if (spd->nr_pages_max <= PIPE_DEF_BUFFERS)
 		return;
 
 	kfree(spd->pages);
@@ -315,6 +317,7 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
 	struct splice_pipe_desc spd = {
 		.pages = pages,
 		.partial = partial,
+		.nr_pages_max = PIPE_DEF_BUFFERS,
 		.flags = flags,
 		.ops = &page_cache_pipe_buf_ops,
 		.spd_release = spd_release_page,
@@ -326,7 +329,7 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
 	index = *ppos >> PAGE_CACHE_SHIFT;
 	loff = *ppos & ~PAGE_CACHE_MASK;
 	req_pages = (len + loff + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
-	nr_pages = min(req_pages, pipe->buffers);
+	nr_pages = min(req_pages, spd.nr_pages_max);
 
 	/*
 	 * Lookup the (hopefully) full range of pages we need.
@@ -497,7 +500,7 @@ fill_it:
 	if (spd.nr_pages)
 		error = splice_to_pipe(pipe, &spd);
 
-	splice_shrink_spd(pipe, &spd);
+	splice_shrink_spd(&spd);
 	return error;
 }
 
@@ -598,6 +601,7 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 	struct splice_pipe_desc spd = {
 		.pages = pages,
 		.partial = partial,
+		.nr_pages_max = PIPE_DEF_BUFFERS,
 		.flags = flags,
 		.ops = &default_pipe_buf_ops,
 		.spd_release = spd_release_page,
@@ -608,8 +612,8 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 
 	res = -ENOMEM;
 	vec = __vec;
-	if (pipe->buffers > PIPE_DEF_BUFFERS) {
-		vec = kmalloc(pipe->buffers * sizeof(struct iovec), GFP_KERNEL);
+	if (spd.nr_pages_max > PIPE_DEF_BUFFERS) {
+		vec = kmalloc(spd.nr_pages_max * sizeof(struct iovec), GFP_KERNEL);
 		if (!vec)
 			goto shrink_ret;
 	}
@@ -617,7 +621,7 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 	offset = *ppos & ~PAGE_CACHE_MASK;
 	nr_pages = (len + offset + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 
-	for (i = 0; i < nr_pages && i < pipe->buffers && len; i++) {
+	for (i = 0; i < nr_pages && i < spd.nr_pages_max && len; i++) {
 		struct page *page;
 
 		page = alloc_page(GFP_USER);
@@ -665,7 +669,7 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 shrink_ret:
 	if (vec != __vec)
 		kfree(vec);
-	splice_shrink_spd(pipe, &spd);
+	splice_shrink_spd(&spd);
 	return res;
 
 err:
@@ -692,8 +696,10 @@ static int pipe_to_sendpage(struct pipe_inode_info *pipe,
 		return -EINVAL;
 
 	more = (sd->flags & SPLICE_F_MORE) ? MSG_MORE : 0;
-	if (sd->len < sd->total_len)
+
+	if (sd->len < sd->total_len && pipe->nrbufs > 1)
 		more |= MSG_SENDPAGE_NOTLAST;
+
 	return file->f_op->sendpage(file, buf->page, buf->offset,
 				    sd->len, &pos, more);
 }
@@ -992,6 +998,8 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 	};
 	ssize_t ret;
 
+	sb_start_write(inode->i_sb);
+
 	pipe_lock(pipe);
 
 	splice_from_pipe_begin(&sd);
@@ -1018,18 +1026,16 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 		ret = sd.num_spliced;
 
 	if (ret > 0) {
-		unsigned long nr_pages;
 		int err;
-
-		nr_pages = (ret + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 
 		err = generic_write_sync(out, *ppos, ret);
 		if (err)
 			ret = err;
 		else
 			*ppos += ret;
-		balance_dirty_pages_ratelimited_nr(mapping, nr_pages);
+		balance_dirty_pages_ratelimited(mapping);
 	}
+	sb_end_write(inode->i_sb);
 
 	return ret;
 }
@@ -1614,6 +1620,7 @@ static long vmsplice_to_pipe(struct file *file, const struct iovec __user *iov,
 	struct splice_pipe_desc spd = {
 		.pages = pages,
 		.partial = partial,
+		.nr_pages_max = PIPE_DEF_BUFFERS,
 		.flags = flags,
 		.ops = &user_page_pipe_buf_ops,
 		.spd_release = spd_release_page,
@@ -1629,13 +1636,13 @@ static long vmsplice_to_pipe(struct file *file, const struct iovec __user *iov,
 
 	spd.nr_pages = get_iovec_page_array(iov, nr_segs, spd.pages,
 					    spd.partial, false,
-					    pipe->buffers);
+					    spd.nr_pages_max);
 	if (spd.nr_pages <= 0)
 		ret = spd.nr_pages;
 	else
 		ret = splice_to_pipe(pipe, &spd);
 
-	splice_shrink_spd(pipe, &spd);
+	splice_shrink_spd(&spd);
 	return ret;
 }
 
@@ -1658,9 +1665,8 @@ static long vmsplice_to_pipe(struct file *file, const struct iovec __user *iov,
 SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		unsigned long, nr_segs, unsigned int, flags)
 {
-	struct file *file;
+	struct fd f;
 	long error;
-	int fput;
 
 	if (unlikely(nr_segs > UIO_MAXIOV))
 		return -EINVAL;
@@ -1668,14 +1674,14 @@ SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		return 0;
 
 	error = -EBADF;
-	file = fget_light(fd, &fput);
-	if (file) {
-		if (file->f_mode & FMODE_WRITE)
-			error = vmsplice_to_pipe(file, iov, nr_segs, flags);
-		else if (file->f_mode & FMODE_READ)
-			error = vmsplice_to_user(file, iov, nr_segs, flags);
+	f = fdget(fd);
+	if (f.file) {
+		if (f.file->f_mode & FMODE_WRITE)
+			error = vmsplice_to_pipe(f.file, iov, nr_segs, flags);
+		else if (f.file->f_mode & FMODE_READ)
+			error = vmsplice_to_user(f.file, iov, nr_segs, flags);
 
-		fput_light(file, fput);
+		fdput(f);
 	}
 
 	return error;
@@ -1685,30 +1691,27 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		int, fd_out, loff_t __user *, off_out,
 		size_t, len, unsigned int, flags)
 {
+	struct fd in, out;
 	long error;
-	struct file *in, *out;
-	int fput_in, fput_out;
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
-	in = fget_light(fd_in, &fput_in);
-	if (in) {
-		if (in->f_mode & FMODE_READ) {
-			out = fget_light(fd_out, &fput_out);
-			if (out) {
-				if (out->f_mode & FMODE_WRITE)
-					error = do_splice(in, off_in,
-							  out, off_out,
+	in = fdget(fd_in);
+	if (in.file) {
+		if (in.file->f_mode & FMODE_READ) {
+			out = fdget(fd_out);
+			if (out.file) {
+				if (out.file->f_mode & FMODE_WRITE)
+					error = do_splice(in.file, off_in,
+							  out.file, off_out,
 							  len, flags);
-				fput_light(out, fput_out);
+				fdput(out);
 			}
 		}
-
-		fput_light(in, fput_in);
+		fdput(in);
 	}
-
 	return error;
 }
 
@@ -2019,26 +2022,25 @@ static long do_tee(struct file *in, struct file *out, size_t len,
 
 SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 {
-	struct file *in;
-	int error, fput_in;
+	struct fd in;
+	int error;
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
-	in = fget_light(fdin, &fput_in);
-	if (in) {
-		if (in->f_mode & FMODE_READ) {
-			int fput_out;
-			struct file *out = fget_light(fdout, &fput_out);
-
-			if (out) {
-				if (out->f_mode & FMODE_WRITE)
-					error = do_tee(in, out, len, flags);
-				fput_light(out, fput_out);
+	in = fdget(fdin);
+	if (in.file) {
+		if (in.file->f_mode & FMODE_READ) {
+			struct fd out = fdget(fdout);
+			if (out.file) {
+				if (out.file->f_mode & FMODE_WRITE)
+					error = do_tee(in.file, out.file,
+							len, flags);
+				fdput(out);
 			}
 		}
- 		fput_light(in, fput_in);
+ 		fdput(in);
  	}
 
 	return error;
