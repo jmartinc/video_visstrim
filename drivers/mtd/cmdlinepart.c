@@ -271,6 +271,10 @@ static int mtdpart_setup_real(char *s)
 		     this_mtd->mtd_id, this_mtd->num_parts));
 
 
+		/* FIXME: dirty hack */
+		if (*s == ';')
+			return 0;
+
 		/* EOS - we're done */
 		if (*s == 0)
 			break;
